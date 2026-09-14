@@ -1,0 +1,4088 @@
+/* ====================================================================
+   Prancheta FC — lógica do jogo
+   ==================================================================== */
+
+/* ---------- DATA PROVIDERS (abstração) ---------- */
+class MockProvider{
+  constructor(d){ this.data=d; this.label='MOCK'; }
+  async getTeams(){ return JSON.parse(JSON.stringify(this.data.teams)); }
+}
+class SupabaseProvider{
+  constructor(url,key){
+    if(!window.supabase) throw new Error('supabase-js não carregou');
+    this.client=window.supabase.createClient(url,key); this.label='SUPABASE';
+  }
+  async getTeams(divisoes){
+    // times (tabela 'team', singular)
+    let q=this.client.from('team').select('id,nome,abrev,cidade,divisao,saldo,escudo,cor1,cor2');
+    if(divisoes && divisoes.length) q=q.in('divisao',divisoes);
+    const {data:teams,error:e1}=await q;
+    if(e1) throw new Error('team: '+e1.message);
+    if(!teams||!teams.length) throw new Error('tabela team vazia');
+    const ids=teams.map(t=>t.id);
+    // jogadores: o Supabase limita a 1000 linhas por request → PAGINA em blocos
+    const players=[];
+    const PAG=1000;
+    for(let de=0; ; de+=PAG){
+      const {data,error}=await this.client.from('player').select('*')
+        .in('team_id',ids).order('id',{ascending:true}).range(de, de+PAG-1);
+      if(error) throw new Error('player: '+error.message);
+      players.push(...(data||[]));
+      if(!data || data.length<PAG) break;
+    }
+
+    // colunas de atributo (0-100) que alimentam o cálculo de overall
+    const ATTR_COLS=["corners","crossing","dribbling","finishing","first_touch","freekick",
+      "heading","long_shots","long_throws","marking","passing","penalty","tackling","technique",
+      "agression","antecipation","bravery","composure","concentration","decisions","determination",
+      "flair","leadership","off_the_ball","positioning","teamwork","vision","work_rate",
+      "acceleration","agility","balance","jump_reach","natural_fitness","pace","stamina","strength",
+      "aerial_reach","command_of_area","communication","handling","kicking","one_on_ones",
+      "reflexes","rushing_out","throwing"];
+
+    const byT={}; (players||[]).forEach(p=>(byT[p.team_id]||=[]).push(p));
+    const SETOR_SIGLA={goleiro:'GK',defesa:'DEF',meio:'MEI',ataque:'ATQ'};
+    return teams.map(t=>({
+      id:t.id, abrev:t.abrev, nome:t.nome, cidade:t.cidade, divisao:t.divisao||'A', saldo:t.saldo,
+      escudo:t.escudo, cor1:t.cor1||'#333', cor2:t.cor2||'#fff',
+      players:(byT[t.id]||[]).map((p,idx)=>{
+        const attrs={}; ATTR_COLS.forEach(c=>attrs[c]=p[c]??0);
+        return {
+          nome:p.player_name, numero:p.numero??(idx+1),
+          pid:p.id,                                // id estável do banco (sobrevive a transferências)
+          setorNat:SETOR_SIGLA[p.setor]||'MEI',   // dica: GK/DEF/MEI/ATQ
+          energia:p.energia??100,
+          idade:p.age, valor:p.valor, salario:p.salario, contratoMeses:p.contract,
+          pais:'BR',
+          jogos:p.games||0, gols:p.gols||0, expulsoes:p['expulsões']||0, lesoesTemporada:p.lesoes||0,
+          altura:p.height, peso:p.weight, peDominante:p.preferred_foot, peFraco:p.weak_foot,
+          foto:p.photo_player,
+          attrs,
+          // --- Fase 2B: evolução/potencial ---
+          potential:p.potential??null,      // overall-alvo na posição natural
+          talento:p.talento??3,             // 1..5 velocidade de evolução
+          aVenda:p.avenda??false,           // transferível
+          // 'forca' de exibição = melhor overall entre as posições
+          forca: Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm({attrs},pos))),
+        };
+      })
+    }));
+  }
+  // NOTA: persistência foi removida do provider (era o save legado sem dono,
+  // slot:'default'/user_id:null). O provider é agora SÓ fonte de dados.
+  // Save/load oficial: App.salvarSupabase / App.carregarSlot em game_save
+  // (por user_id + slot). Ver Fase 1 da rota.
+}
+
+/* ---------- ESQUEMAS TÁTICOS ---------- */
+const ESQUEMAS={
+  '4-4-2':{ZAG:2,LAT:2,MEI:4,ATA:2},
+  '4-3-3':{ZAG:2,LAT:2,MEI:3,ATA:3},
+  '3-5-2':{ZAG:3,LAT:0,MEI:5,ATA:2},
+  '5-3-2':{ZAG:3,LAT:2,MEI:3,ATA:2},
+};
+const LINHAS={ // ordem de exibição no campo (de trás pra frente) — genérico (mock)
+  '4-4-2':[['GOL'],['ZAG','ZAG','LAT','LAT'],['MEI','MEI','MEI','MEI'],['ATA','ATA']],
+  '4-3-3':[['GOL'],['ZAG','ZAG','LAT','LAT'],['MEI','MEI','MEI'],['ATA','ATA','ATA']],
+  '3-5-2':[['GOL'],['ZAG','ZAG','ZAG'],['MEI','MEI','MEI','MEI','MEI'],['ATA','ATA']],
+  '5-3-2':[['GOL'],['ZAG','LAT','ZAG','LAT','ZAG'],['MEI','MEI','MEI'],['ATA','ATA']],
+};
+// LINHAS com POSIÇÕES FM reais (cada slot = uma posição FM concreta)
+// ordem de exibição: da defesa (esquerda) ao ataque (direita) no campo horizontal
+const LINHAS_FM={
+  '4-4-2':[['GK'],['DL','DC','DC','DR'],['ML','MC','MC','MR'],['ST','ST']],
+  '4-3-3':[['GK'],['DL','DC','DC','DR'],['MC','MC','MC'],['AML','ST','AMR']],
+  '4-5-1':[['GK'],['DL','DC','DC','DR'],['ML','MC','MC','MC','MR'],['ST']],
+  '4-2-3-1':[['GK'],['DL','DC','DC','DR'],['DM','DM'],['AML','AMC','AMR'],['ST']],
+  '4-1-4-1':[['GK'],['DL','DC','DC','DR'],['DM'],['ML','MC','MC','MR'],['ST']],
+  '3-5-2':[['GK'],['DC','DC','DC'],['WBL','MC','MC','MC','WBR'],['ST','ST']],
+  '3-4-3':[['GK'],['DC','DC','DC'],['WBL','MC','MC','WBR'],['AML','ST','AMR']],
+  '5-3-2':[['GK'],['WBL','DC','DC','DC','WBR'],['MC','MC','MC'],['ST','ST']],
+  '5-4-1':[['GK'],['WBL','DC','DC','DC','WBR'],['ML','MC','MC','MR'],['ST']],
+};
+
+/* ---------- PESOS DE ATRIBUTOS POR POSIÇÃO (FM) ---------- */
+// 3=chave, 2=importante, 1=útil. Nomes = colunas da tabela player (com as grafias do banco).
+const PESOS_POS={
+  GK:{3:["reflexes","handling","one_on_ones","positioning"],2:["aerial_reach","command_of_area","concentration","composure","agility"],1:["kicking","communication","decisions","bravery","jump_reach"]},
+  DC:{3:["marking","tackling","positioning","heading"],2:["strength","jump_reach","bravery","antecipation","concentration"],1:["pace","composure","decisions","agression"]},
+  DL:{3:["tackling","marking","pace","stamina"],2:["crossing","positioning","work_rate","acceleration","agility"],1:["dribbling","passing","teamwork","antecipation"]},
+  DR:{3:["tackling","marking","pace","stamina"],2:["crossing","positioning","work_rate","acceleration","agility"],1:["dribbling","passing","teamwork","antecipation"]},
+  WBL:{3:["pace","stamina","crossing","tackling"],2:["acceleration","work_rate","dribbling","marking","agility","teamwork"],1:["positioning","passing","technique","balance"]},
+  WBR:{3:["pace","stamina","crossing","tackling"],2:["acceleration","work_rate","dribbling","marking","agility","teamwork"],1:["positioning","passing","technique","balance"]},
+  DM:{3:["tackling","positioning","antecipation","teamwork"],2:["marking","composure","stamina","strength","decisions","work_rate"],1:["passing","vision","concentration","first_touch"]},
+  MC:{3:["passing","work_rate","stamina","decisions"],2:["technique","vision","first_touch","teamwork","positioning","tackling"],1:["dribbling","composure","long_shots","antecipation"]},
+  ML:{3:["pace","crossing","stamina","dribbling"],2:["acceleration","work_rate","agility","technique","first_touch"],1:["passing","flair","balance","teamwork"]},
+  MR:{3:["pace","crossing","stamina","dribbling"],2:["acceleration","work_rate","agility","technique","first_touch"],1:["passing","flair","balance","teamwork"]},
+  AMC:{3:["vision","passing","technique","off_the_ball"],2:["flair","first_touch","dribbling","decisions","composure"],1:["finishing","long_shots","agility","antecipation"]},
+  AML:{3:["pace","acceleration","dribbling","agility"],2:["crossing","finishing","flair","technique","off_the_ball"],1:["first_touch","passing","balance","work_rate"]},
+  AMR:{3:["pace","acceleration","dribbling","agility"],2:["crossing","finishing","flair","technique","off_the_ball"],1:["first_touch","passing","balance","work_rate"]},
+  ST:{3:["finishing","off_the_ball","composure","antecipation"],2:["heading","strength","first_touch","technique","acceleration"],1:["pace","dribbling","jump_reach","long_shots","balance"]},
+};
+// xG (fração ofensiva) por posição; xGA = 1 - xG
+const XG_POS={GK:0,DC:.05,DL:.25,DR:.25,WBL:.30,WBR:.30,DM:.30,MC:.50,ML:.55,MR:.55,AMC:.75,AML:.80,AMR:.80,ST:.95};
+// mapeamento posição FM -> slot genérico do jogo (5 posições dos esquemas atuais)
+const POS_TO_SLOT={GK:"GOL",DC:"ZAG",DL:"LAT",DR:"LAT",WBL:"LAT",WBR:"LAT",
+  DM:"MEI",MC:"MEI",ML:"MEI",MR:"MEI",AMC:"MEI",AML:"ATA",AMR:"ATA",ST:"ATA"};
+// slot genérico -> posição FM padrão (pra calcular overall quando só temos o slot)
+const SLOT_TO_POS={GOL:"GK",ZAG:"DC",LAT:"DL",MEI:"MC",ATA:"ST"};
+
+// nome amigável das 14 posições FM
+const POS_NOME={GK:'Goleiro',DC:'Zagueiro',DL:'Lateral E',DR:'Lateral D',
+  WBL:'Ala E',WBR:'Ala D',DM:'Volante',MC:'Meio-campo',ML:'Meia E',MR:'Meia D',
+  AMC:'Meia Ofensivo',AML:'Ponta E',AMR:'Ponta D',ST:'Atacante'};
+
+// setor natural (sigla curta) por posição
+const POS_SETOR={GK:'GK',DC:'DEF',DL:'DEF',DR:'DEF',WBL:'DEF',WBR:'DEF',
+  DM:'MEI',MC:'MEI',ML:'MEI',MR:'MEI',AMC:'MEI',AML:'ATQ',AMR:'ATQ',ST:'ATQ'};
+
+// ROLES do FM disponíveis por posição (Etapa 1: rótulo; Etapa 2: pesos próprios)
+/* ---------- ROLES: modificadores sobre os pesos da posição ----------
+   Cada role define:
+     mods: {atributo: delta_de_peso}  -> soma ao peso que o atributo já tem na posição
+                                          (peso mínimo resultante é 0)
+     pe: 'interno' | 'externo' | undefined
+        - 'interno' (corta pra dentro): pede pé OPOSTO ao lado (canhoto na direita, destro na esquerda)
+        - 'externo' (vai à linha):     pede pé DO lado (destro na direita, canhoto na esquerda)
+        - undefined: pé não importa
+   O lado vem da posição (…R = direita, …L = esquerda).
+*/
+const ROLES_DEF={
+  GK:{
+    'Goleiro':{mods:{}},
+    'Goleiro-Líbero':{mods:{rushing_out:3, kicking:2, passing:2, pace:1, composure:1}},
+  },
+  DC:{
+    'Zagueiro':{mods:{}},
+    'Zagueiro de Saída':{mods:{passing:3, first_touch:2, composure:2, technique:2, vision:1}},
+    'Zagueiro Cabeça-de-Área':{mods:{heading:3, strength:2, bravery:2, marking:1}},
+    'Líbero':{mods:{passing:2, dribbling:2, pace:2, composure:1, off_the_ball:1}},
+  },
+  DL:{
+    'Lateral':{mods:{}},
+    'Lateral de Apoio':{mods:{crossing:2, stamina:2, work_rate:2, dribbling:1}},
+    'Lateral Invertido':{mods:{passing:3, positioning:2, tackling:1, composure:1}, pe:'interno'},
+  },
+  DR:{
+    'Lateral':{mods:{}},
+    'Lateral de Apoio':{mods:{crossing:2, stamina:2, work_rate:2, dribbling:1}},
+    'Lateral Invertido':{mods:{passing:3, positioning:2, tackling:1, composure:1}, pe:'interno'},
+  },
+  WBL:{
+    'Ala':{mods:{}},
+    'Ala Completo':{mods:{crossing:2, dribbling:2, stamina:2, off_the_ball:1, finishing:1}},
+    'Ala Invertido':{mods:{passing:2, long_shots:2, positioning:1}, pe:'interno'},
+  },
+  WBR:{
+    'Ala':{mods:{}},
+    'Ala Completo':{mods:{crossing:2, dribbling:2, stamina:2, off_the_ball:1, finishing:1}},
+    'Ala Invertido':{mods:{passing:2, long_shots:2, positioning:1}, pe:'interno'},
+  },
+  DM:{
+    'Volante':{mods:{}},
+    'Primeiro Volante':{mods:{tackling:3, marking:2, agression:2, strength:1}},
+    'Cabeça-de-Área':{mods:{tackling:2, positioning:2, strength:2, heading:1, bravery:1}},
+    'Maestro Recuado':{mods:{passing:3, vision:3, composure:2, technique:1}},
+    'Regista':{mods:{passing:3, vision:3, flair:2, technique:2, decisions:1}},
+  },
+  MC:{
+    'Meia Central':{mods:{}},
+    'Box-to-Box':{mods:{stamina:3, work_rate:2, off_the_ball:2, long_shots:1, tackling:1}},
+    'Maestro':{mods:{passing:3, vision:3, technique:2, composure:1}},
+    'Mezzala':{mods:{dribbling:2, off_the_ball:2, long_shots:2, finishing:1, flair:1}},
+    'Carrilero':{mods:{positioning:2, teamwork:2, tackling:2, stamina:1}},
+  },
+  ML:{
+    'Meia':{mods:{}},
+    'Meia Ofensivo':{mods:{crossing:2, dribbling:2, off_the_ball:2, finishing:1}},
+    'Volante Recuado':{mods:{tackling:2, positioning:2, stamina:2, work_rate:1}},
+  },
+  MR:{
+    'Meia':{mods:{}},
+    'Meia Ofensivo':{mods:{crossing:2, dribbling:2, off_the_ball:2, finishing:1}},
+    'Volante Recuado':{mods:{tackling:2, positioning:2, stamina:2, work_rate:1}},
+  },
+  AMC:{
+    'Meia Atacante':{mods:{}},
+    'Maestro Avançado':{mods:{passing:3, vision:3, technique:2, flair:1}},
+    'Trequartista':{mods:{flair:3, technique:2, off_the_ball:2, dribbling:1, finishing:1}},
+    'Armador':{mods:{passing:2, vision:2, decisions:2, composure:1}},
+  },
+  AML:{
+    'Ponta':{mods:{crossing:2, pace:1}, pe:'externo'},
+    'Ponta Invertido':{mods:{finishing:3, long_shots:2, dribbling:1}, pe:'interno'},
+    'Extremo':{mods:{pace:3, acceleration:2, dribbling:2, crossing:1}},
+    'Armador Avançado':{mods:{passing:2, vision:2, technique:2, flair:1}},
+  },
+  AMR:{
+    'Ponta':{mods:{crossing:2, pace:1}, pe:'externo'},
+    'Ponta Invertido':{mods:{finishing:3, long_shots:2, dribbling:1}, pe:'interno'},
+    'Extremo':{mods:{pace:3, acceleration:2, dribbling:2, crossing:1}},
+    'Armador Avançado':{mods:{passing:2, vision:2, technique:2, flair:1}},
+  },
+  ST:{
+    'Centroavante':{mods:{}},
+    'Finalizador':{mods:{finishing:3, composure:2, off_the_ball:2, antecipation:1}},
+    'Falso 9':{mods:{passing:3, vision:2, technique:2, first_touch:2, dribbling:1}},
+    'Homem-Alvo':{mods:{heading:3, strength:3, jump_reach:2, bravery:1}},
+    'Atacante Completo':{mods:{finishing:2, dribbling:2, off_the_ball:1, technique:1, pace:1}},
+    'Pressionador':{mods:{work_rate:3, stamina:2, agression:2, antecipation:1}},
+  },
+};
+// lista de nomes de roles por posição (pros dropdowns) — derivada de ROLES_DEF
+const ROLES_POS={};
+for(const pos in ROLES_DEF) ROLES_POS[pos]=Object.keys(ROLES_DEF[pos]);
+
+
+/* ---------- MOTOR ---------- */
+const Motor={
+  // monta o mapa de pesos {atributo: peso} da posição, já com os modificadores da role
+  pesosCom(posFM, role){
+    const w=PESOS_POS[posFM]; if(!w) return null;
+    const mapa={};
+    for(const grau in w){ const g=+grau; for(const a of w[grau]) mapa[a]=(mapa[a]||0)+g; }
+    const rdef = role && ROLES_DEF[posFM] && ROLES_DEF[posFM][role];
+    if(rdef && rdef.mods){
+      for(const a in rdef.mods){ mapa[a]=Math.max(0,(mapa[a]||0)+rdef.mods[a]); }
+    }
+    return mapa;
+  },
+
+  // penalidade de pé (0 a 1, multiplica o overall). 1 = sem penalidade.
+  // role.pe 'interno' pede pé oposto ao lado; 'externo' pede pé do lado.
+  // pé fraco forte (weak_foot 1-5) suaviza a penalidade.
+  fatorPe(p, posFM, role){
+    const rdef = role && ROLES_DEF[posFM] && ROLES_DEF[posFM][role];
+    if(!rdef || !rdef.pe) return 1;                 // pé não importa nessa role
+    const lado = posFM.endsWith('R') ? 'D' : posFM.endsWith('L') ? 'E' : null;
+    if(!lado) return 1;                              // posição central: sem lado
+    const pe = (p.peDominante||'').toLowerCase().startsWith('e') ? 'E' : 'D';
+    // pé "ideal" pra role
+    const ideal = rdef.pe==='interno' ? (lado==='D'?'E':'D') : lado;
+    if(pe===ideal) return 1;                         // pé certo: sem penalidade
+    // pé errado: penalidade base −18%, suavizada pelo pé fraco (1★=cheia, 5★=quase nada)
+    const wf = p.peFraco || 1;                       // 1..5
+    const penalidadeMax = 0.18;
+    const alivio = (wf-1)/4;                         // 0 (1★) .. 1 (5★)
+    return 1 - penalidadeMax*(1-alivio);
+  },
+
+  // overall do jogador NUMA posição FM (opcionalmente com ROLE), a partir dos atributos
+  overallEm(p, posFM, role){
+    const mapa=this.pesosCom(posFM, role);
+    const attrs=p.attrs; if(!mapa || !attrs) return p.forca||50;
+    let soma=0, peso=0;
+    for(const a in mapa){ soma+=(attrs[a]||0)*mapa[a]; peso+=100*mapa[a]; }
+    if(peso===0) return p.forca||50;
+    let ov = soma/peso*100;
+    ov *= this.fatorPe(p, posFM, role);             // penalidade de pé (se aplicável)
+    return Math.round(ov);
+  },
+  // overall no slot onde está escalado. Aceita posição FM (GK,DC,DL...) ou genérica (GOL,ZAG...)
+  overallSlot(p, slot){
+    if(!p.attrs) return p.forca||50; // mock: usa força fixa
+    // se o slot já é uma posição FM conhecida, usa direto; senão mapeia do genérico
+    const posFM = PESOS_POS[slot] ? slot : (SLOT_TO_POS[slot] || 'MC');
+    return this.overallEm(p, posFM);
+  },
+  // fração xG da posição (FM ou genérica)
+  xgSlot(slot){ const posFM=PESOS_POS[slot]?slot:(SLOT_TO_POS[slot]||'MC'); return XG_POS[posFM]??0.4; },
+
+  // cor da adequação estilo FM: verde (bom) / amarelo (serve) / vermelho (fora)
+  corAdequacao(ov){
+    if(ov>=75) return 'var(--lemon)';      // verde/lemon = joga bem
+    if(ov>=55) return '#e8c547';            // amarelo = serve
+    return 'var(--loss)';                   // vermelho = fora de posição
+  },
+
+  // melhor overall do jogador numa posição, testando todas as roles daquela posição
+  melhorOvNaPos(p, posFM){
+    const roles=ROLES_POS[posFM]||[''];
+    let best=-1, bestRole='';
+    for(const r of roles){ const o=this.overallEm(p,posFM,r); if(o>best){best=o;bestRole=r;} }
+    return {ov:best, role:bestRole, pos:posFM};
+  },
+
+  // melhor overall+role geral (entre todas as 14 posições)
+  melhorGeral(p){
+    let best={ov:-1,role:'',pos:'MC'};
+    for(const pos of Object.keys(PESOS_POS)){
+      const m=this.melhorOvNaPos(p,pos);
+      if(m.ov>best.ov) best=m;
+    }
+    return best;
+  },
+
+  // melhor overall+role por SETOR (defesa/meio/ataque). Retorna {DEF,MEI,ATQ}
+  melhorPorSetor(p){
+    const grupos={DEF:['DC','DL','DR','WBL','WBR'], MEI:['DM','MC','ML','MR','AMC'], ATQ:['AML','AMR','ST']};
+    const res={};
+    for(const set in grupos){
+      let best={ov:-1,role:'',pos:''};
+      for(const pos of grupos[set]){ const m=this.melhorOvNaPos(p,pos); if(m.ov>best.ov) best=m; }
+      res[set]=best;
+    }
+    return res; // {DEF:{ov,role,pos}, MEI:{...}, ATQ:{...}}
+  },
+
+  rendimento(p){ return p.forca*(p.energia/100); },
+  disp(team){ return team.players.filter(p=>!p.lesionado && !(p.suspenso>0)); },
+
+  escalarAuto(team,esquema){
+    // COM atributos FM: aloca por melhor overall em cada slot FM do esquema
+    if(team.players.some(p=>p.attrs) && LINHAS_FM[esquema]){
+      const slots=LINHAS_FM[esquema].flat();
+      const disp=this.disp(team);
+      const usados=new Set(); const onze=new Array(slots.length).fill(null);
+      // preenche posições mais especializadas primeiro (GK, defesa, ataque, meio)
+      const ordemSlots=slots.map((pos,idx)=>({pos,idx}))
+        .sort((a,b)=>{
+          const prio={GK:0,DC:1,DL:1,DR:1,WBL:1,WBR:1,ST:2,DM:3,MC:3,ML:3,MR:3,AMC:4,AML:4,AMR:4};
+          return (prio[a.pos]??5)-(prio[b.pos]??5);
+        });
+      for(const {pos,idx} of ordemSlots){
+        let melhor=null, melhorOv=-1;
+        for(const p of disp){
+          if(usados.has(p.numero)) continue;
+          const ov=Motor.overallEm(p,pos);
+          if(ov>melhorOv){ melhorOv=ov; melhor=p; }
+        }
+        if(melhor){ onze[idx]=melhor; usados.add(melhor.numero); }
+      }
+      const resto=disp.filter(p=>!usados.has(p.numero)); let r=0;
+      for(let k=0;k<onze.length;k++) if(!onze[k] && resto[r]){ onze[k]=resto[r++]; }
+      return onze.filter(Boolean);
+    }
+    // SEM atributos (mock): sistema antigo por posição genérica
+    const need={GOL:1,...ESQUEMAS[esquema]};
+    const porPos={}; this.disp(team).forEach(p=>(porPos[p.posicao]||=[]).push(p));
+    Object.values(porPos).forEach(a=>a.sort((x,y)=>this.rendimento(y)-this.rendimento(x)));
+    const onze=[]; const usados=new Set();
+    for(const [pos,n] of Object.entries(need)){
+      const d=(porPos[pos]||[]).filter(p=>!usados.has(p));
+      for(let i=0;i<n;i++) if(d[i]){ onze.push(d[i]); usados.add(d[i]); }
+    }
+    const faltam=11-onze.length;
+    if(faltam>0){
+      const resto=this.disp(team).filter(p=>!usados.has(p))
+        .sort((a,b)=>this.rendimento(b)-this.rendimento(a));
+      for(let i=0;i<faltam;i++) if(resto[i]){ onze.push(resto[i]); usados.add(resto[i]); }
+    }
+    return onze;
+  },
+
+  // checa se um jogador está na posição natural pra dada slot-posição
+  natural(player,slotPos){ return player.posicao===slotPos; },
+
+  // força atual de um jogador no slot onde está (× energia/100), considerando a ROLE
+  forcaAtual(p, slotPos, role){
+    let base;
+    if(p.attrs && slotPos){
+      const posFM = PESOS_POS[slotPos] ? slotPos : (SLOT_TO_POS[slotPos] || 'MC');
+      base = this.overallEm(p, posFM, role);       // overall na posição+role = adequação
+    } else {
+      base = p.forca;
+      if(slotPos && p.posicao!==slotPos) base*=0.75;
+    }
+    return base * (p.energia/100);
+  },
+
+  // adequação (%) do jogador a um slot — pra exibir no campo (verde/amarelo/vermelho)
+  adequacao(p, slotPos, role){
+    if(!p.attrs) return p.posicao===slotPos?100:60;
+    const posFM = PESOS_POS[slotPos] ? slotPos : (SLOT_TO_POS[slotPos] || 'MC');
+    return this.overallEm(p, posFM, role);
+  },
+
+  // força do time somando cada jogador em campo pela SUA posição e role
+  forcaCampo(campo){
+    if(!campo.length) return 30;
+    return campo.reduce((s,c)=>{
+      const p=c.ref||c;
+      const en=c.energia!=null?c.energia:p.energia;
+      let base;
+      if(p.attrs && c.posicao){
+        const posFM = PESOS_POS[c.posicao] ? c.posicao : (SLOT_TO_POS[c.posicao]||'MC');
+        base = this.overallEm(p, posFM, c.role);
+      } else base = c.forca||p.forca;
+      return s + base*(en/100);
+    },0);
+  },
+
+  // FORÇA DO TIME = SOMA da força atual dos que estão em campo (roles: array paralelo opcional)
+  forcaEmCampo(onze, slots, roles){
+    if(!onze.length) return 30;
+    return onze.reduce((s,p,i)=>s+this.forcaAtual(p, slots?slots[i]:null, roles?roles[i]:null), 0);
+  },
+
+  // compat: força média pra exibição
+  forcaOnze(onze, slots, roles){
+    if(!onze.length) return 30;
+    return this.forcaEmCampo(onze,slots,roles)/onze.length;
+  },
+
+  // chance de gol de um lado num minuto, dadas as forças EM CAMPO (soma) e estilos
+  chanceGol(fAtk, fDef, estiloAtk, estiloDef, mando){
+    const est={ofensivo:1.35,normal:1.0,defensivo:0.72};
+    const atk=(fAtk+(mando?40:0))*est[estiloAtk];
+    const def=fDef*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
+    // normaliza pela escala de soma (~600); mantém ~2-3 gols/jogo
+    return (atk/(def+atk))*0.03;
+  },
+
+  // desgaste fixo: -0.1 de energia por minuto jogado (= -1 a cada 10min, -9 na partida)
+  desgastarMinuto(onze){
+    onze.forEach(p=>{ p.energia=Math.max(0, p.energia-0.1); });
+  },
+
+  // risco de lesão ao FIM do jogo, baseado na energia final
+  checarLesao(onze){
+    const les=[];
+    onze.forEach(p=>{
+      const risco=p.energia<30?0.06:p.energia<60?0.025:0.008;
+      if(Math.random()<risco){ p.lesionado=Math.floor(Math.random()*18)+4; les.push({nome:p.nome,dias:p.lesionado}); }
+    });
+    return les;
+  }
+};
+
+/* ====================================================================
+   EVOLUÇÃO (Fase 2B) — passiva por idade + tempero de forma
+   Mexe nos 45 atributos individuais. Overall sobe como consequência.
+   ==================================================================== */
+const Evolucao={
+  PASSO_BASE: 2.4,          // magnitude do ganho por rodada (calibrável)
+
+  // fator idade: >0 evolui, ~0 estável, <0 declina. Espelha o Brasfoot.
+  fatorIdade(age){
+    if(age<=19) return 1.35;
+    if(age<=21) return 1.15;
+    if(age<=23) return 0.95;
+    if(age<=26) return 0.60;
+    if(age<=29) return 0.30;
+    if(age<=31) return 0.12;
+    if(age<=32) return -0.08;      // começa a cair de leve
+    if(age<=34) return -0.14;      // declínio suave
+    if(age<=36) return -0.24;
+    return -0.38;                  // 37+ cai rápido
+  },
+
+  // talento 1..5 -> multiplicador de velocidade
+  fatorTalento(t){ return ({1:0.55,2:0.8,3:1.0,4:1.25,5:1.6})[t||3]||1.0; },
+
+  // tempero de forma: jogou? venceu? Quem não joga evolui menos.
+  fatorForma(jogou, venceu){
+    let f = jogou ? 1.0 : 0.55;    // encostado ganha, mas menos
+    if(jogou && venceu) f += 0.15; // vitória dá um empurrãozinho
+    return f;
+  },
+
+  // growthFactor GLOBAL do jogador (potencial/ov natural). Fixo pra sempre.
+  // Ancorado no overall inicial da MELHOR posição (natural).
+  growthFactor(p){
+    if(p._growth!=null) return p._growth;
+    const ovNat = (p._ovInicialNat!=null) ? p._ovInicialNat : Motor.melhorGeral(p).ov;
+    const pot = p.potential || ovNat;
+    p._growth = ovNat>0 ? Math.max(1, pot/ovNat) : 1;
+    return p._growth;
+  },
+
+  // Tira a "foto" inicial: overall base por posição e o growthFactor.
+  // Chamado UMA vez por jogador (âncora fixa). Idempotente.
+  inicializar(p){
+    if(p._ancora) return;
+    const posNat = Motor.melhorGeral(p).pos;
+    p._ovInicialNat = Motor.overallEm(p, posNat);
+    p._posNat = posNat;
+    this.growthFactor(p);                          // popula p._growth
+    p.attrsDec = {};                               // acumulador decimal paralelo
+    for(const a in p.attrs) p.attrsDec[a] = p.attrs[a];
+    // Calibra o multiplicador de atributo (mult) pra que o overall da POSIÇÃO NATURAL
+    // atinja exatamente o 'potential'. O overall é ponderado, então mult != growthFactor.
+    // Busca binária sobre o multiplicador aplicado aos attrs-chave da posição.
+    const pot = p.potential || p._ovInicialNat;
+    p._capAttr = {};
+    if(pot<=p._ovInicialNat){
+      for(const a in p.attrs) p._capAttr[a]=p.attrs[a];   // sem folga
+    } else {
+      const teste=(mult)=>{
+        const at={};
+        for(const a in p.attrs) at[a]=Math.min(100, p.attrs[a]*mult);
+        return Motor.overallEm({attrs:at, peDominante:p.peDominante, peFraco:p.peFraco}, posNat);
+      };
+      let lo=1, hi=2.5;
+      for(let it=0; it<24; it++){ const mid=(lo+hi)/2; if(teste(mid)<pot) lo=mid; else hi=mid; }
+      const mult=(lo+hi)/2;
+      for(const a in p.attrs) p._capAttr[a]=Math.min(100, Math.round(p.attrs[a]*mult*10)/10);
+    }
+    p._ancora = true;
+  },
+
+  // aplica UMA rodada de evolução a um jogador, direcionada a posAlvo.
+  // Retorna true se algum atributo inteiro mudou (pra saber se recalcula 'forca').
+  aplicarRodada(p, posAlvo, jogou, venceu){
+    if(!p._ancora) this.inicializar(p);
+    const fIdade = this.fatorIdade(p.idade);
+    if(fIdade===0) return false;                   // estagnação total
+    const fTal = this.fatorTalento(p.talento);
+    const fForma = this.fatorForma(jogou, venceu);
+    const pesos = PESOS_POS[posAlvo] || PESOS_POS.MC;
+    // monta lista {attr:pesoGrau} da posição (grau 3/2/1)
+    const alvos = {};
+    for(const grau in pesos){ for(const a of pesos[grau]) alvos[a]=Math.max(alvos[a]||0,+grau); }
+    const somaPesos = Object.values(alvos).reduce((s,w)=>s+w,0) || 1;
+    let mudou=false;
+    const ganhoTot = this.PASSO_BASE * fIdade * fTal * fForma;
+    for(const a in alvos){
+      const cap = p._capAttr[a] ?? 100;
+      if(fIdade>0 && p.attrsDec[a]>=cap) continue;  // chegou no teto daquele attr
+      // distribui proporcional ao peso do atributo na posição
+      let d = ganhoTot * (alvos[a]/somaPesos);
+      // freio de gap: só desacelera nos últimos ~5 pts até o teto do attr
+      if(fIdade>0){
+        const gap = cap - p.attrsDec[a];
+        d *= Math.max(0.2, Math.min(1, gap/5));
+      }
+      let nv = p.attrsDec[a] + d;
+      if(fIdade>0) nv = Math.min(nv, cap);
+      nv = Math.max(1, Math.min(100, nv));          // sanidade 1..100
+      const antesInt = Math.floor(p.attrsDec[a]);
+      p.attrsDec[a] = nv;
+      const depoisInt = Math.floor(nv);
+      if(depoisInt!==antesInt){ p.attrs[a]=depoisInt; mudou=true; }
+    }
+    return mudou;
+  },
+
+  // recalcula a 'forca' exibida (melhor overall) após mudanças de attrs
+  recalcForca(p){
+    p.forca = Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm(p,pos)));
+  },
+};
+
+/* ---------- FIXTURES ---------- */
+function gerarFixtures(n){
+  const ids=[...Array(n).keys()]; if(n%2) ids.push(-1);
+  const m=ids.length,t=[];
+  for(let r=0;r<m-1;r++){ const j=[];
+    for(let i=0;i<m/2;i++){ const h=ids[i],a=ids[m-1-i]; if(h!==-1&&a!==-1) j.push(r%2?[a,h]:[h,a]); }
+    t.push(j); ids.splice(1,0,ids.pop());
+  }
+  return t.concat(t.map(j=>j.map(([h,a])=>[a,h])));
+}
+
+/* ====================================================================
+   MENU / PRÉ-JOGO (Fase 3): login, slots de save, novo jogo
+   ==================================================================== */
+const Menu={
+  user:null,            // objeto do Supabase auth, ou null
+  convidado:false,      // true = jogando sem conta (save em localStorage)
+  slot:null,            // slot escolhido ('1'|'2'|'3')
+  _ofertas:[], _ofertaIdx:0,
+
+  el(){ return document.getElementById('preBody'); },
+  foot(t){ const f=document.getElementById('preFoot'); if(f) f.innerHTML=t||''; },
+  sub(t){ const s=document.getElementById('preSub'); if(s) s.textContent=t; },
+  msg(txt,tipo){ return `<div class="pre-msg ${tipo||'info'}">${txt}</div>`; },
+
+  mostrar(){ document.getElementById('preGame').classList.remove('hidden');
+             document.getElementById('gameWrap').classList.add('hidden'); },
+  esconder(){ document.getElementById('preGame').classList.add('hidden');
+              document.getElementById('gameWrap').classList.remove('hidden'); },
+
+  // ---------- entrada ----------
+  async iniciar(){
+    this.mostrar();
+    // já tem sessão ativa?
+    try{
+      const {data}=await App.sb.auth.getSession();
+      if(data && data.session){ this.user=data.session.user; return this.telaMenu(); }
+    }catch(e){}
+    this.telaLogin();
+  },
+
+  // ---------- LOGIN ----------
+  telaLogin(erro){
+    this.sub('entrar na sua conta');
+    this.el().innerHTML=`
+      <div class="pre-card">
+        <div class="pre-title">Entrar</div>
+        <div class="pre-hint">Use a conta que você já criou para continuar sua carreira.</div>
+        <div class="field-in"><label>E-mail</label><input id="mEmail" type="email" autocomplete="email" placeholder="voce@email.com"></div>
+        <div class="field-in"><label>Senha</label><input id="mSenha" type="password" autocomplete="current-password" placeholder="sua senha"></div>
+        <button class="pre-btn" id="btnEntrar">Entrar</button>
+        ${erro?this.msg(erro,'err'):''}
+        <div class="pre-sep"><span>ainda não tem conta?</span></div>
+        <button class="pre-btn ghost" id="btnIrCriar">Criar uma conta</button>
+        <button class="pre-btn ghost" id="btnConvidado">Jogar como convidado</button>
+      </div>`;
+    this.foot('O modo convidado salva só neste dispositivo.');
+    const email=()=>document.getElementById('mEmail').value.trim();
+    const senha=()=>document.getElementById('mSenha').value;
+    document.getElementById('btnEntrar').onclick=()=>this.entrar(email(),senha());
+    document.getElementById('btnIrCriar').onclick=()=>this.telaCadastro();
+    document.getElementById('btnConvidado').onclick=()=>{ this.convidado=true; this.user=null; this.telaMenu(); };
+    document.getElementById('mSenha').onkeydown=(e)=>{ if(e.key==='Enter') this.entrar(email(),senha()); };
+  },
+
+  // ---------- CADASTRO (tela separada) ----------
+  telaCadastro(erro){
+    this.sub('criar sua conta');
+    this.el().innerHTML=`
+      <div class="pre-card">
+        <div class="pre-title">Criar conta</div>
+        <div class="pre-hint">Sua carreira fica salva na nuvem e você joga de qualquer dispositivo.</div>
+        <div class="field-in"><label>E-mail</label><input id="cEmail" type="email" autocomplete="email" placeholder="voce@email.com"></div>
+        <div class="field-in"><label>Criar uma senha</label><input id="cSenha" type="password" autocomplete="new-password" placeholder="mínimo 6 caracteres"></div>
+        <div class="field-in"><label>Repita a senha</label><input id="cSenha2" type="password" autocomplete="new-password" placeholder="digite de novo"></div>
+        <button class="pre-btn" id="btnCriarConta">Criar conta e jogar</button>
+        ${erro?this.msg(erro,'err'):''}
+        <div class="pre-sep"><span>já tem conta?</span></div>
+        <button class="pre-btn ghost" id="btnIrLogin">Voltar para o login</button>
+      </div>`;
+    this.foot('');
+    const g=id=>document.getElementById(id).value;
+    document.getElementById('btnCriarConta').onclick=()=>{
+      const e=g('cEmail').trim(), s=g('cSenha'), s2=g('cSenha2');
+      if(s!==s2) return this.telaCadastro('As senhas não são iguais.');
+      this.criarConta(e,s);
+    };
+    document.getElementById('btnIrLogin').onclick=()=>this.telaLogin();
+    document.getElementById('cSenha2').onkeydown=(ev)=>{ if(ev.key==='Enter') document.getElementById('btnCriarConta').click(); };
+  },
+  async entrar(email,senha){
+    if(!email||!senha) return this.telaLogin('Preencha e-mail e senha.');
+    this.el().innerHTML=`<div class="pre-card">${this.msg('Entrando...','info')}</div>`;
+    try{
+      const {data,error}=await App.sb.auth.signInWithPassword({email,password:senha});
+      if(error) throw error;
+      this.user=data.user; this.convidado=false; this.telaMenu();
+    }catch(e){ this.telaLogin(this.traduzErro(e.message)); }
+  },
+  async criarConta(email,senha){
+    if(!email||!senha) return this.telaCadastro('Preencha e-mail e senha.');
+    if(senha.length<6) return this.telaCadastro('A senha precisa de pelo menos 6 caracteres.');
+    this.el().innerHTML=`<div class="pre-card">${this.msg('Criando conta...','info')}</div>`;
+    try{
+      const {data,error}=await App.sb.auth.signUp({email,password:senha});
+      if(error) throw error;
+      if(data.user && !data.session){
+        // confirmação de e-mail está ligada no projeto
+        this.el().innerHTML=`<div class="pre-card">
+          <div class="pre-title">Confirme seu e-mail</div>
+          <div class="pre-hint">Enviamos um link para <b>${email}</b>. Confirme e volte aqui para entrar.</div>
+          <button class="pre-btn" id="btnVoltar">Voltar</button></div>`;
+        document.getElementById('btnVoltar').onclick=()=>this.telaLogin();
+        return;
+      }
+      this.user=data.user; this.convidado=false; this.telaMenu();
+    }catch(e){ this.telaCadastro(this.traduzErro(e.message)); }
+  },
+  traduzErro(m){
+    if(/Invalid login/i.test(m)) return 'E-mail ou senha incorretos.';
+    if(/already registered|already exists/i.test(m)) return 'Esse e-mail já tem conta. Tente entrar.';
+    if(/Password should be/i.test(m)) return 'A senha precisa de pelo menos 6 caracteres.';
+    if(/Unable to validate email|invalid format/i.test(m)) return 'E-mail inválido.';
+    return m;
+  },
+  async sair(){
+    try{ await App.sb.auth.signOut(); }catch(e){}
+    this.user=null; this.convidado=false; this.slot=null; this.telaLogin();
+  },
+
+  // ---------- MENU PRINCIPAL ----------
+  async telaMenu(){
+    const quem = this.convidado ? 'convidado' : (this.user?.email||'');
+    this.sub('menu principal');
+    this.el().innerHTML=`<div class="pre-card"><div class="pre-title">Carregando saves...</div></div>`;
+    const saves=await this.listarSaves();
+    this.el().innerHTML=`
+      <div class="pre-card wide">
+        <div class="pre-title">Suas carreiras</div>
+        <div class="pre-hint">Escolha um slot para continuar ou começar uma nova carreira.</div>
+        ${[1,2,3].map(n=>{
+          const s=saves[n];
+          return s
+            ? `<div class="save-slot" data-slot="${n}">
+                 <div class="save-slot-n">${n}</div>
+                 <div class="save-slot-info">
+                   <div class="save-slot-clube">${s.clube||'Carreira'}</div>
+                   <div class="save-slot-meta">Temporada ${s.temporada} · Rodada ${s.rodada} · ${s.quando}</div>
+                 </div>
+                 <button class="save-slot-del" data-del="${n}">apagar</button>
+               </div>`
+            : `<div class="save-slot vazio" data-novo="${n}">
+                 <div class="save-slot-n">${n}</div>
+                 <div class="save-slot-info"><div class="save-slot-clube">— slot vazio · clique para começar —</div></div>
+               </div>`;
+        }).join('')}
+        ${this.convidado?this.msg('Modo convidado: o save fica só neste dispositivo. Crie uma conta para salvar na nuvem.','info'):''}
+        <div class="pre-sep"><span>${this.convidado?'quer salvar na nuvem?':'conectado como '+(this.user?.email||'')}</span></div>
+        <button class="pre-btn ghost" id="btnSairMenu">${this.convidado?'Criar conta / entrar':'Sair da conta'}</button>
+      </div>`;
+    this.foot('');
+    document.getElementById('btnSairMenu').onclick=()=>this.sair();
+    this.el().querySelectorAll('[data-slot]').forEach(d=>d.onclick=(ev)=>{
+      if(ev.target.dataset.del) return;
+      this.carregarSlot(d.dataset.slot);
+    });
+    this.el().querySelectorAll('[data-novo]').forEach(d=>d.onclick=()=>this.telaNovoJogo(d.dataset.novo));
+    this.el().querySelectorAll('[data-del]').forEach(b=>b.onclick=async(ev)=>{
+      ev.stopPropagation();
+      if(!confirm('Apagar esta carreira? Não dá pra desfazer.')) return;
+      await this.apagarSave(b.dataset.del); this.telaMenu();
+    });
+  },
+
+  // ---------- NOVO JOGO: escolha entre 7 clubes da Série D ----------
+  async telaNovoJogo(slot){
+    this.slot=slot;
+    this.sub('nova carreira');
+    this.el().innerHTML=`<div class="pre-card">${this.msg('Carregando clubes...','info')}</div>`;
+    try{
+      if(!App.provider) App.provider=new SupabaseProvider(App.SUP_URL,App.SUP_KEY);
+      await App.novaTemporada(['A','B','C','D']);   // carrega todas as divisões (pipeline)
+    }catch(e){ this.el().innerHTML=`<div class="pre-card">${this.msg('Falha ao carregar os times: '+e.message,'err')}</div>`; return; }
+    // arco de carreira: a primeira carreira começa na Série D (última divisão)
+    const elegiveis=App.teams.map((t,i)=>({i,t})).filter(o=>o.t.divisao==='D');
+    const pool=elegiveis.length?elegiveis:App.teams.map((t,i)=>({i,t}));
+    // sorteia 5 (ou menos, se o pool for pequeno) e lista SÓ eles
+    const sorteados=[...pool].sort(()=>Math.random()-0.5).slice(0, Math.min(5, pool.length));
+    this._selTimes=sorteados.map(({i})=>({i, f:this.forcaTime(i)}));
+    this.mostrarSelecaoTimes();
+  },
+  forcaTime(i){
+    const t=App.teams[i]; if(!t) return 0;
+    const ovs=t.players.map(p=>Motor.melhorGeral(p).ov).sort((a,b)=>b-a).slice(0,11);
+    return ovs.reduce((a,b)=>a+b,0)/Math.max(1,ovs.length);
+  },
+  nivelTime(f){ return f>=73?'Meio de tabela':f>=68?'Modesto':'Em reconstrução'; },
+  // lista os 7 clubes sorteados, um por linha, para escolha direta
+  mostrarSelecaoTimes(){
+    const linhas=this._selTimes.map(o=>{
+      const t=App.teams[o.i];
+      return `<button class="clube-lin" data-ti="${o.i}">
+          <span class="clube-escudo">${App.escudoHTML(t,40)}</span>
+          <span class="clube-info">
+            <span class="clube-nome">${t.nome}</span>
+            <span class="clube-tag">${this.nivelTime(o.f)}</span>
+          </span>
+          <span class="clube-metas">
+            <span class="clube-meta"><b>${o.f.toFixed(1)}</b><small>força</small></span>
+            <span class="clube-meta"><b>${App.fmtReais(t.saldo||0)}</b><small>caixa</small></span>
+            <span class="clube-meta"><b>${t.players.length}</b><small>atletas</small></span>
+          </span>
+          <span class="clube-go">Assumir ▸</span>
+        </button>`;
+    }).join('');
+    this.el().innerHTML=`
+      <div class="pre-card pre-card-wide">
+        <div class="pre-title">Escolha seu clube</div>
+        <div class="pre-hint">Todo treinador começa por baixo, na Série D. Estes 5 clubes procuram comando — escolha um. (Quer outros? Recomece o Novo Jogo.)</div>
+        <div class="clube-lista">${linhas}</div>
+        <button class="pre-btn ghost" id="btnVoltarMenu">Voltar</button>
+      </div>`;
+    this.foot('');
+    this.el().querySelectorAll('.clube-lin').forEach(b=>b.onclick=()=>this.comecarCarreira(+b.dataset.ti));
+    document.getElementById('btnVoltarMenu').onclick=()=>this.telaMenu();
+  },
+  // (fluxo de DEMISSÃO ainda usa proposta única — mantido)
+  mostrarOferta(){
+    const o=this._ofertas[this._ofertaIdx];
+    const t=App.teams[o.i];
+    const nivel = o.f>=73?'Time de meio de tabela':o.f>=68?'Time modesto':'Time em reconstrução';
+    const restantes=this._ofertas.length-this._ofertaIdx-1;
+    this.el().innerHTML=`
+      <div class="pre-card">
+        <div class="pre-title">Proposta de trabalho</div>
+        <div class="pre-hint">Todo treinador começa por baixo. Faça bonito e os grandes vêm atrás.</div>
+        <div class="oferta">
+          <div class="oferta-escudo">${App.escudoHTML(t,64)}</div>
+          <div class="oferta-nome">${t.nome}</div>
+          <div class="oferta-tag">${nivel}</div>
+          <div class="oferta-meta" style="margin-top:14px">
+            Força do elenco: <b>${o.f.toFixed(1)}</b><br>
+            Caixa: <b>${App.fmtReais(t.saldo||0)}</b><br>
+            Elenco: <b>${t.players.length} atletas</b>
+          </div>
+        </div>
+        <button class="pre-btn" id="btnAceitar">Assumir o comando</button>
+        <button class="pre-btn ghost" id="btnOutra" ${restantes<=0?'disabled':''}>
+          Ver outra proposta${restantes>0?` (${restantes})`:''}</button>
+        <button class="pre-btn ghost" id="btnVoltarMenu">Voltar</button>
+      </div>`;
+    this.foot('');
+    document.getElementById('btnAceitar').onclick=()=>this.comecarCarreira(o.i);
+    document.getElementById('btnOutra').onclick=()=>{ this._ofertaIdx++; this.mostrarOferta(); };
+    document.getElementById('btnVoltarMenu').onclick=()=>this.telaMenu();
+  },
+  // demissão: oferece clube fraco SEM recarregar o banco (times já estão em memória).
+  // O treinador recomeça uma temporada nova naquele slot, num clube pequeno.
+  retomarNovaCarreira(){
+    this.mostrar();               // reexibe o container de pré-jogo por cima do jogo
+    this.sub('livre no mercado');
+    // só clubes das divisões mais baixas carregadas (arco de carreira: recomeça por baixo)
+    const divsBaixas=['D','C'].filter(d=>App.teams.some(t=>t.divisao===d));
+    const elegiveis=App.teams.map((t,i)=>({i,t})).filter(o=> divsBaixas.length? divsBaixas.includes(o.t.divisao) : true);
+    const forcas=elegiveis.map(({i})=>({i, f:this.forcaTime(i)}));
+    // 60% mais fracos, embaralhados
+    forcas.sort((a,b)=>a.f-b.f);
+    const corte=Math.max(1,Math.floor(forcas.length*0.6));
+    this._ofertas=forcas.slice(0,corte).sort(()=>Math.random()-0.5);
+    this._ofertaIdx=0;
+    this._demissaoFlow=true;
+    this.mostrarOferta();
+  },
+  async comecarCarreira(ti){
+    App.myTeam=ti; App.squadView=ti;
+    App.slotAtual=this.slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
+    App.confianca=App.CONF_INICIAL;    // voto de confiança inicial (60/100)
+    App.demitido=false;
+    // fluxo de DEMISSÃO: recomeça uma temporada limpa no clube novo (zera tabela/competição)
+    if(this._demissaoFlow){
+      this._demissaoFlow=false;
+      App.temporada=1;
+      App.reiniciarTemporadaPara(ti);
+    } else {
+      // novo jogo: a temporada foi montada com myTeam=0 (Série A). Agora que o clube
+      // foi escolhido, re-sincroniza a liga ativa para a divisão DELE (senão a Arena
+      // e o recado do presidente ficam presos na Série A).
+      App.sincronizarDivisaoAtiva();
+    }
+    App.escalarMelhor(ti);             // já entra com o melhor 11 montado (evita time incompleto)
+    this.esconder();
+    App.renderShell(); App.showTab('escala');
+    App.salvarSupabase(true);
+  },
+
+  // ---------- persistência dos slots ----------
+  async listarSaves(){
+    const out={};
+    if(this.convidado){
+      [1,2,3].forEach(n=>{
+        try{
+          const raw=localStorage.getItem('flk_save_'+n); if(!raw) return;
+          const s=JSON.parse(raw);
+          out[n]={clube:s.clube, temporada:s.temporada, rodada:s.rodada, quando:this.quando(s.updated_at)};
+        }catch(e){}
+      });
+      return out;
+    }
+    try{
+      const {data}=await App.sb.from('game_save')
+        .select('slot,temporada,rodada,my_team,updated_at').eq('user_id',this.user.id);
+      (data||[]).forEach(r=>{
+        out[r.slot]={clube:(App.teams&&App.teams[r.my_team]?.nome)||'Carreira',
+          temporada:r.temporada, rodada:r.rodada, quando:this.quando(r.updated_at)};
+      });
+    }catch(e){}
+    return out;
+  },
+  quando(iso){
+    if(!iso) return '';
+    const d=new Date(iso), h=Math.round((Date.now()-d.getTime())/36e5);
+    if(h<1) return 'agora há pouco';
+    if(h<24) return `há ${h}h`;
+    return `há ${Math.round(h/24)}d`;
+  },
+  async apagarSave(slot){
+    if(this.convidado){ localStorage.removeItem('flk_save_'+slot); return; }
+    try{ await App.sb.from('game_save').delete().eq('user_id',this.user.id).eq('slot',String(slot)); }catch(e){}
+  },
+  async carregarSlot(slot){
+    this.slot=slot;
+    this.el().innerHTML=`<div class="pre-card">${this.msg('Carregando carreira...','info')}</div>`;
+    try{
+      if(!App.provider) App.provider=new SupabaseProvider(App.SUP_URL,App.SUP_KEY);
+      await App.novaTemporada(['A','B','C','D']);
+      App.slotAtual=slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
+      let estado=null;
+      if(this.convidado){
+        const raw=localStorage.getItem('flk_save_'+slot);
+        if(raw) estado=JSON.parse(raw).estado;
+      } else {
+        const {data}=await App.sb.from('game_save').select('estado')
+          .eq('user_id',this.user.id).eq('slot',String(slot)).maybeSingle();
+        estado=data?.estado||null;
+      }
+      let aplicado={ok:true};
+      if(estado) aplicado=App.aplicarSnapshot(estado)||{ok:true};
+      // save inválido/incompatível: começa uma temporada nova neste slot (aviso já dado)
+      if(!aplicado.ok || App.teams.some(t=>!t.players.length)){
+        App.myTeam=0; App.squadView=0;
+        App.montarTemporada();
+        this.esconder(); App.renderShell(); App.showTab('escala');
+        return;
+      }
+      this.esconder();
+      App.renderShell(); App.showTab('escala');
+    }catch(e){
+      this.el().innerHTML=`<div class="pre-card">${this.msg('Erro ao carregar: '+e.message,'err')}
+        <button class="pre-btn ghost" onclick="Menu.telaMenu()">Voltar</button></div>`;
+    }
+  },
+};
+
+/* ====================================================================
+   COMPETIÇÃO — formatos de disputa (pontos corridos e Série D)
+   Série D: 96 times, 16 grupos de 6 (turno e returno = 10 rodadas),
+   4 melhores de cada grupo avançam (64), mata-mata ida e volta,
+   4 semifinalistas sobem + 2 vagas em repescagem entre os eliminados
+   nas quartas = 6 acessos. Sem rebaixamento.
+   ==================================================================== */
+// Configuração de formato por divisão (data-driven — Fase 1).
+// Para chegar às 10 divisões do regras_jogo_cartas.md no futuro, basta estender
+// esta tabela; a lógica de competição lê daqui, não tem números hard-coded.
+// Regra de consistência: os `acessos` de uma divisão devem casar com o `rebaixa`
+// da divisão imediatamente acima, senão os tamanhos das séries derivam a cada
+// temporada (ver harness de regressão de divisões).
+const FORMATO_DIVISOES={
+  A:{tipo:'pontos', acessos:4, rebaixa:4},                                   // topo: acessos ignorado
+  B:{tipo:'pontos', acessos:4, rebaixa:4},
+  C:{tipo:'pontos', acessos:4, rebaixa:6},                                   // cai 6 = casa com os 6 da D
+  D:{tipo:'grupos', nGrupos:16, porGrupo:6, avancamPorGrupo:4, acessos:6, rebaixa:0}, // base
+};
+
+const Competicao={
+  // ---------- formato por divisão ----------
+  formatoDe(divisao){
+    // Lê da tabela data-driven FORMATO_DIVISOES. Fallback defensivo p/ divisão
+    // desconhecida (pontos corridos 4/4), para nunca quebrar em save antigo.
+    const f=FORMATO_DIVISOES[divisao];
+    if(f) return Object.assign({}, f);
+    return {tipo:'pontos', acessos:4, rebaixa:4};
+  },
+
+  // ---------- FASE DE GRUPOS ----------
+  // distribui os índices em N grupos por POTES: ordena por força, fatia em potes
+  // e sorteia dentro de cada pote — equilibra as chaves mas muda a cada temporada.
+  montarGrupos(indices, nGrupos, forcaDe){
+    const ord=[...indices].sort((a,b)=>forcaDe(b)-forcaDe(a));
+    const porGrupo=Math.ceil(ord.length/nGrupos);
+    const g=Array.from({length:nGrupos},()=>[]);
+    for(let pote=0; pote<porGrupo; pote++){
+      // times deste pote, embaralhados
+      const fatia=ord.slice(pote*nGrupos,(pote+1)*nGrupos).sort(()=>Math.random()-0.5);
+      // serpentina entre potes evita que o mesmo grupo pegue sempre o melhor
+      const ordemGrupos=pote%2? [...Array(nGrupos).keys()].reverse() : [...Array(nGrupos).keys()];
+      fatia.forEach((idx,k)=>{ g[ordemGrupos[k]].push(idx); });
+    }
+    return g;
+  },
+
+  // fixtures de turno e returno DENTRO de cada grupo, mesclando as rodadas
+  // (todos os grupos jogam a mesma rodada). Retorna array de rodadas; cada rodada = [[h,a],...]
+  fixturesGrupos(grupos){
+    const porGrupo=grupos.map(g=>this.roundRobin(g));
+    const nRod=Math.max(...porGrupo.map(f=>f.length));
+    const out=[];
+    for(let r=0;r<nRod;r++){
+      const rodada=[];
+      porGrupo.forEach(f=>{ if(f[r]) rodada.push(...f[r]); });
+      out.push(rodada);
+    }
+    return out;
+  },
+  // pontos corridos (ida e volta) entre os índices reais de uma divisão inteira
+  roundRobinIdx(ids){ return this.roundRobin(ids); },
+  // turno e returno de um grupo (recebe os índices reais dos times)
+  roundRobin(ids){
+    const arr=[...ids]; if(arr.length%2) arr.push(-1);
+    const m=arr.length, t=[];
+    for(let r=0;r<m-1;r++){
+      const j=[];
+      for(let i=0;i<m/2;i++){
+        const h=arr[i], a=arr[m-1-i];
+        if(h!==-1&&a!==-1) j.push(r%2?[a,h]:[h,a]);
+      }
+      t.push(j); arr.splice(1,0,arr.pop());
+    }
+    return t.concat(t.map(j=>j.map(([h,a])=>[a,h])));
+  },
+
+  // classificação DENTRO de um grupo (usa o stats global do App)
+  classificarGrupo(stats, grupo, nomeDe){
+    return grupo.map(i=>stats.find(s=>s.i===i)).filter(Boolean)
+      .sort((a,b)=> b.pts-a.pts || (b.gp-b.gc)-(a.gp-a.gc) || b.gp-a.gp
+                 || nomeDe(a.i).localeCompare(nomeDe(b.i)));
+  },
+
+  // ---------- MATA-MATA ----------
+  // monta os confrontos da 2ª fase: 1º de um grupo x 4º de outro, etc. (cruzado)
+  montarMataMata(grupos, stats, nomeDe, avancam){
+    const class1=grupos.map(g=>this.classificarGrupo(stats,g,nomeDe));
+    const classificados=[];
+    class1.forEach((c,gi)=>c.slice(0,avancam).forEach((s,pos)=>classificados.push({i:s.i, grupo:gi, pos})));
+    // cruzamento: 1º do grupo G enfrenta o 4º do grupo espelhado
+    const pares=[];
+    const n=grupos.length;
+    for(let gi=0; gi<n; gi++){
+      const espelho=n-1-gi;
+      const a=classificados.find(c=>c.grupo===gi && c.pos===0);
+      const b=classificados.find(c=>c.grupo===espelho && c.pos===3);
+      const c2=classificados.find(c=>c.grupo===gi && c.pos===1);
+      const d=classificados.find(c=>c.grupo===espelho && c.pos===2);
+      if(a&&b) pares.push([a.i,b.i]);
+      if(c2&&d) pares.push([c2.i,d.i]);
+    }
+    return pares.slice(0, classificados.length/2);
+  },
+
+  // resolve um confronto de ida e volta. jogos = [{h,a,gc,gf},{...}]
+  // Critério: soma dos gols; empate → melhor campanha (quem foi mandante na volta avança)
+  vencedorDoConfronto(mandante, visitante, jogos){
+    let gM=0, gV=0;
+    jogos.forEach(j=>{
+      if(j.h===mandante){ gM+=j.gc; gV+=j.gf; } else { gV+=j.gc; gM+=j.gf; }
+    });
+    if(gM>gV) return {vencedor:mandante, perdedor:visitante, gM, gV};
+    if(gV>gM) return {vencedor:visitante, perdedor:mandante, gM, gV};
+    // empate no agregado: decide nos pênaltis (aleatório, com leve vantagem do mandante da volta)
+    const penM=Math.random()<0.55;
+    return {vencedor:penM?mandante:visitante, perdedor:penM?visitante:mandante, gM, gV, penaltis:true};
+  },
+
+  // nome da fase pelo número de confrontos restantes
+  nomeFase(nTimes){
+    return ({64:'Segunda Fase',32:'Terceira Fase',16:'Oitavas de final',
+             8:'Quartas de final',4:'Semifinal',2:'Final'})[nTimes] || `Fase de ${nTimes}`;
+  },
+
+  // ---------- ACESSO ----------
+  // Série D: os 4 semifinalistas sobem; +2 em repescagem entre os 4 eliminados nas quartas.
+  acessosSerieD(semifinalistas, eliminadosQuartas){
+    const sobem=[...semifinalistas];
+    // repescagem: 2 confrontos entre os 4 eliminados nas quartas
+    const rep=[];
+    if(eliminadosQuartas.length>=4){
+      rep.push([eliminadosQuartas[0],eliminadosQuartas[3]]);
+      rep.push([eliminadosQuartas[1],eliminadosQuartas[2]]);
+    }
+    return {sobem, repescagem:rep};
+  },
+};
+
+/* ==================================================================== */
+const App={
+  provider:null, teams:[], fixtures:[], rodada:0, dia:1, stats:[], temporada:1,
+  resultados:[], myTeam:0, squadView:0,
+  // por-time: esquema, estilo, marcacao, escalação manual (array de players)
+  cfg:[], benchSel:null,
+  // estado da tabela de elenco (ordenação + filtros)
+  elencoSort:{col:'forca', dir:-1}, elencoFiltro:{setor:'', pais:''}, roleAberta:null,
+
+  // credenciais padrão (conexão automática ao abrir)
+  SUP_URL:'https://leysofvftpgocigqqgzi.supabase.co',
+  SUP_KEY:'sb_publishable_i5CqcTOw2U9amGelpwcuxg_d-nYXdxu',
+
+  // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
+  // formato do snapshot mudar de forma incompatível.
+  SCHEMA_VERSION:8,
+  GAME_VERSION:'0.9.0',
+
+  sb:null,              // client Supabase compartilhado (auth + saves)
+  slotAtual:null,       // slot de save em uso ('1'|'2'|'3')
+  userId:null,          // uuid do usuário logado (null = convidado)
+  convidado:false,
+
+  async boot(){
+    // client único para auth e saves
+    try{
+      if(!window.supabase) throw new Error('supabase-js não carregou');
+      this.sb=window.supabase.createClient(this.SUP_URL,this.SUP_KEY);
+    }catch(e){
+      document.getElementById('preBody').innerHTML=
+        `<div class="pre-card"><div class="pre-title">Erro de conexão</div>
+         <div class="pre-hint">${e.message}</div></div>`;
+      return;
+    }
+    this.renderShell();
+    await Menu.iniciar();   // login → menu → slot → jogo
+  },
+
+
+  async novaTemporada(divisoes){
+    // AGORA carrega TODAS as divisões (A/B/C/D) com elencos reais, para o pipeline
+    // de acesso/rebaixamento funcionar de verdade (times trocam de série na virada).
+    const pedido = divisoes || this.divisoesCarregadas || ['A','B','C','D'];
+    const teams=await this.provider.getTeams(pedido);
+    this.divisoesCarregadas=pedido;
+    this.teams=teams;
+    // Fase 2B: tira a "foto" inicial (âncora de potencial) e calcula valor vivo inicial
+    teams.forEach(t=>t.players.forEach(p=>{ Evolucao.inicializar(p); }));
+    this.tickMercado();
+    this.myTeam=0; this.squadView=0;
+    this.cfg=teams.map((t,i)=>this.cfgInicial(t));
+    this.temporada=this.temporada||1;
+    this.outrasLigas=null;   // legado da simulação abstrata: não é mais usado
+    // monta a competição de CADA divisão (a do usuário + as outras, todas reais)
+    this.montarTemporada();
+    const pb=document.getElementById('provBadge');
+    if(pb){ pb.textContent=this.provider.label;
+      pb.className='prov-badge '+(this.provider.label==='SUPABASE'?'prov-sup':'prov-mock'); }
+  },
+
+  // índices (globais em this.teams) dos clubes de uma divisão
+  indicesDaDivisao(div){
+    const out=[]; this.teams.forEach((t,i)=>{ if(t.divisao===div) out.push(i); }); return out;
+  },
+  forcaBaseTime(ti){ return Motor.forcaOnze(Motor.escalarAuto(this.teams[ti],'4-3-3'),null)||0; },
+
+  // monta a liga de UMA divisão: grupos+fixtures (D) ou pontos corridos (A/B/C).
+  // 'espelho' liga os campos usados pelo motor ao vivo quando é a divisão do usuário.
+  montarLigaDivisao(div){
+    const idxs=this.indicesDaDivisao(div);
+    const fmt=Competicao.formatoDe(div);
+    const liga={div, formato:fmt, indices:idxs, rodada:0,
+      grupos:null, fase:'pontos', mataMata:null, fixtures:[],
+      stats:idxs.map(i=>({i,pts:0,j:0,v:0,e:0,d:0,gp:0,gc:0}))};
+    if(fmt.tipo==='grupos' && idxs.length>=fmt.nGrupos*2){
+      const emb=[...idxs].sort(()=>Math.random()-0.5);
+      liga.grupos=Competicao.montarGrupos(emb, fmt.nGrupos, i=>this.forcaBaseTime(i));
+      liga.fase='grupos'; liga.mataMata=null;
+      liga.fixtures=Competicao.fixturesGrupos(liga.grupos);
+    } else {
+      liga.grupos=null; liga.fase='pontos'; liga.mataMata=null;
+      // pontos corridos entre os índices REAIS da divisão (ida e volta)
+      liga.fixtures=Competicao.roundRobinIdx(idxs);
+    }
+    return liga;
+  },
+
+  // (re)monta a temporada inteira: uma liga por divisão presente
+  montarTemporada(){
+    const divs=[...new Set(this.teams.map(t=>t.divisao))].sort();
+    this.ligas={};
+    divs.forEach(d=>{ this.ligas[d]=this.montarLigaDivisao(d); });
+    // a divisão do usuário é a "competição ativa" espelhada nos campos legados
+    this.divisao=this.teams[this.myTeam]?.divisao||divs[0];
+    this.formato=Competicao.formatoDe(this.divisao);
+    this.sincronizarLigaAtiva();
+    // filtro de competições volta pra série/grupo do time (abre "em casa")
+    this.cmpSerie=this.divisao; this.cmpGrupoD=null; this.cmpVerKO=false;
+    this.arenaSerie=this.divisao; this.arenaGrupoD=null;
+    this.rodada=0; this.dia=1; this.resultados=[];
+  },
+
+  // grava de volta na liga da divisão do usuário o que o motor ao vivo mudou
+  // (fase/grupos/mataMata/fixtures/rodada) — mantém this.ligas coerente
+  espelharParaLiga(){
+    const liga=this._ligaAtiva; if(!liga) return;
+    liga.grupos=this.grupos; liga.fase=this.fase; liga.mataMata=this.mataMata;
+    liga.fixtures=this.fixtures; liga.rodada=this.rodada;
+  },
+  // espelha a liga da divisão do usuário nos campos que o motor ao vivo usa
+  sincronizarLigaAtiva(){
+    const liga=this.ligas[this.divisao]; if(!liga) return;
+    this._ligaAtiva=liga;
+    this.grupos=liga.grupos; this.fase=liga.fase; this.mataMata=liga.mataMata;
+    this.fixtures=liga.fixtures;
+    // stats: o motor ao vivo indexa por índice GLOBAL do time (this.stats[h]).
+    // Mantemos um array esparso do tamanho de this.teams, apontando p/ a linha de cada liga.
+    this.stats=this.teams.map((t,i)=>({i,pts:0,j:0,v:0,e:0,d:0,gp:0,gc:0}));
+    Object.values(this.ligas).forEach(lg=>{
+      lg.stats.forEach(s=>{ this.stats[s.i]=s; });   // mesma referência: atualizar 1 atualiza os 2
+    });
+  },
+  // troca a liga ativa para a divisão do myTeam ATUAL, SEM re-sortear as ligas já montadas.
+  // (usado quando o clube é escolhido depois da temporada já estar montada com myTeam=0)
+  sincronizarDivisaoAtiva(){
+    this.divisao=this.teams[this.myTeam]?.divisao||this.divisao;
+    this.formato=Competicao.formatoDe(this.divisao);
+    this.sincronizarLigaAtiva();
+    this.rodada=0; this.dia=1; this.resultados=[];
+    // filtro de competições (aba própria) volta pra série/grupo do time
+    this.cmpSerie=this.divisao; this.cmpGrupoD=null; this.cmpVerKO=false;
+    this.arenaSerie=this.divisao; this.arenaGrupoD=null;
+  },
+
+  // cfg inicial: escala o melhor 11 nas melhores posições (4-3-3 base)
+  cfgInicial(t){
+    const formacao='4-3-3';
+    const posEscala={}, roleEscala={};
+    const slots=LINHAS_FM[formacao].flat();
+    const disp=[...t.players];
+    const usados=new Set();
+    // titulares: melhor jogador pra cada slot da formação
+    for(const pos of slots){
+      let melhor=null, bo=-1;
+      for(const p of disp){
+        if(usados.has(p.numero)) continue;
+        const o=Motor.overallEm(p,pos);
+        if(o>bo){ bo=o; melhor=p; }
+      }
+      if(melhor){ posEscala[melhor.numero]=pos; roleEscala[melhor.numero]=ROLES_POS[pos][0]; usados.add(melhor.numero); }
+    }
+    // banco: próximos 12 melhores (por força), o resto fica FORA
+    const resto=t.players.filter(p=>!usados.has(p.numero)).sort((a,b)=>b.forca-a.forca);
+    resto.forEach((p,idx)=>{ posEscala[p.numero]= idx<12 ? 'BANCO' : 'FORA'; });
+    return {formacao, estilo:'normal', marcacao:'leve', posEscala, roleEscala};
+  },
+
+  // jogador indisponível para a próxima partida (lesão ou suspensão)
+  indisponivel(p){ return !!(p.lesionado || p.suspenso>0); },
+  motivoIndisp(p){
+    if(p.lesionado) return `🩹 Lesionado (${p.lesionado}d)`;
+    if(p.suspenso>0) return `🟥 Suspenso (${p.suspenso} jogo${p.suspenso>1?'s':''}${p._motivoSusp?' · '+p._motivoSusp:''})`;
+    return '';
+  },
+
+  // jogadores escalados (titulares: não-banco, não-fora, disponíveis)
+  onzeDe(i){
+    const t=this.teams[i], c=this.cfg[i];
+    return t.players.filter(p=>{
+      const ps=c.posEscala[p.numero];
+      return ps && ps!=='BANCO' && ps!=='FORA' && !this.indisponivel(p);
+    });
+  },
+
+  // reservas no banco (máx 12)
+  bancoDe(i){
+    const t=this.teams[i], c=this.cfg[i];
+    return t.players.filter(p=>c.posEscala[p.numero]==='BANCO' && !this.indisponivel(p));
+  },
+
+  // true se os jogadores do time têm atributos FM (vieram do Supabase)
+  usaFM(i){ return this.teams[i]?.players?.some(p=>p.attrs); },
+
+  // posições (FM) dos jogadores escalados, na mesma ordem de onzeDe
+  slotsDe(i){
+    const c=this.cfg[i];
+    return this.onzeDe(i).map(p=>c.posEscala[p.numero]);
+  },
+
+  // roles dos jogadores escalados, na mesma ordem de onzeDe
+  rolesDe(i){
+    const c=this.cfg[i];
+    return this.onzeDe(i).map(p=>c.roleEscala[p.numero]||'');
+  },
+
+  // posição escalada de um jogador (posição FM, BANCO ou FORA)
+  posDe(i, num){ return this.cfg[i].posEscala[num]||'FORA'; },
+  roleDe(i, num){ return this.cfg[i].roleEscala[num]||''; },
+
+  // aplica uma formação: mantém titulares que encaixam, realoca por melhor overall
+  aplicarFormacao(i, formacao){
+    const c=this.cfg[i], t=this.teams[i];
+    const slots=LINHAS_FM[formacao].flat();
+    // pega os titulares atuais (quem não está em BANCO/FORA)
+    const titAtuais=this.onzeDe(i);
+    const disp=[...titAtuais];
+    // se faltam titulares (formação nova pede 11), completa com melhores do banco
+    if(disp.length<slots.length){
+      const banco=this.bancoDe(i).sort((a,b)=>b.forca-a.forca);
+      for(const p of banco){ if(disp.length>=slots.length) break; disp.push(p); }
+    }
+    const usados=new Set();
+    // limpa posições dos titulares (vão ser reatribuídas)
+    const novo={...c.posEscala};
+    // realoca cada slot com o melhor disponível entre os titulares
+    for(const pos of slots){
+      let melhor=null, bo=-1;
+      for(const p of disp){
+        if(usados.has(p.numero)) continue;
+        const o=Motor.overallEm(p,pos);
+        if(o>bo){ bo=o; melhor=p; }
+      }
+      if(melhor){ novo[melhor.numero]=pos;
+        if(!ROLES_POS[pos].includes(c.roleEscala[melhor.numero])) c.roleEscala[melhor.numero]=ROLES_POS[pos][0];
+        usados.add(melhor.numero); }
+    }
+    // quem era titular e sobrou (formação menor) vai pro banco
+    titAtuais.forEach(p=>{ if(!usados.has(p.numero)) novo[p.numero]='BANCO'; });
+    c.posEscala=novo; c.formacao=formacao;
+    // reforça limite de 12 no banco
+    this.reforcarBanco(i);
+  },
+
+  // garante no máx 12 no banco (excedente vai pra FORA, pelos de menor força)
+  reforcarBanco(i){
+    const c=this.cfg[i], t=this.teams[i];
+    const banco=t.players.filter(p=>c.posEscala[p.numero]==='BANCO')
+      .sort((a,b)=>b.forca-a.forca);
+    banco.forEach((p,idx)=>{ if(idx>=12) c.posEscala[p.numero]='FORA'; });
+  },
+
+  liveState:null,
+
+  // prepara a rodada: cada jogo mantém estado VIVO (energia decai durante a partida)
+  prepararRodada(){
+    const jogos=this.fixtures[this.rodada];
+    const sims=jogos.map(([h,a])=>{
+      const oh=this.onzeDe(h), oa=this.onzeDe(a);
+      const rolesH=this.rolesDe(h), rolesA=this.rolesDe(a);
+      const slotsH=this.slotsDe(h), slotsA=this.slotsDe(a);
+      // clona os jogadores em campo, guardando posição e role de cada um
+      const campoH=oh.map((p,idx)=>({ref:p, forca:p.forca, energia:p.energia, posicao:slotsH[idx], role:rolesH[idx], nome:p.nome, numero:p.numero}));
+      const campoA=oa.map((p,idx)=>({ref:p, forca:p.forca, energia:p.energia, posicao:slotsA[idx], role:rolesA[idx], nome:p.nome, numero:p.numero}));
+      return {
+        h, a, campoH, campoA,
+        slotsH, slotsA,
+        gc:0, gf:0, evs:[],
+        subH:{feitas:0, paradas:0}, subA:{feitas:0, paradas:0},
+        cartAmareloH:[], cartAmareloA:[],
+        jogaramH:new Set(oh.map(p=>p.numero)), jogaramA:new Set(oa.map(p=>p.numero)),
+      };
+    });
+    return {jogos, sims};
+  },
+
+  // Escala automaticamente o MELHOR time possível dentro da formação escolhida,
+  // usando só jogadores disponíveis (sem lesão/suspensão). Preenche também o banco.
+  escalarMelhor(ti){
+    const i=(ti==null)?this.myTeam:ti;
+    const t=this.teams[i], c=this.cfg[i];
+    if(!t||!c) return;
+    const slots=[]; (LINHAS_FM[c.formacao]||[]).forEach(linha=>linha.forEach(pos=>slots.push(pos)));
+    const disp=t.players.filter(p=>!this.indisponivel(p));
+    t.players.forEach(p=>{ c.posEscala[p.numero]='FORA'; delete c.roleEscala[p.numero]; });
+    const usados=new Set();
+    // goleiro primeiro (posição mais específica), depois o resto
+    const ordemSlots=[...slots].sort((a,b)=>(a==='GK'?0:1)-(b==='GK'?0:1));
+    ordemSlots.forEach(pos=>{
+      let melhor=null, melhorOv=-1;
+      disp.forEach(p=>{
+        if(usados.has(p.numero)) return;
+        const ov=Motor.overallEm(p,pos);
+        if(ov>melhorOv){ melhorOv=ov; melhor=p; }
+      });
+      if(melhor){
+        usados.add(melhor.numero);
+        c.posEscala[melhor.numero]=pos;
+        const roles=ROLES_POS[pos]||[];
+        if(roles.length){
+          let bR=roles[0], bOv=-1;
+          roles.forEach(r=>{ const ov=Motor.overallEm(melhor,pos,r); if(ov>bOv){bOv=ov;bR=r;} });
+          c.roleEscala[melhor.numero]=bR;
+        }
+      }
+    });
+    // banco: os melhores que sobraram (até 12)
+    disp.filter(p=>!usados.has(p.numero))
+      .sort((a,b)=>Motor.melhorGeral(b).ov-Motor.melhorGeral(a).ov).slice(0,12)
+      .forEach(p=>{ c.posEscala[p.numero]='BANCO'; });
+    this.selPlayer=null;
+  },
+
+  jogarRodada(){
+    if(this.rodada>=this.fixtures.length || (this.liveState&&this.liveState.playing)) return;
+    // não deixa entrar em campo desfalcado
+    const onze=this.onzeDe(this.myTeam);
+    if(onze.length<11){
+      const faltam=11-onze.length;
+      const disp=Motor.disp(this.teams[this.myTeam]).length;
+      if(disp<11){
+        alert(`Você só tem ${disp} atletas disponíveis (lesões e suspensões).\nNão é possível formar um time completo.`);
+        return;
+      }
+      if(confirm(`Sua escalação está incompleta: ${onze.length}/11 titulares (falta${faltam>1?'m':''} ${faltam}).\n\nQuer escalar o melhor time automaticamente?`)){
+        this.escalarMelhor(); this.renderShell(); this.showTab('escala');
+      } else {
+        this.showTab('escala');
+      }
+      return;
+    }
+    const {jogos,sims}=this.prepararRodada();
+    this.liveState={jogos, sims, min:0, timer:null, playing:true, done:false,
+                    fase:'1T', // 1T -> intervalo -> 2T -> fim
+                    paused:false, subOpen:false};
+    this.showTab('arena');
+    this.renderArena();
+    this.rodarRelogio();
+  },
+
+  MIN_POR_TEMPO:45,
+
+  rodarRelogio(){
+    const L=this.liveState;
+    // 30s reais por tempo de 45min => 30000/45 ≈ 667ms por minuto
+    const tick=()=>{
+      if(L.paused||L.subOpen) return;
+      L.min++;
+      this.simularMinuto();
+      this.atualizarPlacaresAoVivo();
+      // intervalo ao fim do 1º tempo
+      if(L.min===45 && L.fase==='1T'){
+        clearInterval(L.timer); L.fase='intervalo'; L.paused=true;
+        this.abrirIntervalo();
+        return;
+      }
+      if(L.min>=90){ clearInterval(L.timer); L.playing=false; L.done=true; L.fase='fim';
+        this.encerrarRodada(); }
+    };
+    L.timer=setInterval(tick, 667); // ~30s por tempo
+  },
+
+  // simula 1 minuto de TODAS as partidas, com energia dinâmica e força=soma
+  simularMinuto(){
+    const L=this.liveState; const m=L.min;
+    // cartões por minuto por time. Calibrado: leve ~2,0 amarelos/jogo, pesada ~3,2, muito pesada ~4,5
+    const cart={leve:0.023,pesada:0.037,muito_pesada:0.052};
+    L.sims.forEach(s=>{
+      const cfgH=this.cfg[s.h], cfgA=this.cfg[s.a];
+      const fH=Motor.forcaCampo(s.campoH);
+      const fA=Motor.forcaCampo(s.campoA);
+      const pH=Motor.chanceGol(fH,fA,cfgH.estilo,cfgA.estilo,true);
+      const pA=Motor.chanceGol(fA,fH,cfgA.estilo,cfgH.estilo,false);
+      if(Math.random()<pH){ s.gc++; const art=this.artilheiro(s.campoH);
+        if(art&&art.ref) art.ref._golsRodada=(art.ref._golsRodada||0)+1;
+        s.evs.push({m,tipo:'gol',time:'casa',quem:art?art.nome:''}); }
+      if(Math.random()<pA){ s.gf++; const art=this.artilheiro(s.campoA);
+        if(art&&art.ref) art.ref._golsRodada=(art.ref._golsRodada||0)+1;
+        s.evs.push({m,tipo:'gol',time:'fora',quem:art?art.nome:''}); }
+      // --- CARTÕES: atribuídos a um jogador real, com 2o amarelo e vermelho direto ---
+      this.sortearCartao(s, s.campoH, 'casa', cart[cfgH.marcacao], m);
+      this.sortearCartao(s, s.campoA, 'fora', cart[cfgA.marcacao], m);
+      // desgaste
+      Motor.desgastarMinuto(s.campoH); Motor.desgastarMinuto(s.campoA);
+      // CPU faz substituições inteligentes (não no jogo do usuário)
+      this.cpuSubstituir(s);
+    });
+  },
+
+  // sorteia um cartão para um time; trata 2º amarelo como expulsão.
+  // 'p' é a probabilidade base por minuto (vem da marcação escolhida).
+  sortearCartao(s, campo, lado, pBase, m){
+    if(Math.random()>=pBase) return;
+    const emCampo=campo.filter(c=>c.ref && !c.ref._expulso);
+    if(!emCampo.length) return;
+    // quem leva: zagueiros/volantes levam mais; agressividade do jogador pesa
+    const RISCO={GK:0.3,DC:1.5,DL:1.2,DR:1.2,WBL:1.2,WBR:1.2,DM:1.6,MC:1.1,ML:0.9,MR:0.9,AMC:0.8,AML:0.7,AMR:0.7,ST:0.8};
+    const pesos=emCampo.map(c=>{
+      const posFM = PESOS_POS[c.posicao] ? c.posicao : (SLOT_TO_POS[c.posicao]||'MC');
+      const agr=(c.ref.attrs && (c.ref.attrs.agression||c.ref.attrs.agressao)) || 50;
+      return (RISCO[posFM]??1) * (0.5 + agr/100);
+    });
+    const tot=pesos.reduce((a,b)=>a+b,0);
+    let r=Math.random()*tot, alvo=emCampo[emCampo.length-1];
+    for(let i=0;i<emCampo.length;i++){ r-=pesos[i]; if(r<=0){ alvo=emCampo[i]; break; } }
+    const p=alvo.ref;
+    // quem já está pendurado joga mais leve: 70% de chance de "escapar" do 2º amarelo
+    if((p._amarelosJogo||0)>=1 && Math.random()<0.70) return;
+    // ~2,5% dos cartões são vermelho direto
+    if(Math.random()<0.025){
+      p._expulso=true; p._cartaoVermelho=(p._cartaoVermelho||0)+1;
+      s.evs.push({m,tipo:'vermelho',time:lado,quem:alvo.nome});
+      this.removerDeCampo(s, campo, alvo);
+      return;
+    }
+    p._amarelosJogo=(p._amarelosJogo||0)+1;
+    if(p._amarelosJogo>=2){
+      p._expulso=true; p._segundoAmarelo=(p._segundoAmarelo||0)+1;
+      s.evs.push({m,tipo:'vermelho',time:lado,quem:alvo.nome,motivo:'2º amarelo'});
+      this.removerDeCampo(s, campo, alvo);
+    } else {
+      p._amarelosRodada=(p._amarelosRodada||0)+1;
+      s.evs.push({m,tipo:'amarelo',time:lado,quem:alvo.nome});
+    }
+  },
+
+  // tira o jogador expulso de campo (time joga com menos)
+  removerDeCampo(s, campo, alvo){
+    const idx=campo.indexOf(alvo);
+    if(idx>=0) campo.splice(idx,1);
+  },
+    // Quem marca: pondera pelo xG da POSIÇÃO (ST >> ponta > meia > zagueiro) e pelo rendimento.
+    // O expoente concentra os gols no centroavante (artilharia realista ~18-22 na temporada).
+  artilheiro(campo){
+    // Quem marca: pondera pelo xG da POSIÇÃO (ST >> ponta > meia > zagueiro) e pelo rendimento.
+    const pool=campo.filter(p=>p.posicao!=='GK');
+    if(!pool.length) return campo[0];
+    const pesos=pool.map(p=>{
+      const posFM = PESOS_POS[p.posicao] ? p.posicao : (SLOT_TO_POS[p.posicao]||'MC');
+      const xg = XG_POS[posFM] ?? 0.4;
+      const rend = Motor.rendimento(p)/70;          // ~1.0 pra um jogador médio
+      return Math.pow(xg, 2.2) * rend + 0.004;      // ^2.2 = concentra no ST
+    });
+    const tot=pesos.reduce((a,b)=>a+b,0);
+    let r=Math.random()*tot;
+    for(let i=0;i<pool.length;i++){ r-=pesos[i]; if(r<=0) return pool[i]; }
+    return pool[pool.length-1];
+  },
+
+  // CPU: substitui só se AUMENTAR a soma da força em campo (mais desafiador)
+  cpuSubstituir(s){
+    [['campoH','subH','h','slotsH'],['campoA','subA','a','slotsA']].forEach(([ck,sk,tk,slk])=>{
+      if(s[tk]===this.myTeam) return; // usuário controla o dele
+      const sub=s[sk];
+      if(sub.feitas>=5 || sub.paradas>=3) return;
+      if(Math.random()>0.04) return; // ~4%/min de "pensar" numa troca
+      const campo=s[ck], team=this.teams[s[tk]];
+      const numsEmCampo=new Set(campo.map(p=>p.numero));
+      const banco=this.bancoDe(s[tk]).filter(p=>!numsEmCampo.has(p.numero));
+      if(!banco.length) return;
+      // acha o titular de menor rendimento e um reserva que renda mais na MESMA posição
+      let melhorGanho=0, alvo=null, entra=null;
+      campo.forEach((tit,idx)=>{
+        const rTit=Motor.forcaAtual(tit, s[slk][idx]);
+        banco.forEach(res=>{
+          const rRes=res.forca*(res.energia/100)*(res.posicao!==s[slk][idx]?0.75:1);
+          const ganho=rRes-rTit;
+          if(ganho>melhorGanho){ melhorGanho=ganho; alvo=idx; entra=res; }
+        });
+      });
+      if(alvo!=null && entra && melhorGanho>3){
+        campo[alvo]={ref:entra, forca:entra.forca, energia:entra.energia,
+                     posicao:entra.posicao, nome:entra.nome, numero:entra.numero};
+        sub.feitas++; sub.paradas++;
+        (tk===s.h?s.jogaramH:s.jogaramA).add(entra.numero);
+        s.evs.push({m:this.liveState.min,tipo:'sub',time:tk===s.h?'casa':'fora',quem:entra.nome});
+      }
+    });
+  },
+
+  pularRodada(){
+    const L=this.liveState; if(!L) return;
+    clearInterval(L.timer); L.paused=false; L.subOpen=false;
+    // simula o restante instantaneamente
+    while(L.min<90){
+      L.min++;
+      this.simularMinuto();
+      if(L.min===45) L.fase='2T'; // pula intervalo
+    }
+    L.playing=false; L.done=true; L.fase='fim';
+    this.atualizarPlacaresAoVivo();
+    this.encerrarRodada();
+  },
+
+  // recomputa placar/último lance de cada jogo e reordena a tabela quando há gol
+  atualizarPlacaresAoVivo(){
+    const L=this.liveState; const m=L.min;
+    const clk=document.getElementById('liveClock');
+    if(clk) clk.textContent=m>=90?'FIM':(L.fase==='intervalo'?'INTERVALO':`${m}'`+(m<=45?' · 1ºT':' · 2ºT'));
+    const prog=document.getElementById('liveProg');
+    if(prog) prog.style.width=Math.min(100,(m/90)*100)+'%';
+
+    let totalGols=0;
+    L.sims.forEach((s,i)=>{
+      totalGols+=s.gc+s.gf;
+      const row=document.getElementById('live-'+i); if(!row) return;
+      row.querySelector('.lsc-h').textContent=s.gc;
+      row.querySelector('.lsc-a').textContent=s.gf;
+      const ultimo=[...s.evs].reverse().find(e=>e.tipo==='gol')||[...s.evs].reverse().find(e=>e.tipo==='sub')||[...s.evs].reverse().find(e=>e.tipo==='amarelo');
+      const ev=row.querySelector('.lev');
+      if(ultimo){
+        const ic=ultimo.tipo==='gol'?'⚽':ultimo.tipo==='sub'?'⇄':'▮';
+        const txt=ultimo.tipo==='gol'?`${ultimo.quem||''} ${ultimo.m}'`
+                 :ultimo.tipo==='sub'?`entra ${ultimo.quem} ${ultimo.m}'`
+                 :`amarelo ${ultimo.m}'`;
+        ev.innerHTML=`<span class="lev-ic">${ic}</span> ${txt}`;
+        ev.className='lev '+(ultimo.tipo==='gol'?'lev-gol':ultimo.tipo==='sub'?'lev-sub':'lev-card');
+      } else { ev.innerHTML=''; ev.className='lev'; }
+    });
+
+    if(totalGols!==L._lastGols){
+      L._lastGols=totalGols;
+      const box=document.getElementById('tabelaBox');
+      // só reescreve se o Placar Geral está mostrando a MINHA série/grupo
+      const vendoMinha = (!this.arenaSerie || this.arenaSerie===this.divisao)
+        && (this.arenaGrupoD==null || this.arenaGrupoD===this.indiceDoGrupo(this.myTeam));
+      if(box && !L.done && vendoMinha){ box.innerHTML=this.tabelaHTML(this.deltasAoVivo()); }
+    }
+  },
+
+  encerrarRodada(){
+    const L=this.liveState;
+    this.resultados=[];
+    this._evoluiu=new Set();   // jogadores já evoluídos nesta rodada (os que jogaram)
+    L.sims.forEach(s=>{
+      const {h,a,gc,gf,campoH,campoA}=s;
+      const H=this.stats[h],A=this.stats[a];
+      // no mata-mata a tabela de pontos não muda (o confronto decide, não os pontos)
+      if(this.fase!=='ko'){
+        H.j++;A.j++; H.gp+=gc;H.gc+=gf; A.gp+=gf;A.gc+=gc;
+        if(gc>gf){H.v++;A.d++;H.pts+=3;}
+        else if(gf>gc){A.v++;H.d++;A.pts+=3;}
+        else {H.e++;A.e++;H.pts++;A.pts++;}
+      }
+      // --- CONFIANÇA DA DIRETORIA: só na MINHA partida ---
+      if(h===this.myTeam || a===this.myTeam){
+        const souCasa = h===this.myTeam;
+        const advTi   = souCasa ? a : h;
+        const meusGols= souCasa ? gc : gf;
+        const golsAdv = souCasa ? gf : gc;
+        const resultado = meusGols>golsAdv ? 'v' : (meusGols<golsAdv ? 'd' : 'e');
+        const exp = this.expectativaJogo(this.myTeam, advTi, souCasa);
+        this.aplicarConfianca(exp, resultado);
+        // guarda um "recibo" da partida para o aviso pós-rodada
+        this._ultimoJogoConf={exp, resultado, adv:this.teams[advTi]?.nome||'', delta:this._ultimoDeltaConf, conf:this.confianca};
+        // --- BILHETERIA: só quando MANDO é meu ---
+        if(souCasa){
+          const renda=this.rendaBilheteria(this.myTeam, advTi);
+          const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+renda;
+          this.addExtrato('Bilheteria vs '+(this.teams[advTi]?.abrev||'?'), +renda);
+        }
+      }
+      // grava energia final e conta gols individuais
+      campoH.concat(campoA).forEach(c=>{ if(c.ref){
+        c.ref.energia=Math.max(0,Math.round(c.energia));
+        if(c.ref._golsRodada){
+          c.ref.gols=(c.ref.gols||0)+c.ref._golsRodada;              // carreira (acumula sempre)
+          c.ref.golsTemp=(c.ref.golsTemp||0)+c.ref._golsRodada;      // temporada atual (zera todo ano)
+          delete c.ref._golsRodada;
+        }
+      }});
+      // --- DISCIPLINA: consolida cartões e aplica suspensões ---
+      // (percorre os ELENCOS, pois o expulso já foi removido do array 'campo')
+      [h,a].forEach(ti=>this.teams[ti].players.forEach(p=>{
+        if(p._amarelosRodada){
+          p.amarelos=(p.amarelos||0)+p._amarelosRodada;          // acumulado da temporada
+          delete p._amarelosRodada;
+          // 3 amarelos = 1 jogo de suspensão (padrão brasileiro), e zera o contador
+          if(p.amarelos>=3){ p.amarelos-=3; p.suspenso=(p.suspenso||0)+1; p._motivoSusp='3º amarelo'; p._cumpriuAgora=true; }
+        }
+        if(p._expulso){
+          // vermelho direto pega 2 jogos; 2º amarelo pega 1
+          const jogos = p._cartaoVermelho ? 2 : 1;
+          p.suspenso=(p.suspenso||0)+jogos;
+          p._motivoSusp = p._cartaoVermelho ? 'cartão vermelho' : '2º amarelo';
+          p.expulsoes=(p.expulsoes||0)+1; p._cumpriuAgora=true;
+          delete p._expulso; delete p._cartaoVermelho; delete p._segundoAmarelo;
+        }
+        delete p._amarelosJogo;   // amarelos do jogo não passam pra próxima partida
+      }));
+      // conta 'jogos' pra todos que entraram em campo
+      const byNumH={}; this.teams[h].players.forEach(p=>byNumH[p.numero]=p);
+      const byNumA={}; this.teams[a].players.forEach(p=>byNumA[p.numero]=p);
+      s.jogaramH.forEach(n=>{ if(byNumH[n]){ byNumH[n].jogos=(byNumH[n].jogos||0)+1; byNumH[n].jogosTemp=(byNumH[n].jogosTemp||0)+1; } });
+      s.jogaramA.forEach(n=>{ if(byNumA[n]){ byNumA[n].jogos=(byNumA[n].jogos||0)+1; byNumA[n].jogosTemp=(byNumA[n].jogosTemp||0)+1; } });
+      // --- EVOLUÇÃO Fase 2B: quem JOGOU evolui na posição em que foi ESCALADO ---
+      const venceuH=gc>gf, venceuA=gf>gc;
+      s.jogaramH.forEach(n=>{ const p=byNumH[n]; if(!p) return;
+        let pos=this.posDe(h,n); if(pos==='BANCO'||pos==='FORA') pos=Motor.melhorGeral(p).pos;
+        if(Evolucao.aplicarRodada(p,pos,true,venceuH)) Evolucao.recalcForca(p);
+        this._evoluiu.add(p);
+      });
+      s.jogaramA.forEach(n=>{ const p=byNumA[n]; if(!p) return;
+        let pos=this.posDe(a,n); if(pos==='BANCO'||pos==='FORA') pos=Motor.melhorGeral(p).pos;
+        if(Evolucao.aplicarRodada(p,pos,true,venceuA)) Evolucao.recalcForca(p);
+        this._evoluiu.add(p);
+      });
+      // lesões baseadas na energia final
+      const lesH=Motor.checarLesao(campoH.filter(c=>c.ref).map(c=>c.ref));
+      const lesA=Motor.checarLesao(campoA.filter(c=>c.ref).map(c=>c.ref));
+      [...lesH,...lesA].forEach(()=>{}); // (contador de lesão por jogador já setado em checarLesao? não — abaixo)
+      this.resultados.push({h,a,gc,gf});
+      // no mata-mata, guarda o placar no confronto (usado para somar ida e volta)
+      if(this.fase==='ko' && this.mataMata){
+        (this.mataMata.resultados||(this.mataMata.resultados=[])).push({h,a,gc,gf});
+      }
+    });
+    // --- EVOLUÇÃO Fase 2B: quem NÃO jogou evolui na MELHOR posição (menos que quem jogou) ---
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      if(this._evoluiu.has(p)) return;               // já evoluiu (jogou)
+      const mg=Motor.melhorGeral(p);
+      if(Evolucao.aplicarRodada(p,mg.pos,false,false)) Evolucao.recalcForca(p);
+    }));
+    // --- MERCADO Fase 2B: recalcula valor vivo de todos ---
+    this.tickMercado();
+    this.gerarOfertasIA();   // IA pode fazer ofertas pelos meus jogadores à venda
+    this.simularOutrasDivisoes();   // outras séries avançam junto (simulação leve)
+    // --- DISCIPLINA: quem estava suspenso cumpriu esta rodada ---
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      if(p.suspenso>0 && !p._cumpriuAgora){   // não decrementa quem acabou de ser punido nesta rodada
+        p.suspenso--;
+        if(p.suspenso<=0){ delete p.suspenso; delete p._motivoSusp; }
+      }
+      delete p._cumpriuAgora;
+    }));
+    // tira da escalação quem ficou indisponível (lesão/suspensão) — evita entrar com 10
+    this.baixas=[];   // avisos para o usuário
+    this.teams.forEach((t,ti)=>{
+      const c=this.cfg[ti]; if(!c) return;
+      t.players.forEach(p=>{
+        const ps=c.posEscala[p.numero];
+        if(this.indisponivel(p) && ps && ps!=='FORA'){
+          if(ti===this.myTeam) this.baixas.push({nome:p.nome, motivo:this.motivoIndisp(p)});
+          c.posEscala[p.numero]='FORA';
+        }
+      });
+    });
+    this.rodada++;
+    this.avancarDias(3); // 1 partida a cada 3 dias
+    this.cobrarFolhaSeMes(); // debita salários quando vira o mês (~4 rodadas)
+    // --- DEMISSÃO: se a confiança bateu no corte do clube, o treinador cai ---
+    if(this.confianca!=null && !this.demitido && this.confianca<=this.corteDemissao()){
+      this._demissaoPendente=true;   // exibida no "Fechar" (o usuário vê o resultado antes)
+    }
+    this.renderShell();
+    // auto-save no Supabase (silencioso)
+    this.salvarSupabase(true);
+    // fim de temporada?
+    if(this.rodada>=this.fixtures.length){
+      // fim das rodadas atuais: se há mata-mata pela frente, avança de fase
+      if(this.formato && this.formato.tipo==='grupos'){ this.avancarFaseMataMata(); }
+      if(this.rodada>=this.fixtures.length) this.tempEncerrada=true;
+    }
+    this.espelharParaLiga();   // mantém this.ligas[divisão] coerente com o motor ao vivo
+    // NÃO redireciona aqui: o usuário fica vendo o resultado da rodada.
+    // O fluxo estilo Brasfoot (ir pra Escalação) acontece ao clicar em "Fechar".
+  },
+
+  // ---------- MATA-MATA (Série D) ----------
+  // Chamado quando as rodadas acabam. Monta a próxima fase (ou encerra a temporada).
+  avancarFaseMataMata(){
+    const f=this.formato;
+    // 1) acabou a fase de grupos → monta a 2ª fase com os 64 classificados
+    if(this.fase==='grupos'){
+      const pares=Competicao.montarMataMata(this.grupos,this.stats,i=>this.teams[i].nome,f.avancamPorGrupo);
+      this.iniciarFaseKO(pares);
+      return;
+    }
+    // 2) já estamos no mata-mata: resolve os confrontos da fase que acabou
+    if(this.fase==='ko' && this.mataMata){
+      const mm=this.mataMata;
+      const vencedores=[], perdedores=[];
+      mm.confrontos.forEach(cf=>{
+        const jogos=(mm.resultados||[]).filter(r=>
+          (r.h===cf[0]&&r.a===cf[1])||(r.h===cf[1]&&r.a===cf[0]));
+        const r=Competicao.vencedorDoConfronto(cf[0],cf[1],jogos);
+        vencedores.push(r.vencedor); perdedores.push(r.perdedor);
+      });
+      mm.historico=mm.historico||[];
+      mm.historico.push({fase:Competicao.nomeFase(mm.confrontos.length*2), confrontos:mm.confrontos, vencedores, perdedores});
+      // guarda os eliminados das quartas (para a repescagem de acesso)
+      if(mm.confrontos.length===4) mm.eliminadosQuartas=perdedores;
+      // semifinalistas = os 4 que venceram as quartas → esses SOBEM
+      if(mm.confrontos.length===4) mm.semifinalistas=vencedores;
+      if(vencedores.length<=1){
+        mm.campeao=vencedores[0]??null;
+        // acessos: 4 semifinalistas + 2 da repescagem
+        const ac=Competicao.acessosSerieD(mm.semifinalistas||[], mm.eliminadosQuartas||[]);
+        const repVenc=(ac.repescagem||[]).map(([x,y])=>
+          Math.random()< (this.forcaDoTime(x)/(this.forcaDoTime(x)+this.forcaDoTime(y))) ? x : y);
+        mm.sobem=[...(mm.semifinalistas||[]), ...repVenc].slice(0,f.acessos);
+        this.fase='fim';
+        return;
+      }
+      // monta a próxima fase emparelhando os vencedores
+      const pares=[];
+      for(let i=0;i<vencedores.length;i+=2) pares.push([vencedores[i],vencedores[i+1]]);
+      this.iniciarFaseKO(pares, mm);
+    }
+  },
+  // adiciona as rodadas de IDA e VOLTA da fase de mata-mata aos fixtures
+  iniciarFaseKO(pares, mmAnterior){
+    const ida=pares.map(([h,a])=>[h,a]);
+    const volta=pares.map(([h,a])=>[a,h]);   // manda quem foi visitante na ida
+    this.fixtures.push(ida, volta);
+    this.mataMata={
+      confrontos:pares, resultados:[],
+      historico:(mmAnterior&&mmAnterior.historico)||[],
+      eliminadosQuartas:(mmAnterior&&mmAnterior.eliminadosQuartas)||null,
+      semifinalistas:(mmAnterior&&mmAnterior.semifinalistas)||null,
+      faseNome:Competicao.nomeFase(pares.length*2),
+    };
+    this.fase='ko';
+  },
+  forcaDoTime(ti){
+    const t=this.teams[ti]; if(!t) return 1;
+    return Motor.forcaOnze(Motor.escalarAuto(t,'4-3-3'),null)||1;
+  },
+
+  /* ============================================================
+     CONFIANÇA DA DIRETORIA (o "HP do treinador")
+     - começa em 60 ao assumir o clube; vai de 0 a 100.
+     - sobe/desce no apito final de CADA partida do usuário,
+       cruzando a EXPECTATIVA pré-jogo com o RESULTADO.
+     - a nota de corte (demissão) depende do NÍVEL do clube = divisão.
+     ============================================================ */
+  CONF_INICIAL:60,
+  // corte de demissão por divisão: elite tem paciência mínima; pequenos, muita.
+  corteDemissao(div){ return ({A:45,B:30,C:10,D:10})[div||this.divisao]||10; },
+  // matriz [expectativa][resultado] → delta de confiança (números definidos com o Dart)
+  MATRIZ_CONF:{
+    favorito:   {v:+2,  e:-5, d:-12},
+    ligeiro:    {v:+4,  e:-2, d:-6 },
+    equilibrado:{v:+6,  e:+1, d:-3 },
+    azarao:     {v:+10, e:+4, d:-1 },
+    impossivel: {v:+15, e:+8, d:0  },
+  },
+  // classifica a partida em 5 categorias comparando forças (escala de forcaOnze,
+  // que é a média por jogador ~50-70). Mando de campo vale ~+3 nessa escala.
+  MANDO_FORCA:3,
+  expectativaJogo(meuTi, advTi, mando){
+    const fMeu=this.forcaDoTime(meuTi)+(mando?this.MANDO_FORCA:0);
+    const fAdv=this.forcaDoTime(advTi)+(mando?0:this.MANDO_FORCA);
+    const dif=fMeu-fAdv;
+    if(dif>=10)  return 'favorito';     // ~1.5 divisões acima
+    if(dif>=4)   return 'ligeiro';
+    if(dif>-4)   return 'equilibrado';
+    if(dif>-10)  return 'azarao';
+    return 'impossivel';
+  },
+  // frases genéricas do presidente por expectativa (variam a cada leitura, sem revelar pontos)
+  falaPresidente(exp){
+    const F={
+      favorito:[
+        'Esse adversário está muito abaixo do nosso nível. Só a vitória interessa.',
+        'A torcida não vai aceitar tropeço num jogo desses. Vença.',
+        'No papel é fácil. Não quero surpresas negativas aqui.',
+        'Um time do nosso tamanho não pode vacilar contra esses caras.',
+      ],
+      ligeiro:[
+        'Somos um pouco melhores. Espero que a gente saia com os três pontos.',
+        'Jogo pra vencer, mas sem relaxar. Eles podem incomodar.',
+        'Temos favoritismo. Confio que você traz o resultado.',
+        'É pra ganhar, mas respeitando o adversário.',
+      ],
+      equilibrado:[
+        'Jogo duro, times parelhos. Um empate não seria um desastre.',
+        'Partida equilibrada. Vamos com tudo, mas sei que é difícil.',
+        'Aqui vale a estratégia. Confio no seu trabalho.',
+        'Qualquer resultado é possível. Faça um bom jogo.',
+      ],
+      azarao:[
+        'Eles são favoritos, mas quero ver raça em campo.',
+        'Ninguém aposta na gente. Surpreenda todo mundo.',
+        'Jogo difícil. Um pontinho já seria muito bem-vindo.',
+        'Sabemos que é complicado. Deixe o time inteiro na luta.',
+      ],
+      impossivel:[
+        'Missão quase impossível. Não cobro resultado, cobro postura.',
+        'Ninguém espera nada aqui. Segure o que der pra segurar.',
+        'É David contra Golias. Qualquer ponto será uma façanha.',
+        'Sei que é grande demais pra gente. Faça o seu melhor e sem pressão.',
+      ],
+    };
+    const arr=F[exp]||F.equilibrado;
+    return arr[Math.floor(Math.random()*arr.length)];
+  },
+  // aplica o delta de confiança após a MINHA partida encerrar
+  aplicarConfianca(exp, resultado){
+    if(this.confianca==null) this.confianca=this.CONF_INICIAL;
+    const d=(this.MATRIZ_CONF[exp]||this.MATRIZ_CONF.equilibrado)[resultado]||0;
+    this.confianca=Math.max(0,Math.min(100,this.confianca+d));
+    this._ultimoDeltaConf=d;
+    return d;
+  },
+  // texto curto do humor da diretoria (usado no painel/escalação)
+  humorDiretoria(){
+    const c=this.confianca==null?this.CONF_INICIAL:this.confianca;
+    const corte=this.corteDemissao();
+    if(c<=corte+5)  return {txt:'Beira da demissão',           cor:'var(--loss)'};
+    if(c<45)        return {txt:'Muito insatisfeita',          cor:'var(--loss)'};
+    if(c<60)        return {txt:'Sob pressão',                 cor:'#e8c547'};
+    if(c<75)        return {txt:'Tranquila',                   cor:'var(--lemon)'};
+    if(c<90)        return {txt:'Satisfeita com o trabalho',   cor:'var(--lemon)'};
+    return {txt:'Você é ídolo da diretoria', cor:'var(--lemon)'};
+  },
+  // próximo adversário do usuário na rodada atual (índice do time, ou null)
+  proximoAdversario(){
+    const jogos=this.fixtures&&this.fixtures[this.rodada]; if(!jogos) return null;
+    for(const [h,a] of jogos){
+      if(h===this.myTeam) return {ti:a, casa:true};
+      if(a===this.myTeam) return {ti:h, casa:false};
+    }
+    return null;   // usuário não joga esta rodada (ex.: eliminado no mata-mata)
+  },
+  // painel "recado do presidente" + barra de confiança (topo da Escalação)
+  painelPresidenteHTML(){
+    if(this.confianca==null) this.confianca=this.CONF_INICIAL;
+    const conf=Math.round(this.confianca);
+    const corte=this.corteDemissao();
+    const humor=this.humorDiretoria();
+    const adv=this.proximoAdversario();
+    // fala estável durante a rodada: memoiza por (temporada,rodada,adversário)
+    let fala;
+    if(adv){
+      const exp=this.expectativaJogo(this.myTeam, adv.ti, adv.casa);
+      const chave=`${this.temporada}|${this.rodada}|${adv.ti}`;
+      if(this._falaChave!==chave){ this._falaChave=chave; this._falaCache=this.falaPresidente(exp); }
+      fala=this._falaCache;
+    } else {
+      fala='Sem jogo para você nesta rodada. Aproveite para ajustar o elenco.';
+    }
+    const advNome=adv?this.teams[adv.ti].nome:'—';
+    const mando=adv?(adv.casa?'em casa':'fora'):'';
+    // largura da barra e marcador do corte de demissão
+    const pct=Math.max(0,Math.min(100,conf));
+    const cortePct=Math.max(0,Math.min(100,corte));
+    return `
+      <div class="pres-wrap">
+        <div class="pres-fala">
+          <div class="pres-avatar">🤵</div>
+          <div class="pres-txt">
+            <div class="pres-h">Presidente ${adv?`· próximo: <b>${advNome}</b> (${mando})`:''}</div>
+            <div class="pres-msg">“${fala}”</div>
+          </div>
+        </div>
+        <div class="pres-conf">
+          <div class="pres-conf-top">
+            <span>Confiança da diretoria</span>
+            <b style="color:${humor.cor}">${conf} · ${humor.txt}</b>
+          </div>
+          <div class="pres-bar">
+            <div class="pres-bar-fill" style="width:${pct}%;background:${humor.cor}"></div>
+            <div class="pres-bar-corte" style="left:${cortePct}%" title="Demissão se cair até ${corte}"></div>
+          </div>
+          <div class="pres-conf-sub">Demissão se a confiança cair até <b>${corte}</b> (nível ${this.divisao})</div>
+        </div>
+      </div>`;
+  },
+
+  // folha salarial: cobrada a cada 4 rodadas (1 "mês"). Debita de todos os times.
+  cobrarFolhaSeMes(){
+    const mesAgora=Math.floor(this.rodada/4);
+    if(this.ultimoMesPago==null) this.ultimoMesPago=0;
+    if(mesAgora>this.ultimoMesPago){
+      this.ultimoMesPago=mesAgora;
+      this.teams.forEach((t,ti)=>{
+        const folha=this.folhaDe(ti);
+        const patroc=this.patrocinioMensal(ti);   // receita mensal fixa (fecha o ciclo)
+        t.saldo=(t.saldo||0)-folha+patroc;
+      });
+      // registra no extrato do MEU time (receita e despesa separadas)
+      this.addExtrato('Patrocínio mensal', +this.patrocinioMensal(this.myTeam));
+      this.addExtrato('Folha salarial', -this.folhaDe(this.myTeam));
+      this.cobrarParcelaEmprestimo();             // parcela do empréstimo, se houver
+    }
+  },
+
+  // folha mensal de um time = soma dos salários (salario está em milhares/mês)
+  folhaDe(i){
+    const t=this.teams[i]; if(!t) return 0;
+    return Math.round(t.players.reduce((s,p)=>s+(p.salario||0),0)*1000);
+  },
+
+  /* ============================================================
+     RECEITAS (Fase 3.5) — patrocínio, bilheteria, premiação, empréstimo
+     Filosofia: fechar o ciclo econômico sem virar planilha. Números
+     redondos, poucas alavancas, tudo cai no extrato do usuário.
+     ============================================================ */
+  // patrocínio mensal por nível de divisão (base) — creditado junto da folha
+  PATROC_BASE:{A:6e6, B:2.5e6, C:1.2e6, D:5e5},
+  patrocinioMensal(ti){
+    const t=this.teams[ti]; if(!t) return 0;
+    const base=this.PATROC_BASE[t.divisao]||5e5;
+    // para o usuário, a confiança da diretoria valoriza o contrato (±25%)
+    if(ti===this.myTeam && this.confianca!=null){
+      const fator=0.75+(this.confianca/100)*0.5;   // conf 0→0.75, 100→1.25
+      return Math.round(base*fator);
+    }
+    return Math.round(base);
+  },
+  // capacidade de estádio aproximada por divisão (bilheteria)
+  CAP_ESTADIO:{A:45000, B:28000, C:16000, D:8000},
+  PRECO_INGRESSO:{A:60, B:40, C:25, D:15},
+  // renda de UM jogo em casa: público (influenciado por confiança e adversário) × preço
+  rendaBilheteria(ti, advTi){
+    const t=this.teams[ti]; if(!t) return 0;
+    const cap=this.CAP_ESTADIO[t.divisao]||8000;
+    const preco=this.PRECO_INGRESSO[t.divisao]||15;
+    // ocupação base 55%, sobe com confiança (usuário) e com o tamanho do adversário
+    let ocup=0.55;
+    if(ti===this.myTeam && this.confianca!=null) ocup += (this.confianca-60)/100*0.35;
+    if(advTi!=null){
+      const fAdv=this.forcaBaseTime(advTi), fMe=this.forcaBaseTime(ti);
+      if(fAdv>=fMe) ocup += 0.12;   // clássico/jogo grande enche mais
+    }
+    ocup=Math.max(0.25,Math.min(1,ocup));
+    return Math.round(cap*ocup*preco);
+  },
+  // premiação por acesso (subir de divisão) e por título
+  PREMIO_ACESSO:{A:0, B:15e6, C:6e6, D:2.5e6},  // prêmio ao CHEGAR nessa divisão
+  premiarAcesso(divAlcancada){
+    const v=this.PREMIO_ACESSO[divAlcancada]||0;
+    if(v>0){ const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+v; this.addExtrato('Premiação por acesso à Série '+divAlcancada, +v); }
+    return v;
+  },
+  premiarTitulo(nome, valor){
+    const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+valor;
+    this.addExtrato('Premiação: '+nome, +valor);
+  },
+  // ---- EMPRÉSTIMO (estilo Brasfoot) ----
+  // teto do empréstimo por divisão; parcela em N meses com juros simples
+  TETO_EMPRESTIMO:{A:40e6, B:18e6, C:8e6, D:3e6},
+  JUROS_EMPRESTIMO:0.15,       // 15% no total
+  PARCELAS_EMPRESTIMO:10,      // 10 "meses" (rodadas/4)
+  emprestimoDisponivel(){
+    const t=this.teams[this.myTeam];
+    const teto=this.TETO_EMPRESTIMO[t.divisao]||3e6;
+    const jaDeve=(this.emprestimo&&this.emprestimo.saldoDevedor)||0;
+    return Math.max(0, teto-jaDeve);
+  },
+  pedirEmprestimo(valor){
+    valor=Math.round(valor);
+    if(!(valor>0)) return {ok:false,msg:'Valor inválido.'};
+    if(valor>this.emprestimoDisponivel()) return {ok:false,msg:'Acima do limite de crédito do clube.'};
+    const t=this.teams[this.myTeam];
+    const total=Math.round(valor*(1+this.JUROS_EMPRESTIMO));
+    const parcela=Math.round(total/this.PARCELAS_EMPRESTIMO);
+    // acumula sobre um empréstimo existente
+    if(!this.emprestimo) this.emprestimo={saldoDevedor:0, parcela:0, parcelasRestantes:0};
+    this.emprestimo.saldoDevedor+=total;
+    this.emprestimo.parcelasRestantes=Math.max(this.emprestimo.parcelasRestantes, this.PARCELAS_EMPRESTIMO);
+    this.emprestimo.parcela+=parcela;
+    t.saldo=(t.saldo||0)+valor;
+    this.addExtrato('Empréstimo bancário', +valor);
+    return {ok:true, msg:`Crédito de ${this.fmtReais(valor)} liberado. Você pagará ${this.PARCELAS_EMPRESTIMO}x de ${this.fmtReais(parcela)}.`};
+  },
+  // débito mensal da parcela do empréstimo (chamado junto da folha)
+  cobrarParcelaEmprestimo(){
+    const e=this.emprestimo; if(!e||e.parcelasRestantes<=0) return;
+    const t=this.teams[this.myTeam];
+    const pg=Math.min(e.parcela, e.saldoDevedor);
+    t.saldo=(t.saldo||0)-pg;
+    e.saldoDevedor=Math.max(0,e.saldoDevedor-pg);
+    e.parcelasRestantes--;
+    this.addExtrato('Parcela do empréstimo', -pg);
+    if(e.parcelasRestantes<=0 || e.saldoDevedor<=0){ e.parcela=0; e.parcelasRestantes=0;
+      if(e.saldoDevedor<=0) this.emprestimo=null; }
+  },
+
+  /* ---------- MERCADO / VALOR VIVO (Fase 2B) ---------- */
+  // curva exponencial de valor por overall (em reais). ov~82 ≈ R$ 80M.
+  curvaValor(ov){
+    const K=180e6, N=5.2;                 // calibrado: 82 -> ~80M, 90 -> ~150M, 60 -> ~9M
+    return K*Math.pow(ov/100, N);
+  },
+  fatorIdadeValor(age){
+    if(age<=20) return 0.85;
+    if(age<=26) return 1.0;               // pico de valor
+    if(age<=29) return 0.85;
+    if(age<=31) return 0.60;
+    if(age<=33) return 0.38;
+    return 0.20;
+  },
+  fatorContratoValor(meses){
+    const m=meses||0;
+    if(m>=30) return 1.0; if(m>=18) return 0.9; if(m>=12) return 0.75;
+    if(m>=6) return 0.55; return 0.35;
+  },
+  fatorPosValor(setorNat){ return ({ATQ:1.15,MEI:1.05,DEF:0.95,GK:0.9})[setorNat]||1.0; },
+  // credibilidade do upside: jovem = potencial crível; velho = quase nada.
+  fatorConfiancaIdade(age){
+    if(age<=19) return 1.0; if(age<=21) return 0.85; if(age<=24) return 0.6;
+    if(age<=27) return 0.3; if(age<=30) return 0.1; return 0;
+  },
+  // Nível A: valor determinístico ancorado no overall atual + prêmio de potencial.
+  valorNivelA(p){
+    const mg=Motor.melhorGeral(p);
+    const base=this.curvaValor(mg.ov)
+      * this.fatorIdadeValor(p.idade)
+      * this.fatorContratoValor(p.contratoMeses)
+      * this.fatorPosValor(p.setorNat);
+    const pot=p.potential||mg.ov;
+    const premio=Math.max(0, this.curvaValor(pot)-this.curvaValor(mg.ov))
+      * this.fatorConfiancaIdade(p.idade) * 0.6;
+    return base+premio;
+  },
+  // valor final exibido = Nível A * market_factor (Nível B, salvo no snapshot)
+  valorDe(p){
+    const mf=(p._mktFactor!=null)?p._mktFactor:1.0;
+    return Math.round(this.valorNivelA(p)*mf);
+  },
+  // tick de mercado por rodada: atualiza market_factor com mean-reversion + ruído,
+  // grava o valor final em p.valor (o que o banco/UI mostram).
+  tickMercado(){
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      if(p._mktFactor==null) p._mktFactor=1.0;
+      // ruído pequeno + reversão à média (sempre puxa de volta a 1.0)
+      const ruido=(Math.random()*2-1)*0.04;         // ±4%
+      const reversao=(1.0 - p._mktFactor)*0.25;     // 25% de volta ao centro
+      let mf=p._mktFactor+ruido+reversao;
+      mf=Math.max(0.75, Math.min(1.35, mf));        // trava 0.75..1.35
+      p._mktFactor=mf;
+      const vAnt=p.valor;
+      p.valor=+(this.valorDe(p)/1e6).toFixed(1);    // valor em MILHÕES (formato do banco)
+      if(vAnt!=null) p._valorTend=p.valor-vAnt;      // variação da rodada (pista indireta)
+    }));
+  },
+
+  /* ---------- TRANSFERÊNCIAS / NEGOCIAÇÃO (Fase 2B) ---------- */
+  // acha o time (índice) dono de um jogador por pid
+  timeDoJogador(pid){
+    for(let i=0;i<this.teams.length;i++){ if(this.teams[i].players.some(p=>p.pid===pid)) return i; }
+    return -1;
+  },
+  // valor de mercado em reais (não milhões)
+  valorMercadoReais(p){ return this.valorDe(p); },
+
+  // executa a transferência: move o jogador do time origem pro destino e move o dinheiro.
+  // retorna {ok, msg}. Não mexe em cfg/escalação além de tirar de campo quem saiu.
+  executarTransferencia(pid, tiDestino, preco){
+    const tiOrigem=this.timeDoJogador(pid);
+    if(tiOrigem<0) return {ok:false,msg:'Jogador não encontrado.'};
+    if(tiOrigem===tiDestino) return {ok:false,msg:'Jogador já é do time.'};
+    const orig=this.teams[tiOrigem], dest=this.teams[tiDestino];
+    const idx=orig.players.findIndex(p=>p.pid===pid); const p=orig.players[idx];
+    if((dest.saldo||0)<preco) return {ok:false,msg:'Saldo insuficiente.'};
+    // dinheiro
+    dest.saldo=(dest.saldo||0)-preco;
+    orig.saldo=(orig.saldo||0)+preco;
+    // move
+    orig.players.splice(idx,1);
+    // evita conflito de número no destino
+    const usados=new Set(dest.players.map(q=>q.numero));
+    if(usados.has(p.numero)){ let n=1; while(usados.has(n)) n++; p.numero=n; }
+    p.aVenda=false;
+    dest.players.push(p);
+    // reescala só os times da IA (preserva a escalação manual do MEU time)
+    if(tiOrigem!==this.myTeam) this.cfg[tiOrigem]=this.cfgInicial(orig);
+    if(tiDestino!==this.myTeam) this.cfg[tiDestino]=this.cfgInicial(dest);
+    // extrato do meu time se envolvido
+    if(tiDestino===this.myTeam) this.addExtrato('Compra: '+p.nome, -preco);
+    if(tiOrigem===this.myTeam) this.addExtrato('Venda: '+p.nome, +preco);
+    return {ok:true,msg:`${p.nome} → ${dest.nome} por ${this.fmtReais(preco)}`, jogador:p, tiOrigem, tiDestino};
+  },
+
+  // IA decide sobre a SUA oferta de compra por um jogador do time 'ti'.
+  // retorna {decisao:'aceita'|'recusa'|'contra', contra?:valor, fala:texto}
+  avaliarOfertaCompra(pid, oferta){
+    const p=this.teams[this.timeDoJogador(pid)].players.find(x=>x.pid===pid);
+    const vm=this.valorMercadoReais(p);
+    const razao=oferta/vm;
+    // jogador jovem com potencial (idade baixa) o clube segura mais
+    const apego = p.idade<=21 ? 1.25 : p.idade<=26 ? 1.1 : 0.95;
+    const alvo=vm*apego;                       // preço que o clube realmente quer
+    if(oferta>=alvo*1.05) return {decisao:'aceita', fala:'Fechado! Ele é seu.'};
+    if(oferta<alvo*0.6)   return {decisao:'recusa', fala:'Proposta muito baixa. Nem vamos considerar.'};
+    // contrapropõe num ponto entre a oferta e o alvo
+    const contra=Math.round((oferta+alvo)/2/1e5)*1e5;
+    return {decisao:'contra', contra, fala:`Nesse valor não sai. Aceitamos por ${this.fmtReais(contra)}.`};
+  },
+
+  // Gera ofertas da IA pelos SEUS jogadores marcados à venda (chamado no fim da rodada).
+  // Guarda em this.ofertasRecebidas pra UI mostrar.
+  gerarOfertasIA(){
+    if(!this.ofertasRecebidas) this.ofertasRecebidas=[];
+    const meu=this.teams[this.myTeam];
+    meu.players.filter(p=>p.aVenda).forEach(p=>{
+      // já tem oferta pendente pra esse jogador?
+      if(this.ofertasRecebidas.some(o=>o.pid===p.pid)) return;
+      // 35% de chance por rodada de alguém se interessar
+      if(Math.random()>0.35) return;
+      // escolhe um comprador com caixa suficiente
+      const vm=this.valorMercadoReais(p);
+      const candidatos=this.teams.map((t,i)=>({t,i})).filter(o=>o.i!==this.myTeam && (o.t.saldo||0)>vm*0.8);
+      if(!candidatos.length) return;
+      const c=candidatos[Math.floor(Math.random()*candidatos.length)];
+      // oferta entre 75% e 115% do valor
+      const oferta=Math.round(vm*(0.75+Math.random()*0.4)/1e5)*1e5;
+      this.ofertasRecebidas.push({pid:p.pid, nome:p.nome, de:c.i, deNome:c.t.nome, valor:oferta, rodada:this.rodada});
+    });
+  },
+  // aceitar/recusar oferta recebida pelo meu jogador
+  responderOferta(pid, aceitar){
+    const idx=(this.ofertasRecebidas||[]).findIndex(o=>o.pid===pid);
+    if(idx<0) return {ok:false,msg:'Oferta não encontrada.'};
+    const o=this.ofertasRecebidas[idx];
+    this.ofertasRecebidas.splice(idx,1);
+    if(!aceitar) return {ok:true,msg:'Oferta recusada.'};
+    return this.executarTransferencia(pid, o.de, o.valor);
+  },
+
+  // extrato financeiro do meu time (últimos lançamentos)
+  addExtrato(desc, valor){
+    if(!this.extrato) this.extrato=[];
+    this.extrato.unshift({rodada:this.rodada, desc, valor, saldo:this.teams[this.myTeam]?.saldo||0});
+    if(this.extrato.length>30) this.extrato.length=30;
+  },
+
+  // avança N dias: +2 energia/dia, reduz lesões
+  avancarDias(n){
+    this.dia+=n;
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      p.energia=Math.min(100, p.energia + 2*n);
+      if(p.lesionado){ p.lesionado=Math.max(0, p.lesionado-n); if(p.lesionado<=0) delete p.lesionado; }
+    }));
+  },
+
+  fecharRodada(){
+    this.liveState=null;
+    this.squadView=this.myTeam;      // volta pro meu time
+    // avisa quem saiu do time e por quê
+    if(this.baixas && this.baixas.length){
+      const txt=this.baixas.map(b=>`• ${b.nome} — ${b.motivo.replace(/^[^\s]+\s/,'')}`).join('\n');
+      alert(`⚠️ Desfalques para a próxima rodada:\n\n${txt}\n\nEles saíram da escalação automaticamente.`);
+      this.baixas=[];
+    }
+    this.renderShell();
+    // demissão tem prioridade: abre a tela e não segue pra escalação
+    if(this._demissaoPendente){ this._demissaoPendente=false; this.abrirDemissao(); return; }
+    // fluxo Brasfoot: depois de fechar o resultado, cai na Escalação
+    if(!this.tempEncerrada) this.showTab('escala');
+  },
+
+  descansar(){
+    this.avancarDias(1);
+    this.renderShell();
+  },
+
+  // deltas: opcional {i: {pts,gp,gc,live:true}} para pontuação provisória ao vivo
+  // grupo (array de índices) a que o time pertence; null se não há grupos
+  grupoDe(ti){
+    if(!this.grupos) return null;
+    return this.grupos.find(g=>g.includes(ti))||null;
+  },
+  indiceDoGrupo(ti){
+    if(!this.grupos) return -1;
+    return this.grupos.findIndex(g=>g.includes(ti));
+  },
+  // índice do grupo de um time DENTRO de uma liga qualquer (não só a ativa)
+  grupoDeNaLiga(liga, ti){
+    if(!liga||!liga.grupos) return -1;
+    return liga.grupos.findIndex(g=>g.includes(ti));
+  },
+  classificacao(deltas){
+    const meuGrupo=this.grupoDe(this.myTeam);
+    // sem grupos (pontos corridos A/B/C): restringe à divisão ATIVA, não a todos os
+    // times carregados. this.stats é esparso sobre TODOS os times (156), então sem
+    // esse filtro a tabela listaria o mundo inteiro na Série do usuário.
+    const idxAtiva=this._ligaAtiva&&this._ligaAtiva.indices;
+    const base=meuGrupo
+      ? this.stats.filter(s=>meuGrupo.includes(s.i))
+      : (idxAtiva ? this.stats.filter(s=>idxAtiva.includes(s.i)) : this.stats);
+    const merged=base.map(s=>{
+      const d=deltas&&deltas[s.i];
+      if(!d) return {...s, live:false};
+      return {...s, pts:s.pts+d.pts, gp:s.gp+d.gp, gc:s.gc+d.gc, live:true};
+    });
+    return merged.sort((a,b)=>
+      b.pts-a.pts||(b.gp-b.gc)-(a.gp-a.gc)||b.gp-a.gp||
+      this.teams[a.i].nome.localeCompare(this.teams[b.i].nome));
+  },
+
+  // calcula os pontos/saldo provisórios da rodada em andamento
+  deltasAoVivo(){
+    const L=this.liveState; if(!L) return null;
+    const d={};
+    L.sims.forEach(s=>{
+      const ph = s.gc>s.gf?3:s.gc===s.gf?1:0, pa = s.gf>s.gc?3:s.gc===s.gf?1:0;
+      d[s.h]={pts:ph, gp:s.gc, gc:s.gf};
+      d[s.a]={pts:pa, gp:s.gf, gc:s.gc};
+    });
+    return d;
+  },
+
+  /* ============ SUBSTITUIÇÕES AO VIVO ============ */
+  // acha o sim do meu time na rodada atual
+  meuSim(){ return this.liveState?.sims.find(s=>s.h===this.myTeam||s.a===this.myTeam); },
+  meuLado(s){ return s.h===this.myTeam?'H':'A'; },
+
+  // pausa manual pra substituir (durante o jogo, consome 1 parada se fizer troca)
+  pausarParaSub(){
+    const L=this.liveState; if(!L||L.done||L.fase==='intervalo') return;
+    const s=this.meuSim(); if(!s) return;
+    const sub = this.meuLado(s)==='H'?s.subH:s.subA;
+    if(sub.feitas>=5){ this.flashAviso('Já usou as 5 substituições'); return; }
+    if(sub.paradas>=3){ this.flashAviso('Já usou as 3 paradas'); return; }
+    clearInterval(L.timer); L.paused=true; L.subOpen=true;
+    this.abrirSubs('parada');
+  },
+
+  // intervalo: abre a tela de subs automaticamente (parada NÃO conta)
+  abrirIntervalo(){
+    const L=this.liveState;
+    L.subOpen=true;
+    this.atualizarPlacaresAoVivo();
+    this.renderArena();
+    this.abrirSubs('intervalo');
+  },
+
+  // monta a tela de substituição (overlay in-flow)
+  abrirSubs(contexto){
+    const L=this.liveState; const s=this.meuSim(); if(!s){ this.retomarJogo(); return; }
+    const lado=this.meuLado(s);
+    const campo = lado==='H'?s.campoH:s.campoA;
+    const slots = lado==='H'?s.slotsH:s.slotsA;
+    const sub = lado==='H'?s.subH:s.subA;
+    const team=this.teams[this.myTeam];
+    const numsCampo=new Set(campo.map(p=>p.numero));
+    const banco=Motor.disp(team).filter(p=>!numsCampo.has(p.numero)&&!p.lesionado&&!(p.suspenso>0));
+
+    L._subCtx={contexto, saiSel:null, entraSel:null, pendentes:[]};
+    this.renderSubsOverlay();
+  },
+
+  renderSubsOverlay(){
+    const L=this.liveState; const s=this.meuSim(); const lado=this.meuLado(s);
+    const campo=lado==='H'?s.campoH:s.campoA;
+    const slots=lado==='H'?s.slotsH:s.slotsA;
+    const sub=lado==='H'?s.subH:s.subA;
+    const team=this.teams[this.myTeam];
+    const ctx=L._subCtx;
+    const numsCampo=new Set(campo.map(p=>p.numero));
+    const pendEntra=new Set(ctx.pendentes.map(p=>p.entra.numero));
+    const pendSai=new Set(ctx.pendentes.map(p=>p.sai.numero));
+    const banco=this.bancoDe(this.myTeam).filter(p=>!numsCampo.has(p.numero)&&!pendEntra.has(p.numero));
+
+    const restam=5-sub.feitas-ctx.pendentes.length;
+    const paradasRestam=ctx.contexto==='intervalo'?3-sub.paradas:3-sub.paradas-(ctx.pendentes.length?1:0);
+
+    // linha de jogador (titular ou reserva)
+    const linha=(p,idx,tipo)=>{
+      const rend = tipo==='tit'? Math.round(Motor.forcaAtual(p,slots[idx])) : Math.round(Motor.rendimento(p));
+      const low=p.energia<40;
+      const sel = tipo==='tit'? ctx.saiSel===idx : ctx.entraSel===p.numero;
+      const pend = tipo==='tit' && pendSai.has(p.numero);
+      const attr = tipo==='tit'? `data-sai="${idx}"` : `data-entra="${p.numero}"`;
+      return `<div class="sub-row ${sel?'sel':''} ${pend?'pend':''}" ${attr}>
+        ${(()=>{ const pp=(tipo==='tit'&&slots[idx])?slots[idx]:Motor.melhorGeral(p).pos;
+          return `<span class="pos-tag pos-${pp}">${pp}</span>`; })()}
+        <span class="sub-nome">${p.nome}${pend?' <span class="pend-tag">↓ saindo</span>':''}</span>
+        <span class="sub-stat"><span class="sub-k">FOR</span><b>${p.forca}</b></span>
+        <span class="sub-stat"><span class="sub-k">ENE</span><b style="color:${low?'var(--loss)':'var(--lemon)'}">${Math.round(p.energia)}</b></span>
+        <span class="sub-stat"><span class="sub-k">ATUAL</span><b class="rd">${rend}</b></span>
+      </div>`;
+    };
+
+    let ov=document.getElementById('subsOverlay');
+    if(!ov){ ov=document.createElement('div'); ov.id='subsOverlay'; document.querySelector('.wrap').appendChild(ov); }
+    ov.innerHTML=`
+      <div class="subs-bg"><div class="subs-box">
+        <div class="subs-head">
+          <div class="subs-title">${ctx.contexto==='intervalo'?'INTERVALO':'PARADA TÉCNICA'} <span class="lbl">${team.abrev} • ${s.gc} × ${s.gf} • ${L.min}'</span></div>
+          <div class="subs-meta">Substituições restantes <b>${restam}</b> · Paradas restantes <b>${paradasRestam}</b>${ctx.contexto==='intervalo'?' · <span style="color:var(--lemon)">o intervalo não gasta parada</span>':''}</div>
+        </div>
+
+        <div class="subs-section">
+          <div class="subs-h">Titulares em campo <span class="subs-hint">clique em quem vai sair</span></div>
+          <div class="subs-list">${campo.map((p,idx)=>linha(p,idx,'tit')).join('')}</div>
+        </div>
+
+        <div class="subs-divider"><span>⇄ reservas</span></div>
+
+        <div class="subs-section">
+          <div class="subs-h">Banco <span class="subs-hint">clique em quem vai entrar</span></div>
+          <div class="subs-list">${banco.length?banco.sort((a,b)=>Motor.rendimento(b)-Motor.rendimento(a)).map(p=>linha(p,null,'res')).join(''):'<div class="empty">Sem reservas disponíveis</div>'}</div>
+        </div>
+
+        ${ctx.pendentes.length?`<div class="subs-pend">Trocas confirmadas: ${ctx.pendentes.map(p=>`${p.sai.nome} ⇄ ${p.entra.nome}`).join(' · ')}</div>`:''}
+        <div class="subs-foot">
+          <button class="btn sm" id="subAdd" ${ctx.saiSel==null||ctx.entraSel==null||restam<=0?'disabled':''}>+ Confirmar troca</button>
+          <button class="btn primary sm" id="subDone">${ctx.pendentes.length?`Aplicar ${ctx.pendentes.length} e ${L.fase==='intervalo'?'iniciar 2º tempo':'voltar'}`:(L.fase==='intervalo'?'Iniciar 2º tempo ▶':'Voltar ao jogo ▶')}</button>
+        </div>
+      </div></div>`;
+
+    ov.querySelectorAll('[data-sai]').forEach(b=>b.onclick=()=>{ ctx.saiSel=+b.dataset.sai; this.renderSubsOverlay(); });
+    ov.querySelectorAll('[data-entra]').forEach(b=>b.onclick=()=>{ ctx.entraSel=+b.dataset.entra; this.renderSubsOverlay(); });
+    document.getElementById('subAdd').onclick=()=>this.addTroca();
+    document.getElementById('subDone').onclick=()=>this.aplicarSubs();
+  },
+
+  addTroca(){
+    const L=this.liveState, ctx=L._subCtx, s=this.meuSim(), lado=this.meuLado(s);
+    const campo=lado==='H'?s.campoH:s.campoA;
+    const team=this.teams[this.myTeam];
+    const sai=campo[ctx.saiSel];
+    const entra=team.players.find(p=>p.numero===ctx.entraSel);
+    if(!sai||!entra) return;
+    ctx.pendentes.push({saiIdx:ctx.saiSel, sai, entra});
+    ctx.saiSel=null; ctx.entraSel=null;
+    this.renderSubsOverlay();
+  },
+
+  aplicarSubs(){
+    const L=this.liveState, ctx=L._subCtx, s=this.meuSim(), lado=this.meuLado(s);
+    const campo=lado==='H'?s.campoH:s.campoA;
+    const sub=lado==='H'?s.subH:s.subA;
+    // aplica todas as trocas pendentes
+    ctx.pendentes.forEach(({saiIdx,entra})=>{
+      campo[saiIdx]={ref:entra, forca:entra.forca, energia:entra.energia,
+                     posicao:entra.posicao, nome:entra.nome, numero:entra.numero};
+      sub.feitas++;
+      (lado==='H'?s.jogaramH:s.jogaramA).add(entra.numero);
+      s.evs.push({m:L.min,tipo:'sub',time:lado==='H'?'casa':'fora',quem:entra.nome});
+    });
+    // parada só conta se foi "parada técnica" (não intervalo) E houve troca
+    if(ctx.contexto==='parada' && ctx.pendentes.length>0) sub.paradas++;
+    document.getElementById('subsOverlay')?.remove();
+    L._subCtx=null;
+    this.retomarJogo();
+  },
+
+  retomarJogo(){
+    const L=this.liveState; if(!L) return;
+    document.getElementById('subsOverlay')?.remove();
+    L.paused=false; L.subOpen=false;
+    if(L.fase==='intervalo') L.fase='2T';
+    this.renderArena();
+    if(!L.done && L.min<90) this.rodarRelogio();
+  },
+
+  flashAviso(msg){
+    const b=document.getElementById('btnSub'); if(!b) return;
+    const old=b.textContent; b.textContent=msg;
+    setTimeout(()=>{ if(b)b.textContent=old; }, 1400);
+  },
+
+  /* ============ RENDER ============ */
+  renderShell(){
+    document.getElementById('hudRound').textContent=this.rodada;
+    document.getElementById('hudDia').textContent=this.dia;
+    const mt=this.teams[this.myTeam];
+    const hudEl=document.getElementById('hudTeam');
+    if(mt){ hudEl.innerHTML=this.escudoHTML(mt,18)+' '+mt.nome; }
+    else hudEl.textContent='— —';
+    this.renderArena(); this.renderEscala(); this.renderElenco(); this.renderCompeticoes(); this.renderMercado(); this.renderFinancas(); this.renderDados();
+  },
+
+  showTab(name){
+    document.querySelectorAll('nav.tabs button').forEach(b=>
+      b.classList.toggle('active', b.dataset.tab===name));
+    ['arena','escala','elenco','competicoes','mercado','financas','dados'].forEach(t=>
+      document.getElementById('tab-'+t).classList.toggle('hidden', t!==name));
+  },
+
+  // HTML da tabela de classificação (aceita deltas ao vivo p/ reordenar)
+  tabelaHTML(deltas){
+    const ordem=this.classificacao(deltas);
+    const n=ordem.length;
+    return `<table><thead><tr>
+        <th class="l">#</th><th class="l">Time</th>
+        <th>P</th><th>J</th><th>V</th><th>E</th><th>D</th><th>SG</th>
+      </tr></thead><tbody>${ordem.map((s,idx)=>{
+        const t=this.teams[s.i],sg=s.gp-s.gc,me=s.i===this.myTeam;
+        const z=idx<4?'zona-g':idx>=n-4?'zona-r':'';
+        const jogaAgora=s.live;
+        return `<tr class="${me?'me':''} ${jogaAgora?'jogando':''}" data-team="${s.i}">
+          <td class="l pos ${z}">${idx+1}</td>
+          <td class="l"><span class="abrev">${t.abrev}</span>${t.nome}${jogaAgora?' <span class="live-dot">●</span>':''}</td>
+          <td class="pts">${s.pts}</td><td>${s.j+(jogaAgora?1:0)}</td><td>${s.v}</td>
+          <td>${s.e}</td><td>${s.d}</td>
+          <td style="color:${sg>0?'var(--lemon)':sg<0?'var(--loss)':'var(--gray)'}">${sg>0?'+':''}${sg}</td>
+        </tr>`;}).join('')}</tbody></table>`;
+  },
+
+  renderArena(){
+    const el=document.getElementById('tab-arena');
+    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados para começar.</div>'; return; }
+    const live=!!this.liveState, L=this.liveState;
+    const acabou=this.rodada>=this.fixtures.length;
+
+    // ---- TOPO: botões (ou controles da rodada ao vivo) ----
+    const topo = live ? `
+      <div class="live-head" style="margin-bottom:18px">
+        <div class="live-title">Round ${L.done?this.rodada:this.rodada+1} <span class="lbl">${L.done?'encerrado':'ao vivo'}</span></div>
+        <div class="live-clockbox">
+          <div class="live-progwrap"><div class="live-prog" id="liveProg"></div></div>
+          <div class="live-clock" id="liveClock">0'</div>
+        </div>
+        <div class="btn-row">${L.done
+          ? `<button class="btn primary sm" id="btnFechar">Fechar</button>`
+          : `${this.meuSim()?`<button class="btn sm" id="btnSub">⇄ Substituir</button>`:''}<button class="btn sm" id="btnPular">Pular ⏩</button>`}</div>
+      </div>`
+    : `
+      <div class="btn-row" style="margin-bottom:18px">
+        ${acabou
+          ? `<button class="btn primary" id="btnPodio">🏆 Ver pódio da temporada</button>
+             <button class="btn sm" id="btnNovaTemp">Nova temporada</button>`
+          : `<button class="btn primary" id="btnRodada">▶ Jogar round ${this.rodada+1}</button>
+             <button class="btn sm" id="btnDescansar">＋1 dia</button>`}
+        <button class="btn sm" id="btnSalvarArena">💾 Salvar</button>
+        <span id="saveHint" style="font-family:'Space Mono';font-size:11px;color:var(--lemon)"></span>
+        <div style="margin-left:auto; font-family:'Space Mono'; font-weight:700; font-size:11px; color:var(--gray)">
+          Temporada ${this.temporada||1} • META: G4 = Liberta</div>
+      </div>`;
+
+    // ---- DIREITA: última rodada (normal) OU partidas ao vivo ----
+    const direita = live ? `
+      <div class="panel">
+        <div class="ptitle">Rodada ao vivo <span class="lbl" id="liveLbl">round ${L.done?this.rodada:this.rodada+1}</span></div>
+        <div class="live-list">${L.jogos.map(([h,a],i)=>{
+          const th=this.teams[h], ta=this.teams[a], me=h===this.myTeam||a===this.myTeam;
+          return `<div class="live-match ${me?'me':''}" id="live-${i}">
+            <div class="lm-teams">
+              <span class="lm-home"><span class="abrev">${th.abrev}</span>${th.nome}</span>
+              <span class="lm-score"><b class="lsc-h">0</b><span class="lsc-x">×</span><b class="lsc-a">0</b></span>
+              <span class="lm-away">${ta.nome} <span class="abrev">${ta.abrev}</span></span>
+            </div>
+            <div class="lev"></div>
+          </div>`;}).join('')}</div>
+      </div>`
+    : `
+      <div class="panel">
+        <div class="ptitle">Última rodada <span class="lbl">${this.rodada?'round '+this.rodada:'—'}</span></div>
+        <div id="resultados">${this.resultados.length? this.resultados.map(r=>{
+          const th=this.teams[r.h],ta=this.teams[r.a],me=r.h===this.myTeam||r.a===this.myTeam;
+          const hc=r.gc>r.gf?'w':r.gc<r.gf?'l':'',ac=r.gf>r.gc?'w':r.gf<r.gc?'l':'';
+          return `<div class="match ${me?'me':''}">
+            <span class="home ${hc}">${th.nome} <span class="abrev">${th.abrev}</span></span>
+            <span class="score">${r.gc}-${r.gf}</span>
+            <span class="away ${ac}"><span class="abrev">${ta.abrev}</span> ${ta.nome}</span>
+          </div>`;}).join('') : '<div class="empty">Bora! Clique em JOGAR ROUND.</div>'}</div>
+      </div>`;
+
+    // ---- seletor de série/grupo do PLACAR GERAL (visualização; não muda o que é jogado) ----
+    const NOMES={A:'Série A',B:'Série B',C:'Série C',D:'Série D'};
+    const seriesDisp=Object.keys(this.ligas||{}).sort();
+    if(!this.arenaSerie || !this.ligas[this.arenaSerie]) this.arenaSerie=this.divisao;
+    const aSerie=this.arenaSerie;
+    const aLiga=this.ligas[aSerie];
+    const aGrupos = aLiga && aLiga.formato.tipo==='grupos' && aLiga.grupos;
+    if(aGrupos){
+      const meuG=this.grupoDeNaLiga(aLiga, this.myTeam);
+      if(this.arenaGrupoD==null || this.arenaGrupoD<0 || this.arenaGrupoD>=aLiga.grupos.length)
+        this.arenaGrupoD = meuG>=0 ? meuG : 0;
+    }
+    const ehMinha = aSerie===this.divisao;
+    const filtroSeries = seriesDisp.map(d=>
+      `<button class="cmp-serie sm ${d===aSerie?'on':''} ${d===this.divisao?'minha':''}" data-aserie="${d}">${NOMES[d]||d}${d===this.divisao?' <span class="cmp-vc">você</span>':''}</button>`
+    ).join('');
+    const filtroGrupo = aGrupos
+      ? `<select id="arenaGrupoSel" class="arena-grpsel">${aLiga.grupos.map((g,gi)=>{
+          const eu=g.includes(this.myTeam)?' • seu grupo':'';
+          return `<option value="${gi}" ${gi===this.arenaGrupoD?'selected':''}>Grupo ${gi+1}${eu}</option>`;
+        }).join('')}</select>`
+      : '';
+    // tabela exibida: se for a MINHA série (e grupo do meu time), usa a ao vivo; senão, estática da liga
+    const tabelaExibida = (()=>{
+      if(ehMinha && (!aGrupos || this.arenaGrupoD===this.grupoDeNaLiga(aLiga, this.myTeam)))
+        return this.tabelaHTML(live?this.deltasAoVivo():null);
+      return this.tabelaSerieHTML(aSerie, aGrupos?this.arenaGrupoD:null);
+    })();
+
+    el.innerHTML=`${topo}
+      <div class="grid-2">
+        <div class="panel">
+          <div class="ptitle-row">
+            <div class="ptitle">Placar geral <span class="lbl">${live&&!L.done&&ehMinha?'ao vivo':(NOMES[aSerie]||'Liga')}</span></div>
+          </div>
+          <div class="arena-filtro">
+            <div class="arena-series">${filtroSeries}</div>
+            ${filtroGrupo?`<div class="arena-sub"><label>Grupo</label>${filtroGrupo}</div>`:''}
+          </div>
+          <div id="tabelaBox">${tabelaExibida}</div>
+        </div>
+        ${direita}
+      </div>`;
+
+    el.querySelectorAll('[data-aserie]').forEach(b=>b.onclick=()=>{
+      this.arenaSerie=b.dataset.aserie; this.arenaGrupoD=null; this.renderArena();
+    });
+    const ags=document.getElementById('arenaGrupoSel');
+    if(ags) ags.onchange=()=>{ this.arenaGrupoD=+ags.value; this.renderArena(); };
+
+    if(live){
+      if(L.done){ const b=document.getElementById('btnFechar'); if(b)b.onclick=()=>this.fecharRodada(); }
+      else {
+        const bp=document.getElementById('btnPular'); if(bp)bp.onclick=()=>this.pularRodada();
+        const bs=document.getElementById('btnSub'); if(bs)bs.onclick=()=>this.pausarParaSub();
+      }
+      this.atualizarPlacaresAoVivo();
+    } else {
+      const br=document.getElementById('btnRodada'); if(br)br.onclick=()=>this.jogarRodada();
+      const bd=document.getElementById('btnDescansar'); if(bd)bd.onclick=()=>this.descansar();
+      const bsv=document.getElementById('btnSalvarArena'); if(bsv)bsv.onclick=()=>this.salvarSupabase(false);
+      const bp=document.getElementById('btnPodio'); if(bp)bp.onclick=()=>this.abrirPodio();
+      const bnt=document.getElementById('btnNovaTemp'); if(bnt)bnt.onclick=()=>this.novaTemporadaCompleta();
+    }
+  },
+
+  // tabela de QUALQUER série/grupo (estática — sem deltas ao vivo). Destaca meu time.
+  tabelaSerieHTML(serie, grupoIdx){
+    const liga=this.ligas&&this.ligas[serie]; if(!liga) return '<div class="empty">Sem dados.</div>';
+    let linhas;
+    if(grupoIdx!=null && liga.grupos && liga.grupos[grupoIdx]){
+      linhas=Competicao.classificarGrupo(liga.stats, liga.grupos[grupoIdx], i=>this.teams[i].nome);
+    } else {
+      linhas=Competicao.classificarGrupo(liga.stats, liga.indices, i=>this.teams[i].nome);
+    }
+    const n=linhas.length;
+    const ehGrupos=liga.formato.tipo==='grupos';
+    const f=liga.formato;
+    return `<table><thead><tr>
+        <th class="l">#</th><th class="l">Time</th>
+        <th>P</th><th>J</th><th>V</th><th>E</th><th>D</th><th>SG</th>
+      </tr></thead><tbody>${linhas.map((s,idx)=>{
+        const t=this.teams[s.i],sg=s.gp-s.gc,me=s.i===this.myTeam;
+        const z = ehGrupos ? (idx<4?'zona-g':'') : (idx<f.acessos&&serie!=='A'?'zona-g':(f.rebaixa&&idx>=n-f.rebaixa?'zona-r':''));
+        return `<tr class="${me?'me':''}" data-team="${s.i}">
+          <td class="l pos ${z}">${idx+1}</td>
+          <td class="l"><span class="abrev">${t.abrev}</span>${t.nome}${me?' <span class="live-dot" style="background:var(--lemon)"></span>':''}</td>
+          <td class="pts">${s.pts}</td><td>${s.j}</td><td>${s.v}</td>
+          <td>${s.e}</td><td>${s.d}</td>
+          <td style="color:${sg>0?'var(--lemon)':sg<0?'var(--loss)':'var(--gray)'}">${sg>0?'+':''}${sg}</td>
+        </tr>`;}).join('')}</tbody></table>`;
+  },
+
+  fmtM(v){ return 'R$ '+(v||0).toFixed(2).replace('.',',')+' M'; },
+  // seta de tendência de valor da última rodada (pista de curto prazo)
+  tendenciaHTML(p){
+    const d=p._valorTend||0;
+    if(d>0.05) return `<span style="color:var(--lemon);font-size:11px">▲</span>`;
+    if(d<-0.05) return `<span style="color:var(--loss);font-size:11px">▼</span>`;
+    return `<span style="color:var(--gray2);font-size:11px">–</span>`;
+  },
+  // selo de "em ascensão": jovem que já subiu overall desde o início (pista de potencial, sem revelar o número)
+  ascensaoHTML(p){
+    if(p._ovInicialNat==null) return '';
+    const atual=Motor.melhorGeral(p).ov;
+    const subiu=atual-p._ovInicialNat;
+    if(p.idade<=23 && subiu>=3)
+      return `<div class="ficha-line"><span>Trajetória</span><b style="color:var(--lemon)">↗ Em ascensão</b></div>`;
+    if(p.idade>=30 && subiu<0)
+      return `<div class="ficha-line"><span>Trajetória</span><b style="color:var(--loss)">↘ Em declínio</b></div>`;
+    return '';
+  },
+  fmtm(v){ return (v||0).toFixed(1).replace('.',',')+' m'; },
+  contratoTxt(meses){ const a=Math.floor(meses/12), m=meses%12;
+    if(a&&m) return `${a}a ${m}m`; if(a) return `${a} ano${a>1?'s':''}`; return `${m} meses`; },
+
+  // escudo do time: usa a URL se houver, senão gera um SVG estilizado (iniciais + cores)
+  escudoHTML(t, size){
+    const s=size||22;
+    if(t.escudo){
+      return `<img class="escudo-img" src="${t.escudo}" alt="${t.abrev}" style="width:${s}px;height:${s}px" onerror="this.replaceWith(App.escudoFallbackEl(App.teams.find(x=>x.abrev==='${t.abrev}'),${s}))">`;
+    }
+    return this.escudoFallback(t, s);
+  },
+  escudoFallback(t, s){
+    const ini=(t.abrev||'??').slice(0,3);
+    const c1=t.cor1||'#333', c2=t.cor2||'#fff';
+    return `<span class="escudo-fb" style="width:${s}px;height:${s}px;background:${c1};color:${c2};border-color:${c2}">${ini}</span>`;
+  },
+  escudoFallbackEl(t, s){ const d=document.createElement('span'); d.innerHTML=this.escudoFallback(t,s); return d.firstChild; },
+
+  renderEscala(){
+    const i=this.myTeam, t=this.teams[i], c=this.cfg[i];
+    if(!t){ document.getElementById('tab-escala').innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!c.formacao) c.formacao='4-3-3';
+    const onze=this.onzeDe(i);
+    const banco=this.bancoDe(i);
+    const slots=this.slotsDe(i);
+    const forcaMedia=Motor.forcaEmCampo(onze,slots,this.rolesDe(i))/11;
+
+    if(this.selPlayer==null || !t.players.find(p=>p.numero===this.selPlayer)) this.selPlayer=t.players[0]?.numero;
+
+    // ---- filtros + ordenação ----
+    const fil=this.elencoFiltro, srt=this.elencoSort;
+    let lista=[...t.players];
+    if(fil.setor) lista=lista.filter(p=>p.setorNat===fil.setor);
+    const ovAtual=(p)=>{ const pos=this.posDe(i,p.numero); return (pos==='BANCO'||pos==='FORA')? p.forca : Motor.overallEm(p,pos,this.roleDe(i,p.numero)); };
+    const valOrd=(p)=>{ switch(srt.col){
+      case 'nome': return p.nome.toLowerCase();
+      case 'ov': return ovAtual(p);
+      case 'setor': return p.setorNat||'zzz';
+      case 'idade': return p.idade||0;
+      case 'jogos': return p.jogos||0;
+      case 'gols': return p.gols||0;
+      case 'salario': return p.salario||0;
+      case 'valor': return p.valor||0;
+      default: return ovAtual(p);
+    }};
+    lista.sort((a,b)=>{ const va=valOrd(a),vb=valOrd(b); if(va<vb)return -srt.dir; if(va>vb)return srt.dir; return 0; });
+    // padrão: titulares > banco > fora
+    if(srt.col==='ov' && srt.dir===-1 && !fil.setor){
+      const rank=(p)=>{ const ps=this.posDe(i,p.numero); return ps==='FORA'?2:ps==='BANCO'?1:0; };
+      lista.sort((a,b)=>{ const ra=rank(a),rb=rank(b); if(ra!==rb)return ra-rb; return ovAtual(b)-ovAtual(a); });
+    }
+    const seta=(col)=> srt.col===col?(srt.dir===-1?' ▼':' ▲'):'';
+    const POSICOES=Object.keys(PESOS_POS);
+
+    // ---- campo HORIZONTAL: colunas = linhas táticas (GK à esquerda, ATA à direita) ----
+    const linhasCampo=LINHAS_FM[c.formacao];
+    const porPos={}; const usadosCampo=new Set();
+    onze.forEach(p=>{ const pos=this.posDe(i,p.numero); (porPos[pos]||=[]).push(p); });
+    // monta as colunas do campo na ordem da formação
+    const colunas=linhasCampo.map(linha=>{
+      return linha.map(pos=>{
+        const arr=porPos[pos]||[];
+        const p=arr.find(x=>!usadosCampo.has(x.numero));
+        if(p) usadosCampo.add(p.numero);
+        return {pos, p};
+      });
+    });
+
+    const el=document.getElementById('tab-escala');
+    el.innerHTML=`
+      <div class="esc-topbar">
+        <div class="esc-teampick">
+          <span class="esc-escudo">${this.escudoHTML(t,30)}</span>
+          <span class="esc-teamnome">${t.nome}</span>
+          <span class="esc-badge">seu clube</span>
+        </div>
+        <div class="esc-forminfo">
+          <label>Formação</label>
+          <select class="esc-formsel" id="formSel">
+            ${Object.keys(LINHAS_FM).map(f=>`<option value="${f}" ${c.formacao===f?'selected':''}>${f}</option>`).join('')}
+          </select>
+          <button class="btn sm primary" id="btnEscalarAuto" title="Escala o melhor time possível nesta formação">⚡ Escalar</button>
+          <button class="btn sm" id="btnLimparForm" title="Tira todos os titulares do campo">🧹 Limpar</button>
+          ${(()=>{ const acabou=this.rodada>=this.fixtures.length; const live=this.liveState&&this.liveState.playing;
+            return live ? `<button class="btn sm jogar" disabled>⏱ Em jogo</button>`
+              : acabou ? `<button class="btn sm jogar" disabled>Temporada encerrada</button>`
+              : `<button class="btn sm jogar" id="btnJogarEsc" title="Vai direto para a rodada">▶ Jogar round ${this.rodada+1}</button>`;
+          })()}
+        </div>
+        <div class="esc-forca">força em campo <b>${forcaMedia.toFixed(1)}</b> · ${onze.length}/11 titulares · ${banco.length}/12 banco</div>
+      </div>
+
+      ${this.painelPresidenteHTML()}
+
+      <div class="mk-wrap">
+        <div class="mk-left">
+          <div class="mk-panel">
+            <div class="mk-filtros">
+              <select class="mk-sel" id="filSetor">
+                <option value="">Todos setores</option>
+                <option value="GK" ${fil.setor==='GK'?'selected':''}>Goleiros</option>
+                <option value="DEF" ${fil.setor==='DEF'?'selected':''}>Defesa</option>
+                <option value="MEI" ${fil.setor==='MEI'?'selected':''}>Meio</option>
+                <option value="ATQ" ${fil.setor==='ATQ'?'selected':''}>Ataque</option>
+              </select>
+              ${fil.setor?`<button class="btn sm" id="filLimpar">Limpar</button>`:''}
+              <span class="mk-count">${lista.length}/${t.players.length}</span>
+            </div>
+            <div class="mk-tablewrap">
+              <table class="mk-table">
+                <colgroup>
+                  <col class="c-nome"><col class="c-nat"><col class="c-pos"><col class="c-role">
+                  <col class="c-ovr"><col class="c-id"><col class="c-j"><col class="c-g"><col class="c-valor">
+                </colgroup>
+                <thead><tr>
+                  <th class="l sortable" data-sort="nome">Jogador${seta('nome')}</th>
+                  <th class="sortable" data-sort="setor">Nat${seta('setor')}</th>
+                  <th>Posição</th><th>Role</th>
+                  <th class="sortable" data-sort="ov">OVR${seta('ov')}</th>
+                  <th class="sortable" data-sort="idade">Id${seta('idade')}</th>
+                  <th class="sortable" data-sort="jogos">J${seta('jogos')}</th>
+                  <th class="sortable" data-sort="gols">G${seta('gols')}</th>
+                  <th class="sortable" data-sort="valor">Valor${seta('valor')}</th>
+                </tr></thead>
+                <tbody>${lista.map(p=>{
+                  const pos=this.posDe(i,p.numero), role=this.roleDe(i,p.numero);
+                  const noBanco=pos==='BANCO', foraEq=pos==='FORA';
+                  const semPos=noBanco||foraEq;
+                  const ov=semPos?p.forca:Motor.overallEm(p,pos,role);
+                  const cor=semPos?'var(--gray)':Motor.corAdequacao(ov);
+                  const selRow=p.numero===this.selPlayer, les=p.lesionado;
+                  const susp=p.suspenso>0?p.suspenso:0;
+                  const indisp=this.indisponivel(p);
+                  const rolesDisp=semPos?[]:(ROLES_POS[pos]||[]);
+                  return `<tr class="mk-row ${selRow?'sel':''} ${indisp?'les':''} ${foraEq?'fora':noBanco?'banco':''}" data-pnum="${p.numero}">
+                    <td class="l"><a class="mk-nome-link" data-modal="${p.numero}">${p.nome}</a>${les?` <span class="mk-les">🩹${les}</span>`:''}${susp?` <span class="mk-susp" title="${p._motivoSusp||''}">🟥${susp}</span>`:''}</td>
+                    <td class="mk-nat">${p.setorNat||'–'}</td>
+                    <td>${indisp
+                      ? `<span class="mk-indisp">${p.lesionado?'🩹 Lesionado':'🟥 Suspenso'}</span>`
+                      : `<select class="mk-posdd" data-pnum="${p.numero}">
+                      <option value="FORA" ${foraEq?'selected':''}>— Fora —</option>
+                      <option value="BANCO" ${noBanco?'selected':''}>— Banco —</option>
+                      ${POSICOES.map(ps=>`<option value="${ps}" ${pos===ps?'selected':''}>${ps} · ${POS_NOME[ps]}</option>`).join('')}
+                    </select>`}</td>
+                    <td>${(semPos||indisp)?'<span class="mk-dash">–</span>':
+                      `<select class="mk-roledd" data-pnum="${p.numero}">
+                        ${rolesDisp.map(r=>`<option value="${r}" ${role===r?'selected':''}>${r}</option>`).join('')}
+                      </select>`}</td>
+                    <td class="mk-f" style="color:${cor}">${ov}</td>
+                    <td>${p.idade||'–'}</td>
+                    <td>${p.jogos||0}</td><td>${p.gols||0}</td>
+                    <td class="mk-money">${this.fmtM(p.valor)}</td>
+                  </tr>`;}).join('')}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="mk-right">
+          <div class="mk-panel">
+            <div class="mk-tactic2" style="margin-bottom:12px">
+              <div class="ctrl-group" style="margin:0"><div class="h">Estilo</div>
+                <div class="opt-row">${['defensivo','normal','ofensivo'].map(s=>
+                  `<button class="opt ${c.estilo===s?'active':''}" data-est="${s}">${s}</button>`).join('')}</div></div>
+              <div class="ctrl-group" style="margin:0"><div class="h">Marcação</div>
+                <div class="opt-row">${[['leve','leve'],['pesada','pesada'],['muito_pesada','muito']].map(([v,l])=>
+                  `<button class="opt ${c.marcacao===v?'active':''}" data-mrc="${v}">${l}</button>`).join('')}</div></div>
+            </div>
+            <div class="pitch-h">
+              ${colunas.map(col=>`<div class="pitch-col">${col.map(({pos,p})=>{
+                if(!p) return `<div class="slot-h empty"><div class="doth empty">+</div><div class="slot-hpos">${pos}</div></div>`;
+                const ov=Motor.overallEm(p,pos,this.roleDe(i,p.numero)), cor=Motor.corAdequacao(ov);
+                const selDot=p.numero===this.selPlayer;
+                return `<div class="slot-h ${selDot?'sel':''}" data-selnum="${p.numero}">
+                  <div class="doth" style="border-color:${cor};color:${cor}">${ov}</div>
+                  <div class="slot-hnm">${p.nome.split(' ')[0]}</div>
+                  <div class="slot-hpos">${pos}</div>
+                </div>`;}).join('')}</div>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    // handlers
+    const bJog=document.getElementById('btnJogarEsc'); if(bJog)bJog.onclick=()=>this.jogarRodada();
+    document.getElementById('formSel').onchange=(e)=>{ this.aplicarFormacao(i,e.target.value); this.renderEscala(); };
+    document.getElementById('btnEscalarAuto').onclick=()=>{
+      this.escalarMelhor(); this.renderShell(); this.showTab('escala');
+    };
+    document.getElementById('btnLimparForm').onclick=()=>{
+      // tira todos os titulares do campo -> vão pra Fora
+      this.onzeDe(i).forEach(p=>{ c.posEscala[p.numero]='FORA'; });
+      this.renderEscala();
+    };
+    el.querySelectorAll('.mk-posdd').forEach(dd=>dd.onchange=()=>{
+      const num=+dd.dataset.pnum, novaPos=dd.value, posAtual=this.posDe(i,num);
+      if(novaPos!=='BANCO' && novaPos!=='FORA'){
+        // vagas dessa posição na formação atual
+        const slotsForm=LINHAS_FM[c.formacao].flat();
+        const vagas=slotsForm.filter(s=>s===novaPos).length;
+        // quantos já ocupam essa posição (fora o próprio jogador)
+        const ocupados=this.onzeDe(i).filter(p=>p.numero!==num && this.posDe(i,p.numero)===novaPos).length;
+        if(ocupados>=vagas){
+          alert(`A formação ${c.formacao} só tem ${vagas} vaga(s) de ${novaPos}. Já está preenchida.`);
+          dd.value=posAtual; return;
+        }
+        // limite total de 11 titulares
+        if((posAtual==='BANCO'||posAtual==='FORA') && this.onzeDe(i).length>=11){
+          alert('Já há 11 titulares. Mande um titular pro banco antes.'); dd.value=posAtual; return;
+        }
+      }
+      if(novaPos==='BANCO'){
+        if(posAtual!=='BANCO' && this.bancoDe(i).length>=12){ alert('Banco cheio (12). Mande alguém pra Fora antes.'); dd.value=posAtual; return; }
+      }
+      c.posEscala[num]=novaPos;
+      if(novaPos!=='BANCO' && novaPos!=='FORA' && !ROLES_POS[novaPos].includes(c.roleEscala[num]))
+        c.roleEscala[num]=ROLES_POS[novaPos][0];
+      this.renderEscala();
+    });
+    el.querySelectorAll('.mk-roledd').forEach(dd=>dd.onchange=()=>{ c.roleEscala[+dd.dataset.pnum]=dd.value; this.renderEscala(); });
+    // clique no NOME abre modal; clique no resto da linha seleciona
+    el.querySelectorAll('.mk-nome-link').forEach(a=>a.onclick=(ev)=>{
+      ev.stopPropagation(); this.selPlayer=+a.dataset.modal; this.abrirFichaModal(i,+a.dataset.modal);
+    });
+    el.querySelectorAll('.mk-row').forEach(r=>r.onclick=(ev)=>{
+      if(ev.target.closest('select')||ev.target.closest('a')) return;
+      this.selPlayer=+r.dataset.pnum; this.renderEscala();
+    });
+    el.querySelectorAll('.slot-h[data-selnum]').forEach(sl=>sl.onclick=()=>{ this.selPlayer=+sl.dataset.selnum; this.renderEscala(); });
+    el.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
+      const col=th.dataset.sort;
+      if(srt.col===col) srt.dir*=-1;
+      else this.elencoSort={col, dir:(col==='nome'||col==='setor')?1:-1};
+      this.renderEscala();
+    });
+    const fs=document.getElementById('filSetor'); if(fs)fs.onchange=()=>{this.elencoFiltro.setor=fs.value;this.renderEscala();};
+    const fl=document.getElementById('filLimpar'); if(fl)fl.onclick=()=>{this.elencoFiltro={setor:'',pais:''};this.renderEscala();};
+    el.querySelectorAll('[data-est]').forEach(b=>b.onclick=()=>{ c.estilo=b.dataset.est; this.renderEscala(); });
+    el.querySelectorAll('[data-mrc]').forEach(b=>b.onclick=()=>{ c.marcacao=b.dataset.mrc; this.renderEscala(); });
+  },
+
+  // abre a ficha do jogador como MODAL sobre a tela
+  abrirFichaModal(i, num){
+    const sel=this.teams[i].players.find(p=>p.numero===num); if(!sel) return;
+    let ov=document.getElementById('fichaModal');
+    if(!ov){ ov=document.createElement('div'); ov.id='fichaModal'; document.querySelector('.wrap').appendChild(ov); }
+    ov.innerHTML=`<div class="fmodal-bg"><div class="fmodal-box">
+      <button class="fmodal-close" id="fmClose">✕</button>
+      <div class="fmodal-layout">
+        ${this.cardHTML(i,sel)}
+        <div class="fmodal-ficha">${this.fichaHTML(i,sel)}</div>
+      </div>
+    </div></div>`;
+    document.getElementById('fmClose').onclick=()=>ov.remove();
+    ov.querySelector('.fmodal-bg').onclick=(e)=>{ if(e.target.classList.contains('fmodal-bg')) ov.remove(); };
+    // efeito 3D + glare no card (adaptado do card enviado pelo usuário)
+    const card=ov.querySelector('.pcard'), glare=ov.querySelector('.pcard-glare');
+    if(card){
+      card.addEventListener('mousemove', (e)=>{
+        const r=card.getBoundingClientRect();
+        const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+        card.style.transform=`rotateX(${(0.5-y)*14}deg) rotateY(${(x-0.5)*14}deg) scale(1.02)`;
+        glare.style.opacity='1';
+        glare.style.background=`radial-gradient(circle at ${x*100}% ${y*100}%, rgba(255,255,255,.32), rgba(255,255,255,0) 55%)`;
+      });
+      card.addEventListener('mouseleave', ()=>{
+        card.style.transform='rotateX(0) rotateY(0) scale(1)'; glare.style.opacity='0';
+      });
+    }
+  },
+
+  // CARD do jogador (foto + nome + 3 overalls por setor), estilo colecionável
+  cardHTML(i, sel){
+    const flags=(window.MOCK_DATA&&window.MOCK_DATA.flags)||{};
+    const setores=Motor.melhorPorSetor(sel); // {DEF,MEI,ATQ}
+    const fotoBg = sel.foto
+      ? `<img class="pcard-photo" src="${sel.foto}" alt="${sel.nome}" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+         <div class="pcard-silhueta" style="display:none">${this.silhuetaSVG()}</div>`
+      : `<div class="pcard-silhueta">${this.silhuetaSVG()}</div>`;
+    return `<div class="pcard-stage"><div class="pcard">
+      <div class="pcard-inner">
+        ${fotoBg}
+        <div class="pcard-fade"></div>
+        <div class="pcard-bottom">
+          <div class="pcard-name">${sel.nome}</div>
+          <div class="pcard-stats">
+            <div class="pcard-stat"><span class="pcs-v">${setores.DEF.ov}</span><span class="pcs-k">DEF</span></div>
+            <div class="pcard-stat"><span class="pcs-v">${setores.MEI.ov}</span><span class="pcs-k">MEI</span></div>
+            <div class="pcard-stat"><span class="pcs-v">${setores.ATQ.ov}</span><span class="pcs-k">ATQ</span></div>
+          </div>
+        </div>
+        <div class="pcard-glare"></div>
+      </div>
+    </div></div>`;
+  },
+
+  // silhueta genérica (fallback quando não há foto)
+  silhuetaSVG(){
+    return `<svg viewBox="0 0 380 540" xmlns="http://www.w3.org/2000/svg" class="pcard-sil-svg">
+      <defs><radialGradient id="silbg" cx="50%" cy="20%" r="85%">
+        <stop offset="0%" stop-color="#1e2a1c"/><stop offset="60%" stop-color="#12160f"/><stop offset="100%" stop-color="#05070a"/>
+      </radialGradient></defs>
+      <rect width="380" height="540" fill="url(#silbg)"/>
+      <g fill="#2a3320" opacity="0.9">
+        <circle cx="190" cy="200" r="70"/>
+        <path d="M90,540 Q90,360 190,340 Q290,360 290,540 Z"/>
+      </g>
+      <circle cx="190" cy="200" r="70" fill="none" stroke="#3a4a2a" stroke-width="2"/>
+    </svg>`;
+  },
+
+
+
+  fichaHTML(i, sel, onzeNums){
+    const flags=(window.MOCK_DATA&&window.MOCK_DATA.flags)||{};
+    const melhor=Motor.melhorGeral(sel); // {ov, role, pos} — melhor posição+role
+    return `
+      <div class="ficha-grid">
+        <div class="ficha-col">
+          <div class="ficha-nome">${flags[sel.pais]||''} ${sel.nome}
+            <span class="ficha-badge">${melhor.pos} · ${melhor.role}</span></div>
+          <div class="ficha-line"><span>Setor natural</span><b>${sel.setorNat||'–'}</b></div>
+          <div class="ficha-line"><span>Idade</span><b>${sel.idade||'–'} anos</b></div>
+          <div class="ficha-line"><span>Pé</span><b>${sel.peDominante||'–'}${sel.peFraco?` (fraco ${sel.peFraco}★)`:''}</b></div>
+          <div class="ficha-line"><span>Altura / Peso</span><b>${sel.altura?sel.altura.toFixed(2)+'m':'–'} / ${sel.peso?Math.round(sel.peso)+'kg':'–'}</b></div>
+          <div class="ficha-line"><span>Contrato</span><b>${this.contratoTxt(sel.contratoMeses)}</b></div>
+          <div class="ficha-line"><span>Temporada (J/G)</span><b>${sel.jogosTemp||0} / ${sel.golsTemp||0}</b></div>
+          <div class="ficha-line"><span>Carreira (J/G)</span><b>${sel.jogos||0} / ${sel.gols||0}</b></div>
+          <div class="ficha-line"><span>Disciplina</span><b>🟨 ${sel.amarelos||0} · 🟥 ${sel.expulsoes||0}</b></div>
+          ${this.indisponivel(sel)?`<div class="ficha-line"><span>Situação</span><b style="color:var(--loss)">${this.motivoIndisp(sel)}</b></div>`:''}
+        </div>
+        <div class="ficha-col">
+          <div class="ficha-bigstat"><span>Overall · ${melhor.role}</span><b style="color:${Motor.corAdequacao(melhor.ov)}">${melhor.ov}</b></div>
+          <div class="ficha-bigstat"><span>Energia</span><b style="color:${sel.energia<40?'var(--loss)':'var(--lemon)'}">${Math.round(sel.energia)}%</b></div>
+          <div class="ficha-line"><span>Valor</span><b>${this.fmtM(sel.valor)} ${this.tendenciaHTML(sel)}</b></div>
+          <div class="ficha-line"><span>Salário</span><b>${this.fmtm(sel.salario)}/mês</b></div>
+          ${this.ascensaoHTML(sel)}
+        </div>
+      </div>`;
+  },
+
+  // texto do pé ideal pra role (pra alertar quando trocado)
+  peIdealTxt(posFM, role){
+    const rdef=ROLES_DEF[posFM]&&ROLES_DEF[posFM][role];
+    if(!rdef||!rdef.pe) return '';
+    const lado=posFM.endsWith('R')?'D':posFM.endsWith('L')?'E':null;
+    if(!lado) return '';
+    const ideal=rdef.pe==='interno'?(lado==='D'?'E':'D'):lado;
+    return ideal==='E'?'canhoto':'destro';
+  },
+
+
+
+
+  renderElenco(){
+    const el=document.getElementById('tab-elenco');
+    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    el.innerHTML=`
+      <div class="team-pick-bar">
+        <span class="tp-label">Ver elenco de</span>
+        <select class="tp-sel" id="teamPickSel">
+          ${(()=>{ const porDiv={};
+            this.teams.forEach((t,i)=>{ const d=t.divisao||'?'; (porDiv[d]||(porDiv[d]=[])).push({t,i}); });
+            return ['A','B','C','D','?'].filter(d=>porDiv[d]).map(d=>
+              `<optgroup label="Série ${d}">${porDiv[d]
+                .sort((x,y)=>x.t.nome.localeCompare(y.t.nome))
+                .map(({t,i})=>`<option value="${i}" ${i===this.squadView?'selected':''}>${t.nome}</option>`).join('')}</optgroup>`
+            ).join(''); })()}
+        </select>
+        <button class="btn sm" id="tpMeu">Meu clube</button>
+      </div>
+      <div class="panel">
+        <div class="ptitle" id="squadTitle"></div>
+        <div class="roster-head"><span>#</span><span>Pos</span><span>Jogador</span><span>Força</span><span>Energia</span></div>
+        <div id="roster"></div>
+      </div>`;
+    document.getElementById('teamPickSel').onchange=(e)=>{ this.squadView=+e.target.value; this.renderElenco(); };
+    document.getElementById('tpMeu').onclick=()=>{ this.squadView=this.myTeam; this.renderElenco(); };
+    const t=this.teams[this.squadView];
+    const onzeNums=new Set(this.squadView===this.myTeam? this.onzeDe(this.myTeam).map(p=>p.numero):[]);
+    document.getElementById('squadTitle').innerHTML=
+      `${t.nome} <span class="lbl">${t.players.length} atletas • força ${Motor.forcaOnze(Motor.escalarAuto(t,'4-4-2'),null).toFixed(1)}</span>`;
+    const ord=[...t.players].sort((a,b)=>Motor.rendimento(b)-Motor.rendimento(a));
+    document.getElementById('roster').innerHTML=ord.map(p=>{
+      const low=p.energia<30, esc=onzeNums.has(p.numero);
+      return `<div class="player ${esc?'escalado':''} ${p.lesionado?'lesionado':''}">
+        <span class="num">${p.numero??''}</span>
+        <span>${(()=>{ const mg=Motor.melhorGeral(p);
+          return `<span class="pos-tag pos-${mg.pos}">${mg.pos}</span>`; })()}</span>
+        <span class="nome">${p.nome}${p.lesionado?` <span style="color:var(--loss);font-size:10px">🩹 ${p.lesionado}d</span>`:''}
+          <span style="color:var(--gray2);font-size:10px;margin-left:6px">rend ${Math.round(Motor.rendimento(p))}</span></span>
+        <span class="forca-num">${p.forca}</span>
+        <span class="barwrap"><span class="n">${p.energia}%</span>
+          <span class="bar"><i class="bar-en ${low?'low':''}" style="width:${p.energia}%"></i></span></span>
+      </div>`;}).join('');
+  },
+
+  // formata reais grandes: R$ 80,00 M / R$ 253,5 mil
+  fmtReais(v){
+    const abs=Math.abs(v); const sinal=v<0?'-':'';
+    if(abs>=1e6) return `${sinal}R$ ${(abs/1e6).toFixed(2).replace('.',',')} M`;
+    if(abs>=1e3) return `${sinal}R$ ${(abs/1e3).toFixed(1).replace('.',',')} mil`;
+    return `${sinal}R$ ${Math.round(abs)}`;
+  },
+
+  renderFinancas(){
+    const el=document.getElementById('tab-financas');
+    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    const i=this.myTeam, t=this.teams[i];
+    const saldo=t.saldo||0;
+    const folha=this.folhaDe(i);
+    const patroc=this.patrocinioMensal(i);
+    const bilheteEstim=this.rendaBilheteria(i,null);
+    const emp=this.emprestimo;
+    const parcela=emp?emp.parcela:0;
+    const liquidoMes=patroc-folha-parcela;   // saldo mensal recorrente (sem bilheteria variável)
+    const mesesFolego=folha>0?(saldo/Math.max(1,folha)):Infinity;
+    // ordena jogadores por salário (maiores primeiro)
+    const porSalario=[...t.players].sort((a,b)=>(b.salario||0)-(a.salario||0));
+    const extrato=this.extrato||[];
+    const saldoCor = saldo<0?'var(--loss)':saldo<folha?'#e8c547':'var(--lemon)';
+
+    el.innerHTML=`
+      <div class="fin-topbar">
+        <div class="esc-teampick">${this.escudoHTML(t,30)}
+          <span style="font-family:'Bungee';font-size:16px;color:var(--white)">${t.nome}</span></div>
+        <div class="fin-saldo">
+          <span class="fin-saldo-lbl">Saldo em caixa</span>
+          <span class="fin-saldo-v" style="color:${saldoCor}">${this.fmtReais(saldo)}</span>
+        </div>
+      </div>
+
+      <div class="fin-cards">
+        <div class="fin-card">
+          <div class="fin-card-h">🤝 Patrocínio / mês</div>
+          <div class="fin-card-v" style="color:var(--lemon)">${this.fmtReais(patroc)}</div>
+          <div class="fin-card-sub">contrato da Série ${t.divisao}${i===this.myTeam?' · varia com a confiança':''}</div>
+        </div>
+        <div class="fin-card">
+          <div class="fin-card-h">🎟️ Bilheteria / jogo em casa</div>
+          <div class="fin-card-v" style="color:var(--lemon)">~${this.fmtReais(bilheteEstim)}</div>
+          <div class="fin-card-sub">estádio p/ ${this.CAP_ESTADIO[t.divisao]||8000} · lota conforme a fase</div>
+        </div>
+        <div class="fin-card">
+          <div class="fin-card-h">💸 Folha salarial / mês</div>
+          <div class="fin-card-v" style="color:var(--loss)">${this.fmtReais(folha)}</div>
+          <div class="fin-card-sub">${t.players.length} jogadores · a cada 4 rodadas</div>
+        </div>
+        <div class="fin-card">
+          <div class="fin-card-h">📊 Resultado mensal</div>
+          <div class="fin-card-v" style="color:${liquidoMes<0?'var(--loss)':'var(--lemon)'}">${this.fmtReais(liquidoMes)}</div>
+          <div class="fin-card-sub">patrocínio − folha${parcela?' − parcela':''} (fora bilheteria)</div>
+        </div>
+      </div>
+
+      <div class="fin-emp">
+        <div class="fin-emp-info">
+          <div class="fin-emp-h">🏦 Empréstimo bancário</div>
+          ${emp&&emp.saldoDevedor>0
+            ? `<div class="fin-emp-sub">Devendo <b style="color:var(--loss)">${this.fmtReais(emp.saldoDevedor)}</b> · ${emp.parcelasRestantes}x de ${this.fmtReais(emp.parcela)}/mês</div>`
+            : `<div class="fin-emp-sub">Crédito disponível: <b style="color:var(--lemon)">${this.fmtReais(this.emprestimoDisponivel())}</b> · ${this.PARCELAS_EMPRESTIMO}x com ${Math.round(this.JUROS_EMPRESTIMO*100)}% de juros</div>`}
+        </div>
+        <button class="btn sm primary" id="btnEmprestimo" ${this.emprestimoDisponivel()<=0?'disabled':''}>Pedir empréstimo</button>
+      </div>
+
+      <div class="grid-2" style="margin-top:16px">
+        <div class="panel">
+          <div class="ptitle">Maiores salários <span class="lbl">folha</span></div>
+          <div class="mk-tablewrap" style="height:300px">
+            <table class="mk-table"><colgroup><col style="width:auto"><col style="width:60px"><col style="width:110px"></colgroup>
+              <thead><tr><th class="l">Jogador</th><th>OVR</th><th>Salário/mês</th></tr></thead>
+              <tbody>${porSalario.map(p=>{
+                const ov=Motor.melhorGeral(p).ov;
+                return `<tr class="mk-row"><td class="l mk-nome">${p.nome}</td>
+                  <td class="mk-f">${ov}</td>
+                  <td class="mk-money">${this.fmtReais((p.salario||0)*1000)}</td></tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="ptitle">Extrato <span class="lbl">últimos lançamentos</span></div>
+          <div id="finExtrato" class="mk-tablewrap" style="height:300px">
+            ${extrato.length? extrato.map(e=>`
+              <div class="fin-ext-row">
+                <span class="fin-ext-desc">${e.desc}</span>
+                <span class="fin-ext-rod">R${e.rodada}</span>
+                <span class="fin-ext-val" style="color:${e.valor<0?'var(--loss)':'var(--lemon)'}">${this.fmtReais(e.valor)}</span>
+              </div>`).join('')
+              : '<div class="empty">Sem lançamentos ainda.</div>'}
+          </div>
+        </div>
+      </div>`;
+    const be=document.getElementById('btnEmprestimo');
+    if(be) be.onclick=()=>this.abrirEmprestimoUI();
+  },
+
+  renderMercado(){
+    const el=document.getElementById('tab-mercado');
+    if(!el) return;
+    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    const i=this.myTeam, t=this.teams[i];
+    const saldo=t.saldo||0;
+    const ofertas=(this.ofertasRecebidas||[]);
+    // outros times: lista de jogadores à venda OU todos (marca quem está à venda)
+    const alvos=[];
+    this.teams.forEach((tm,ti)=>{ if(ti===i) return;
+      tm.players.forEach(p=>alvos.push({p, ti, tm}));
+    });
+    // ordena alvos: à venda primeiro, depois por overall desc
+    alvos.sort((a,b)=>(b.p.aVenda-a.p.aVenda)||(Motor.melhorGeral(b.p).ov-Motor.melhorGeral(a.p).ov));
+    const topAlvos=alvos.slice(0,40);
+
+    el.innerHTML=`
+      <div class="fin-topbar">
+        <div class="esc-teampick">${this.escudoHTML(t,30)}
+          <span style="font-family:'Bungee';font-size:16px;color:var(--white)">${t.nome}</span></div>
+        <div class="fin-saldo">
+          <span class="fin-saldo-lbl">Saldo em caixa</span>
+          <span class="fin-saldo-v" style="color:${saldo<0?'var(--loss)':'var(--lemon)'}">${this.fmtReais(saldo)}</span>
+        </div>
+      </div>
+
+      ${ofertas.length?`
+      <div class="panel" style="margin-bottom:16px;border-color:var(--lemon)">
+        <div class="ptitle">📩 Propostas recebidas <span class="lbl">${ofertas.length}</span></div>
+        ${ofertas.map(o=>`
+          <div class="fin-ext-row" style="align-items:center">
+            <span class="fin-ext-desc"><b>${o.nome}</b> — ${o.deNome} oferece <b style="color:var(--lemon)">${this.fmtReais(o.valor)}</b></span>
+            <span style="display:flex;gap:6px">
+              <button class="mini-btn" data-oferta-sim="${o.pid}">Aceitar</button>
+              <button class="mini-btn ghost" data-oferta-nao="${o.pid}">Recusar</button>
+            </span>
+          </div>`).join('')}
+      </div>`:''}
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="ptitle">Meu elenco <span class="lbl">marque p/ vender</span></div>
+          <div class="mk-tablewrap" style="height:360px">
+            <table class="mk-table"><colgroup><col style="width:auto"><col style="width:62px"><col style="width:44px"><col style="width:90px"><col style="width:56px"></colgroup>
+              <thead><tr><th class="l">Jogador</th><th>Pos</th><th>OVR</th><th>Valor</th><th>Venda</th></tr></thead>
+              <tbody>${[...t.players].sort((a,b)=>Motor.melhorGeral(b).ov-Motor.melhorGeral(a).ov).map(p=>{
+                const mg=Motor.melhorGeral(p); const ov=mg.ov;
+                return `<tr class="mk-row"><td class="l mk-nome"><a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${i}">${p.nome}</a> <span class="mk-idade">${p.idade}a</span></td>
+                  <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
+                  <td class="mk-f">${ov}</td>
+                  <td class="mk-money">${this.fmtM(p.valor)}</td>
+                  <td><input type="checkbox" data-venda="${p.pid}" ${p.aVenda?'checked':''}></td></tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="ptitle">Mercado <span class="lbl">outros clubes</span></div>
+          <div class="mk-tablewrap" style="height:360px">
+            <table class="mk-table"><colgroup><col style="width:auto"><col style="width:62px"><col style="width:44px"><col style="width:88px"><col style="width:80px"></colgroup>
+              <thead><tr><th class="l">Jogador</th><th>Pos</th><th>OVR</th><th>Valor</th><th></th></tr></thead>
+              <tbody>${topAlvos.map(({p,ti,tm})=>{
+                const mg=Motor.melhorGeral(p); const ov=mg.ov;
+                return `<tr class="mk-row"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · ${p.idade}a</span></td>
+                  <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
+                  <td class="mk-f">${ov}</td>
+                  <td class="mk-money">${this.fmtM(p.valor)}</td>
+                  <td><button class="mini-btn" data-negociar="${p.pid}">Negociar</button></td></tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+
+    // handlers: toggle à venda
+    el.querySelectorAll('[data-venda]').forEach(cb=>cb.onchange=()=>{
+      const pid=+cb.dataset.venda; const p=t.players.find(x=>x.pid===pid);
+      if(p) p.aVenda=cb.checked;
+    });
+    // handlers: clique no nome abre a ficha do jogador (meu elenco e mercado)
+    el.querySelectorAll('.mk-nome-link').forEach(a=>a.onclick=(ev)=>{
+      ev.stopPropagation();
+      this.abrirFichaModal(+a.dataset.mkteam, +a.dataset.mkmodal);
+    });
+    // handlers: aceitar/recusar oferta
+    el.querySelectorAll('[data-oferta-sim]').forEach(b=>b.onclick=()=>this.aceitarOfertaUI(+b.dataset.ofertaSim,true));
+    el.querySelectorAll('[data-oferta-nao]').forEach(b=>b.onclick=()=>this.aceitarOfertaUI(+b.dataset.ofertaNao,false));
+    // handlers: negociar compra
+    el.querySelectorAll('[data-negociar]').forEach(b=>b.onclick=()=>this.negociarCompraUI(+b.dataset.negociar));
+  },
+
+  // fluxo de negociação de COMPRA (MVP com prompt; refino visual depois)
+  negociarCompraUI(pid){
+    const ti=this.timeDoJogador(pid); if(ti<0) return;
+    const p=this.teams[ti].players.find(x=>x.pid===pid);
+    const vm=this.valorMercadoReais(p);
+    const meuSaldo=this.teams[this.myTeam].saldo||0;
+    const sugestao=(vm/1e6).toFixed(0);
+    this.modalFLK({
+      titulo:`💼 Negociar ${p.nome}`,
+      corpoHTML:`<div style="line-height:1.7">
+        <b>${this.teams[ti].nome}</b> · ${Motor.melhorGeral(p).pos} · ${p.idade} anos<br>
+        Valor de mercado: <b style="color:var(--lemon)">${this.fmtReais(vm)}</b><br>
+        Seu saldo: <b style="color:${meuSaldo<vm?'var(--loss)':'var(--lemon)'}">${this.fmtReais(meuSaldo)}</b>
+      </div>`,
+      campos:[{id:'oferta', label:'Sua oferta (em milhões)', tipo:'number', valor:sugestao}],
+      botoes:[
+        {txt:'Desistir', tipo:'sm'},
+        {txt:'Fazer proposta', tipo:'sm primary', onClick:(v)=>{
+          const oferta=Math.round(parseFloat(String(v.oferta).replace(',','.'))*1e6);
+          if(!(oferta>0)){ this.avisoFLK('Oferta inválida','Digite um valor em milhões (ex: 30).','var(--loss)'); return false; }
+          if((this.teams[this.myTeam].saldo||0)<oferta){ this.avisoFLK('Saldo insuficiente','Você não tem caixa para essa oferta.','var(--loss)'); return false; }
+          const r=this.avaliarOfertaCompra(pid, oferta);
+          if(r.decisao==='aceita'){
+            const res=this.executarTransferencia(pid, this.myTeam, oferta);
+            if(res.ok){ this.salvarSupabase(true); this.renderShell(); this.showTab('mercado'); }
+            this.avisoFLK(res.ok?'✅ Negócio fechado':'❌ Falhou', res.ok?`${r.fala}<br><br>${res.msg}`:res.msg, res.ok?'var(--lemon)':'var(--loss)');
+          } else if(r.decisao==='recusa'){
+            this.avisoFLK('❌ Proposta recusada', r.fala,'var(--loss)');
+          } else {
+            // contraproposta: novo modal de confirmação
+            this.modalFLK({
+              titulo:'🔁 Contraproposta',
+              corpoHTML:`<div style="line-height:1.7">${r.fala}<br><br>
+                Aceitar por <b style="color:var(--lemon)">${this.fmtReais(r.contra)}</b>?</div>`,
+              botoes:[
+                {txt:'Recusar', tipo:'sm'},
+                {txt:'Aceitar', tipo:'sm primary', onClick:()=>{
+                  if((this.teams[this.myTeam].saldo||0)<r.contra){ this.avisoFLK('Saldo insuficiente','Caixa insuficiente para a contraproposta.','var(--loss)'); return false; }
+                  const res=this.executarTransferencia(pid, this.myTeam, r.contra);
+                  if(res.ok){ this.salvarSupabase(true); this.renderShell(); this.showTab('mercado'); }
+                  this.avisoFLK(res.ok?'✅ Fechado!':'❌ Falhou', res.ok?res.msg:res.msg, res.ok?'var(--lemon)':'var(--loss)');
+                  return false;
+                }},
+              ],
+            });
+          }
+          return false;
+        }},
+      ],
+    });
+  },
+  // aceitar/recusar oferta recebida (UI)
+  aceitarOfertaUI(pid, aceitar){
+    const r=this.responderOferta(pid, aceitar);
+    if(r.ok && aceitar) this.avisoFLK('✅ Venda concluída', r.msg,'var(--lemon)');
+    this.salvarSupabase(true); this.renderShell(); this.showTab('mercado');
+  },
+
+  renderCompeticoes(){
+    const el=document.getElementById('tab-competicoes');
+    if(!el) return;
+    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    const aba=this.cmpAba||(this.grupos?'grupos':'liga');
+    const nomeDiv=({A:'Série A',B:'Série B',C:'Série C',D:'Série D'})[this.divisao]||'Liga';
+    const outras=Object.keys(this.ligas||{}).filter(d=>d!==this.divisao).sort();
+    // marca o meu time em verde-limão (classe "eu") + flag "SEU TIME"
+    const flag=ti=>ti===this.myTeam?' <span class="cmp-euflag">SEU TIME</span>':'';
+    el.innerHTML=`
+      <div class="cmp-tabs">
+        ${this.grupos?`<button class="cmp-tab ${aba==='grupos'?'on':''}" data-cmp="grupos">${nomeDiv} · Grupos</button>`:''}
+        ${(this.mataMata||this.fase==='ko'||this.fase==='fim')?`<button class="cmp-tab ${aba==='ko'?'on':''}" data-cmp="ko">Mata-mata</button>`:''}
+        ${!this.grupos?`<button class="cmp-tab ${aba==='liga'?'on':''}" data-cmp="liga">${nomeDiv}</button>`:''}
+        ${outras.map(d=>`<button class="cmp-tab ${aba===d?'on':''}" data-cmp="${d}">Série ${d}</button>`).join('')}
+      </div>
+      <div id="cmpBody"><div class="cmp-nota">Carregando...</div></div>`;
+    el.querySelectorAll('[data-cmp]').forEach(b=>b.onclick=()=>{ this.cmpAba=b.dataset.cmp; this.renderCompeticoes(); });
+    const body=document.getElementById('cmpBody');
+
+    if(aba==='grupos' && this.grupos){
+      const meu=this.indiceDoGrupo(this.myTeam);
+      body.innerHTML=`
+        <div class="cmp-nota">Os 4 melhores de cada grupo avançam ao mata-mata. Seu grupo está destacado.</div>
+        <div class="cmp-grid">
+        ${this.grupos.map((g,gi)=>{
+          const cls=Competicao.classificarGrupo(this.stats,g,i=>this.teams[i].nome);
+          return `<div class="cmp-grupo ${gi===meu?'meu':''}">
+            <div class="cmp-grupo-h">Grupo ${gi+1} ${gi===meu?'<span class="cmp-badge">SEU GRUPO</span>':''}</div>
+            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<4?'classifica':''} ${s.i===this.myTeam?'eu':''}">
+              <span class="cmp-pos">${pos+1}º</span>
+              <span class="cmp-nome">${this.teams[s.i].nome}${flag(s.i)}</span>
+              <span class="cmp-j">${s.j}j</span>
+              <span class="cmp-pts">${s.pts}</span>
+            </div>`).join('')}
+          </div>`;
+        }).join('')}</div>`;
+      return;
+    }
+    if(aba==='ko'){
+      const mm=this.mataMata, hist=(mm&&mm.historico)||[];
+      const nome=ti=>this.teams[ti]?this.teams[ti].nome+flag(ti):'—';
+      body.innerHTML=`
+        <div class="cmp-nota">Confrontos de ida e volta. Os 4 semifinalistas sobem à Série C; mais 2 vagas saem da repescagem entre os eliminados nas quartas.</div>
+        <div class="cmp-ko">
+          ${hist.map(f=>`<div class="cmp-ko-fase">
+            <div class="cmp-ko-h">${f.fase}</div>
+            ${f.confrontos.map((cf,k)=>`<div class="cmp-ko-cf ${cf.includes(this.myTeam)?'eu':''}">
+              ${f.vencedores[k]===cf[0]?`<b>${nome(cf[0])}</b>`:nome(cf[0])} ×
+              ${f.vencedores[k]===cf[1]?`<b>${nome(cf[1])}</b>`:nome(cf[1])}
+            </div>`).join('')}
+          </div>`).join('')}
+          ${mm&&mm.confrontos&&this.fase==='ko'?`<div class="cmp-ko-fase" style="border-color:var(--lemon)">
+            <div class="cmp-ko-h">${mm.faseNome} · em disputa</div>
+            ${mm.confrontos.map(cf=>`<div class="cmp-ko-cf ${cf.includes(this.myTeam)?'eu':''}">${nome(cf[0])} × ${nome(cf[1])}</div>`).join('')}
+          </div>`:''}
+          ${mm&&mm.campeao!=null?`<div class="cmp-ko-fase" style="border-color:var(--lemon)">
+            <div class="cmp-ko-h">🏆 Campeão</div>
+            <div class="cmp-ko-cf ${mm.campeao===this.myTeam?'eu':''}"><b>${nome(mm.campeao)}</b></div>
+          </div>`:''}
+        </div>
+        ${!hist.length&&!(mm&&mm.confrontos)?'<div class="cmp-nota">O mata-mata começa depois da fase de grupos.</div>':''}`;
+      return;
+    }
+    if(aba==='liga'){
+      const ordem=this.classificacao();
+      body.innerHTML=`<div class="cmp-grid"><div class="cmp-grupo meu">
+        <div class="cmp-grupo-h">${nomeDiv}</div>
+        ${ordem.map((s,pos)=>`<div class="cmp-row ${s.i===this.myTeam?'eu':''}">
+          <span class="cmp-pos">${pos+1}º</span><span class="cmp-nome">${this.teams[s.i].nome}${flag(s.i)}</span>
+          <span class="cmp-j">${s.j}j</span><span class="cmp-pts">${s.pts}</span></div>`).join('')}
+      </div></div>`;
+      return;
+    }
+    // outras divisões: dados REAIS (this.ligas). Meu time não está aqui, mas mantemos o padrão.
+    const liga=this.ligas&&this.ligas[aba];
+    if(!liga){ body.innerHTML='<div class="cmp-nota">Esta divisão ainda não foi carregada.</div>'; return; }
+    if(liga.formato.tipo==='grupos' && liga.grupos){
+      // Série D vista de fora: mostra os 16 grupos
+      body.innerHTML=`
+        <div class="cmp-nota">Série ${aba} · fase de grupos · ${liga.rodada} rodada(s) disputada(s).</div>
+        <div class="cmp-grid">
+        ${liga.grupos.map((g,gi)=>{
+          const cls=Competicao.classificarGrupo(liga.stats,g,i=>this.teams[i].nome);
+          return `<div class="cmp-grupo">
+            <div class="cmp-grupo-h">Grupo ${gi+1}</div>
+            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<4?'classifica':''}">
+              <span class="cmp-pos">${pos+1}º</span>
+              <span class="cmp-nome">${this.teams[s.i].nome}</span>
+              <span class="cmp-j">${s.j}j</span><span class="cmp-pts">${s.pts}</span>
+            </div>`).join('')}
+          </div>`;
+        }).join('')}</div>`;
+      return;
+    }
+    const ord=[...liga.stats].sort((a,b)=>b.pts-a.pts||(b.gp-b.gc)-(a.gp-a.gc)||b.gp-a.gp);
+    const f=liga.formato;
+    body.innerHTML=`
+      <div class="cmp-nota">Série ${aba} · ${liga.rodada} rodada(s) disputada(s). ${aba==='A'?'':'Os '+f.acessos+' primeiros sobem. '}${f.rebaixa?'Os '+f.rebaixa+' últimos caem.':''}</div>
+      <div class="cmp-grid"><div class="cmp-grupo">
+        <div class="cmp-grupo-h">Série ${aba}</div>
+        ${ord.map((s,pos)=>`<div class="cmp-row ${pos<f.acessos&&aba!=='A'?'classifica':(f.rebaixa&&pos>=ord.length-f.rebaixa?'rebaixa':'')}">
+          <span class="cmp-pos">${pos+1}º</span>
+          <span class="cmp-nome">${this.teams[s.i].nome}</span>
+          <span class="cmp-j">${s.j}j</span><span class="cmp-pts">${s.pts}</span></div>`).join('')}
+      </div></div>`;
+  },
+
+  renderDados(){
+    const el=document.getElementById('tab-dados');
+    const conectado=this.teams.length>0;
+    el.innerHTML=`
+      <div class="grid-2">
+        <div class="panel">
+          <div class="ptitle">Fonte de dados <span class="lbl">Supabase</span></div>
+          <p class="hint" style="margin-bottom:14px">Lê seus jogadores reais das tabelas <code>team</code> e <code>player</code>, com os atributos FM. O overall é calculado ao vivo pela posição.</p>
+          <div class="field-in"><label>Supabase URL</label><input id="supUrl" placeholder="https://xxxx.supabase.co" value="https://leysofvftpgocigqqgzi.supabase.co"></div>
+          <div class="field-in"><label>Publishable key</label><input id="supKey" placeholder="sb_publishable_..." value="sb_publishable_i5CqcTOw2U9amGelpwcuxg_d-nYXdxu"></div>
+          <div class="btn-row"><button class="btn primary sm" id="btnConectar">Conectar</button></div>
+          <div id="supStatus" class="status ${conectado?'ok':'info'}">${conectado?'Conectado: '+this.teams.length+' time(s).':'Aguardando conexão.'}</div>
+        </div>
+        <div class="panel">
+          <div class="ptitle">Save <span class="lbl">Supabase + JSON</span></div>
+          <p class="hint" style="margin-bottom:14px">O jogo salva no Supabase ao fim de cada rodada. Também dá pra salvar/carregar manual, ou exportar backup JSON.</p>
+          <div class="btn-row">
+            <button class="btn primary sm" id="btnSaveSup" ${conectado?'':'disabled'}>💾 Salvar no Supabase</button>
+            <button class="btn sm" id="btnLoadSup" ${conectado?'':'disabled'}>📥 Carregar do Supabase</button>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn sm" id="btnExport" ${conectado?'':'disabled'}>⬇ Backup JSON</button>
+            <button class="btn sm" id="btnImport">⬆ Importar JSON</button>
+            <button class="btn sm danger" id="btnNovo" ${conectado?'':'disabled'}>Nova temporada</button>
+          </div>
+          <input type="file" id="fileImport" accept="application/json" class="hidden">
+          ${conectado?`<div class="ctrl-group" style="margin-top:16px"><div class="h">Seu time</div>
+            <div class="opt-row" id="pickMy">${this.teams.map((t,i)=>
+              `<button class="opt ${i===this.myTeam?'active':''}" data-my="${i}">${t.abrev}</button>`).join('')}</div></div>`:''}
+          <div id="saveStatus" class="status info">Nenhum save carregado.</div>
+        </div>
+      </div>`;
+    const bss=document.getElementById('btnSaveSup'); if(bss)bss.onclick=()=>this.salvarSupabase(false);
+    const bls=document.getElementById('btnLoadSup'); if(bls)bls.onclick=()=>this.carregarSupabase();
+    document.getElementById('btnExport').onclick=()=>this.exportSave();
+    document.getElementById('btnImport').onclick=()=>document.getElementById('fileImport').click();
+    document.getElementById('fileImport').onchange=(ev)=>{
+      const f=ev.target.files[0]; if(!f)return; const r=new FileReader();
+      r.onload=()=>{ try{ this.importSave(JSON.parse(r.result)); }catch(e){ this.setStatus('saveStatus','err','Arquivo inválido'); } };
+      r.readAsText(f); ev.target.value='';
+    };
+    document.getElementById('btnNovo').onclick=async()=>{ this.novaTemporadaCompleta(); };
+    document.getElementById('btnConectar').onclick=async()=>{
+      const url=document.getElementById('supUrl').value.trim(), key=document.getElementById('supKey').value.trim();
+      if(!url||!key){ this.setStatus('supStatus','err','Preencha URL e key'); return; }
+      this.setStatus('supStatus','info','Conectando…');
+      try{ const prov=new SupabaseProvider(url,key); const teams=await prov.getTeams();
+        this.provider=prov; await this.novaTemporada();
+        this.renderShell(); this.showTab('escala');
+        const nj=teams.reduce((s,t)=>s+t.players.length,0);
+        this.setStatus('supStatus','ok',`Conectado! ${teams.length} times, ${nj} jogadores.`);
+      }catch(e){ this.setStatus('supStatus','err','Falhou: '+e.message); }
+    };
+    if(conectado) el.querySelectorAll('[data-my]').forEach(b=>b.onclick=()=>{ this.myTeam=+b.dataset.my; this.renderShell(); });
+  },
+
+  setStatus(id,k,msg){ const e=document.getElementById(id); if(e){ e.className='status '+k; e.textContent=msg; } },
+
+  /* ============ FIM DE TEMPORADA ============ */
+  /* ---------- OUTRAS DIVISÕES (simulação leve, só para acompanhar) ----------
+     Carrega apenas a lista de clubes das outras séries (sem jogadores) e simula
+     os resultados a partir de uma força-base. Barato e suficiente para exibição. */
+  // simula UM confronto (usando a força REAL dos onzes) e devolve o placar
+  simularConfrontoReal(h, a){
+    const fh=this.forcaBaseTime(h)+this.MANDO_FORCA, fa=this.forcaBaseTime(a);  // mando na escala de forcaOnze
+    const tot=Math.max(1,fh+fa);
+    const gc=this.poisson((fh/tot)*2.6), gf=this.poisson((fa/tot)*2.6);
+    return {gc, gf};
+  },
+  // avança UMA rodada de cada liga que NÃO é a do usuário (elencos reais).
+  // Trata pontos corridos e, na Série D, a fase de grupos + mata-mata.
+  simularOutrasDivisoes(){
+    if(!this.ligas) return;
+    Object.values(this.ligas).forEach(liga=>{
+      if(liga.div===this.divisao) return;            // a do usuário é jogada de verdade
+      this.avancarRodadaLiga(liga);
+    });
+  },
+  // roda a próxima rodada pendente de uma liga (auto-simulada)
+  avancarRodadaLiga(liga){
+    if(liga.rodada < liga.fixtures.length){
+      const jogos=liga.fixtures[liga.rodada]||[];
+      const statOf=i=>liga.stats.find(s=>s.i===i);
+      jogos.forEach(([h,a])=>{
+        const {gc,gf}=this.simularConfrontoReal(h,a);
+        if(liga.fase!=='ko'){
+          const H=statOf(h), A=statOf(a); if(!H||!A) return;
+          H.j++;A.j++; H.gp+=gc;H.gc+=gf; A.gp+=gf;A.gc+=gc;
+          if(gc>gf){H.v++;A.d++;H.pts+=3;} else if(gf>gc){A.v++;H.d++;A.pts+=3;} else {H.e++;A.e++;H.pts++;A.pts++;}
+        } else if(liga.mataMata){
+          (liga.mataMata.resultados||(liga.mataMata.resultados=[])).push({h,a,gc,gf});
+        }
+      });
+      liga.rodada++;
+    }
+    // acabaram as rodadas atuais → se é formato de grupos, avança de fase
+    if(liga.rodada>=liga.fixtures.length && liga.formato.tipo==='grupos' && liga.fase!=='fim'){
+      this.avancarFaseLiga(liga);
+    }
+  },
+  // avanço de fase (grupos→mata-mata→...→campeão) de uma liga auto-simulada da Série D
+  avancarFaseLiga(liga){
+    const f=liga.formato;
+    if(liga.fase==='grupos'){
+      const pares=Competicao.montarMataMata(liga.grupos, liga.stats, i=>this.teams[i].nome, f.avancamPorGrupo);
+      this.iniciarFaseKOLiga(liga, pares);
+      return;
+    }
+    if(liga.fase==='ko' && liga.mataMata){
+      const mm=liga.mataMata, venc=[], perd=[];
+      mm.confrontos.forEach(cf=>{
+        const jogos=(mm.resultados||[]).filter(r=>(r.h===cf[0]&&r.a===cf[1])||(r.h===cf[1]&&r.a===cf[0]));
+        const r=Competicao.vencedorDoConfronto(cf[0],cf[1],jogos);
+        venc.push(r.vencedor); perd.push(r.perdedor);
+      });
+      mm.historico=mm.historico||[];
+      mm.historico.push({fase:Competicao.nomeFase(mm.confrontos.length*2), confrontos:mm.confrontos, vencedores:venc, perdedores:perd});
+      if(mm.confrontos.length===4){ mm.eliminadosQuartas=perd; mm.semifinalistas=venc; }
+      if(venc.length<=1){
+        mm.campeao=venc[0]??null;
+        const ac=Competicao.acessosSerieD(mm.semifinalistas||[], mm.eliminadosQuartas||[]);
+        const repVenc=(ac.repescagem||[]).map(([x,y])=>
+          Math.random()<(this.forcaDoTime(x)/(this.forcaDoTime(x)+this.forcaDoTime(y)))?x:y);
+        mm.sobem=[...(mm.semifinalistas||[]), ...repVenc].slice(0,f.acessos);
+        liga.fase='fim'; return;
+      }
+      const pares=[]; for(let i=0;i<venc.length;i+=2) pares.push([venc[i],venc[i+1]]);
+      this.iniciarFaseKOLiga(liga, pares, mm);
+    }
+  },
+  iniciarFaseKOLiga(liga, pares, mmAnterior){
+    const ida=pares.map(([h,a])=>[h,a]);
+    const volta=pares.map(([h,a])=>[a,h]);
+    liga.fixtures.push(ida, volta);
+    liga.mataMata={confrontos:pares, resultados:[],
+      historico:(mmAnterior&&mmAnterior.historico)||[],
+      eliminadosQuartas:(mmAnterior&&mmAnterior.eliminadosQuartas)||null,
+      semifinalistas:(mmAnterior&&mmAnterior.semifinalistas)||null,
+      faseNome:Competicao.nomeFase(pares.length*2)};
+    liga.fase='ko';
+  },
+  poisson(lambda){
+    let L=Math.exp(-lambda), k=0, p=1;
+    do{ k++; p*=Math.random(); }while(p>L);
+    return k-1;
+  },
+
+  // quem sobe e quem cai, conforme o formato da divisão
+  destinosDaTemporada(){
+    const f=this.formato||Competicao.formatoDe(this.divisao||'A');
+    if(f.tipo==='grupos'){
+      // Série D: sobem os 4 semifinalistas + 2 da repescagem. Sem rebaixamento.
+      const classGrupos=(this.grupos||[]).map(g=>Competicao.classificarGrupo(this.stats,g,i=>this.teams[i].nome));
+      const avancaram=[]; classGrupos.forEach(c=>c.slice(0,f.avancamPorGrupo).forEach(s=>avancaram.push(s.i)));
+      // sem mata-mata jogado ainda: usa os melhores classificados como aproximação
+      const mm=this.mataMata;
+      const sobem=(mm&&mm.sobem&&mm.sobem.length)? mm.sobem : avancaram.slice(0,f.acessos);
+      return {sobem, caem:[], avancaram, semRebaixamento:true,
+              campeao:(mm&&mm.campeao!=null)?mm.campeao:null,
+              historico:(mm&&mm.historico)||[]};
+    }
+    const ordem=this.classificacao();
+    return {sobem:ordem.slice(0,f.acessos).map(s=>s.i),
+            caem:ordem.slice(-f.rebaixa).map(s=>s.i),
+            avancaram:null, semRebaixamento:false};
+  },
+  nomeDivisaoAcima(){ return ({B:'Série A',C:'Série B',D:'Série C'})[this.divisao]||null; },
+  nomeDivisaoAbaixo(){ return ({A:'Série B',B:'Série C',C:'Série D'})[this.divisao]||null; },
+
+  /* ============================================================
+     MODAL FLK — overlay estilizado (substitui prompt/confirm/alert)
+     opts: {titulo, corpoHTML, campos:[{id,label,tipo,valor,placeholder}],
+            botoes:[{txt,tipo,onClick(vals)}], onClose}
+     Retorna nada; a interação é via callbacks dos botões.
+     ============================================================ */
+  modalFLK(opts){
+    const id='flkModal';
+    let ov=document.getElementById(id);
+    if(!ov){ ov=document.createElement('div'); ov.id=id; document.querySelector('.wrap').appendChild(ov); }
+    const campos=(opts.campos||[]).map(c=>`
+      <div class="flkm-field">
+        <label>${c.label||''}</label>
+        <input id="flkm_${c.id}" type="${c.tipo||'text'}" value="${c.valor!=null?c.valor:''}"
+          placeholder="${c.placeholder||''}" ${c.tipo==='number'?'inputmode="decimal"':''}>
+      </div>`).join('');
+    const botoes=(opts.botoes||[{txt:'OK',tipo:'primary'}]).map((b,idx)=>
+      `<button class="btn ${b.tipo||'sm'}" data-flkm-btn="${idx}">${b.txt}</button>`).join('');
+    ov.innerHTML=`<div class="flkm-bg"><div class="flkm-box">
+      <button class="fmodal-close" data-flkm-x>✕</button>
+      <div class="flkm-title">${opts.titulo||''}</div>
+      ${opts.corpoHTML?`<div class="flkm-body">${opts.corpoHTML}</div>`:''}
+      ${campos?`<div class="flkm-fields">${campos}</div>`:''}
+      <div class="flkm-foot">${botoes}</div>
+    </div></div>`;
+    const fechar=()=>{ ov.remove(); if(opts.onClose) opts.onClose(); };
+    const lerVals=()=>{ const v={}; (opts.campos||[]).forEach(c=>{
+      const el=document.getElementById('flkm_'+c.id); v[c.id]=el?el.value:''; }); return v; };
+    ov.querySelector('[data-flkm-x]').onclick=fechar;
+    ov.querySelector('.flkm-bg').onclick=(e)=>{ if(e.target.classList.contains('flkm-bg')) fechar(); };
+    (opts.botoes||[]).forEach((b,idx)=>{
+      const el=ov.querySelector(`[data-flkm-btn="${idx}"]`); if(!el) return;
+      el.onclick=()=>{ const keep=b.onClick?b.onClick(lerVals()):false; if(!keep) fechar(); };
+    });
+    return {fechar, el:ov};
+  },
+  // aviso simples estilo FLK (substitui alert)
+  avisoFLK(titulo, msg, cor){
+    this.modalFLK({titulo, corpoHTML:`<div style="color:${cor||'var(--white)'};line-height:1.6">${msg}</div>`,
+      botoes:[{txt:'Entendido',tipo:'primary sm'}]});
+  },
+
+  // modal de empréstimo (usa o modal FLK)
+  abrirEmprestimoUI(){
+    const disp=this.emprestimoDisponivel();
+    if(disp<=0){ this.avisoFLK('Sem crédito','Seu clube já atingiu o limite de crédito.','var(--loss)'); return; }
+    const dispM=(disp/1e6);
+    this.modalFLK({
+      titulo:'🏦 Empréstimo bancário',
+      corpoHTML:`<div style="line-height:1.7">
+        Crédito disponível: <b style="color:var(--lemon)">${this.fmtReais(disp)}</b><br>
+        Pagamento em <b>${this.PARCELAS_EMPRESTIMO}x</b> mensais · juros de <b>${Math.round(this.JUROS_EMPRESTIMO*100)}%</b> sobre o total.<br>
+        <span style="color:var(--gray2);font-size:12px">A parcela é debitada junto da folha, a cada 4 rodadas.</span>
+      </div>`,
+      campos:[{id:'valor', label:`Valor (em milhões, até ${dispM.toFixed(1)})`, tipo:'number', placeholder:'ex: 3'}],
+      botoes:[
+        {txt:'Cancelar', tipo:'sm'},
+        {txt:'Pedir crédito', tipo:'sm primary', onClick:(v)=>{
+          const val=Math.round(parseFloat(String(v.valor).replace(',','.'))*1e6);
+          const r=this.pedirEmprestimo(val);
+          if(!r.ok){ this.avisoFLK('Não foi possível', r.msg,'var(--loss)'); return false; }
+          this.salvarSupabase(true); this.renderShell(); this.showTab('financas');
+          this.avisoFLK('✅ Crédito liberado', r.msg,'var(--lemon)');
+          return false;
+        }},
+      ],
+    });
+  },
+
+  abrirPodio(){
+    const ordem=this.classificacao();
+    let art=null;
+    this.teams.forEach((t)=>t.players.forEach(p=>{
+      const g=p.golsTemp||0;
+      if(g>0 && (!art || g>art.gols)) art={nome:p.nome, gols:g, time:t};
+    }));
+    // melhor ataque da temporada (stats.gp já é por temporada e zera todo ano)
+    const melhorAtq=[...this.stats].sort((a,b)=>(b.gp-a.gp)||(b.pts-a.pts))[0];
+    const meu=ordem.findIndex(s=>s.i===this.myTeam);
+    const meuStat=ordem[meu];
+    const podiaco=[ordem[1],ordem[0],ordem[2]];
+
+    let ov=document.getElementById('podioModal');
+    if(!ov){ ov=document.createElement('div'); ov.id='podioModal'; document.querySelector('.wrap').appendChild(ov); }
+    ov.innerHTML=`<div class="podio-bg"><div class="podio-box">
+      <button class="fmodal-close" id="podClose">✕</button>
+      <div class="podio-titulo">🏆 FIM DA TEMPORADA ${this.temporada||1}</div>
+      <div class="podio-pedestais">
+        ${podiaco.map((s,vi)=>{
+          const t=this.teams[s.i], lugar=vi===1?1:vi===0?2:3;
+          const alt=lugar===1?'150px':lugar===2?'110px':'88px';
+          const medal=lugar===1?'🥇':lugar===2?'🥈':'🥉';
+          return `<div class="podio-col">
+            <div class="podio-team">${this.escudoHTML(t,40)}<div class="podio-nome">${t.nome}</div>
+              <div class="podio-pts">${s.pts} pts</div></div>
+            <div class="podio-pedestal ${lugar===1?'ouro':''}" style="height:${alt}">
+              <span class="podio-medal">${medal}</span><span class="podio-lugar">${lugar}º</span>
+            </div></div>`;
+        }).join('')}
+      </div>
+      <div class="podio-stats">
+        <div class="podio-card">
+          <div class="podio-card-h">🎯 Melhor ataque</div>
+          <div class="podio-card-b">${this.escudoHTML(this.teams[melhorAtq.i],24)} <b>${this.teams[melhorAtq.i].nome}</b></div>
+          <div class="podio-card-sub">${melhorAtq.gp} gols marcados · ${(melhorAtq.gp/Math.max(1,melhorAtq.j)).toFixed(2)}/jogo</div>
+        </div>
+        <div class="podio-card">
+          <div class="podio-card-h">⚽ Artilheiro</div>
+          <div class="podio-card-b">${art?`<b>${art.nome}</b> — ${art.gols} gols`:'—'}</div>
+          <div class="podio-card-sub">${art?art.time.nome:''}</div>
+        </div>
+        ${(()=>{ const d=this.destinosDaTemporada();
+          const subiu=d.sobem.includes(this.myTeam), caiu=d.caem.includes(this.myTeam);
+          const avancou=d.avancaram? d.avancaram.includes(this.myTeam):false;
+          const gi=this.indiceDoGrupo(this.myTeam);
+          const ondeTxt = gi>=0? `Grupo ${gi+1} · ${meu+1}º lugar` : `${meu+1}º lugar`;
+          const tag = subiu?' · ⬆️ ACESSO!' : caiu?' · 🔻 Rebaixado' : avancou?' · ✅ Classificado' : '';
+          return `<div class="podio-card ${subiu||avancou?'destaque-g':caiu?'destaque-r':''}">
+            <div class="podio-card-h">📊 Sua campanha</div>
+            <div class="podio-card-b"><b>${ondeTxt}</b> · ${meuStat.pts} pts</div>
+            <div class="podio-card-sub">${meuStat.v}V ${meuStat.e}E ${meuStat.d}D · SG ${meuStat.gp-meuStat.gc>0?'+':''}${meuStat.gp-meuStat.gc}${tag}</div>
+          </div>`; })()}
+      </div>
+      <div class="podio-zonas">
+        ${(()=>{ const d=this.destinosDaTemporada();
+          const acima=this.nomeDivisaoAcima(), abaixo=this.nomeDivisaoAbaixo();
+          const linha=(ti,pos)=>`<div class="podio-zona-row">${pos!=null?`<span>${pos}</span>`:''} ${this.escudoHTML(this.teams[ti],16)} ${this.teams[ti].nome}</div>`;
+          const colSobe=`<div class="podio-zona">
+            <div class="podio-zona-h zona-liberta">⬆️ Acesso${acima?' à '+acima:''} (${d.sobem.length})</div>
+            ${d.sobem.length? d.sobem.map((ti,i)=>linha(ti,i+1)).join('') : '<div class="podio-zona-row">—</div>'}
+          </div>`;
+          const colCai=d.semRebaixamento
+            ? `<div class="podio-zona">
+                 <div class="podio-zona-h">🛡️ Sem rebaixamento</div>
+                 <div class="podio-zona-row" style="line-height:1.7">A Série D é a última divisão.<br>
+                   Quem chegou à 2ª fase garante vaga no ano seguinte.</div>
+                 ${d.avancaram?`<div class="podio-zona-row"><b>${d.avancaram.length}</b> times avançaram da 1ª fase</div>`:''}
+               </div>`
+            : `<div class="podio-zona">
+                 <div class="podio-zona-h zona-reba">🔻 Rebaixamento${abaixo?' para a '+abaixo:''} (${d.caem.length})</div>
+                 ${d.caem.map((ti,i)=>linha(ti,ordem.length-d.caem.length+1+i)).join('')}
+               </div>`;
+          return colSobe+colCai;
+        })()}
+      </div>
+      <div class="podio-foot"><button class="btn primary" id="podNova">Nova temporada ▶</button></div>
+    </div></div>`;
+    document.getElementById('podClose').onclick=()=>ov.remove();
+    document.getElementById('podNova').onclick=()=>{ ov.remove(); this.novaTemporadaCompleta(); };
+    ov.querySelector('.podio-bg').onclick=(e)=>{ if(e.target.classList.contains('podio-bg')) ov.remove(); };
+  },
+
+  // ---------- DEMISSÃO ----------
+  // Chamado quando a confiança bate no corte. O treinador fica LIVRE no mercado.
+  abrirDemissao(){
+    this.demitido=true;
+    const t=this.teams[this.myTeam];
+    const clube=t?t.nome:'seu clube';
+    const serie='Série '+(this.divisao||'D');
+    let ov=document.getElementById('demissaoModal');
+    if(!ov){ ov=document.createElement('div'); ov.id='demissaoModal'; document.querySelector('.wrap').appendChild(ov); }
+    ov.innerHTML=`<div class="podio-bg"><div class="podio-box" style="max-width:520px">
+      <div class="podio-titulo" style="color:var(--loss)">🚪 VOCÊ FOI DEMITIDO</div>
+      <div class="dem-body">
+        <p>A diretoria do <b>${clube}</b> (${serie}) perdeu a confiança no seu trabalho
+        e decidiu encerrar o seu ciclo no clube.</p>
+        <p>Você está <b>livre no mercado</b>. Um bom treinador sempre recebe novas propostas —
+        basta recomeçar por baixo e provar seu valor de novo.</p>
+        <div class="dem-conf">Confiança final: <b style="color:var(--loss)">${Math.round(this.confianca)}</b> / 100
+          · corte do clube: ${this.corteDemissao()}</div>
+      </div>
+      <div class="podio-foot" style="gap:10px;flex-wrap:wrap;justify-content:center">
+        <button class="btn primary" id="demNovo">Procurar novo clube ▶</button>
+        <button class="btn sm" id="demSair">Voltar ao menu</button>
+      </div>
+    </div></div>`;
+    document.getElementById('demNovo').onclick=()=>{ ov.remove(); this.procurarNovoClube(); };
+    document.getElementById('demSair').onclick=()=>{ ov.remove(); Menu.iniciar(); };
+  },
+  // treinador livre assume um novo clube fraco (mesmo arco de carreira do início)
+  procurarNovoClube(){
+    // reaproveita o fluxo de "novo jogo" do Menu, no mesmo slot de save
+    Menu.slot=this.slotAtual;
+    Menu.user=this.userId?{id:this.userId}:null;
+    Menu.convidado=this.convidado;
+    Menu.retomarNovaCarreira();
+  },
+
+  // destinos (sobem/caem) de UMA liga qualquer (não só a do usuário)
+  destinosDaLiga(liga){
+    const f=liga.formato;
+    if(f.tipo==='grupos'){
+      const classG=(liga.grupos||[]).map(g=>Competicao.classificarGrupo(liga.stats,g,i=>this.teams[i].nome));
+      const avancaram=[]; classG.forEach(c=>c.slice(0,f.avancamPorGrupo).forEach(s=>avancaram.push(s.i)));
+      const mm=liga.mataMata;
+      const sobem=(mm&&mm.sobem&&mm.sobem.length)?mm.sobem:avancaram.slice(0,f.acessos);
+      return {sobem, caem:[], semRebaixamento:true};
+    }
+    const ord=[...liga.stats].sort((a,b)=>b.pts-a.pts||(b.gp-b.gc)-(a.gp-a.gc)||b.gp-a.gp);
+    return {sobem:ord.slice(0,f.acessos).map(s=>s.i),
+            caem:ord.slice(-f.rebaixa).map(s=>s.i), semRebaixamento:false};
+  },
+  // PIPELINE: aplica acesso/rebaixamento em team.divisao para TODAS as divisões.
+  // Regra de casamento: os que sobem da divisão de baixo trocam de lugar com os
+  // que caem da de cima (mesma quantidade), preservando o tamanho de cada série.
+  aplicarAcessoRebaixamento(){
+    const ordemDiv=['A','B','C','D'];   // A no topo, D embaixo
+    const mudancas=[];                  // {ti, de, para}
+    for(let k=0;k<ordemDiv.length-1;k++){
+      const cima=ordemDiv[k], baixo=ordemDiv[k+1];
+      const ligaCima=this.ligas[cima], ligaBaixo=this.ligas[baixo];
+      if(!ligaCima||!ligaBaixo) continue;
+      const sobem=this.destinosDaLiga(ligaBaixo).sobem||[];
+      const caem =this.destinosDaLiga(ligaCima).caem||[];
+      const n=Math.min(sobem.length, caem.length);
+      for(let m=0;m<n;m++){
+        mudancas.push({ti:sobem[m], de:baixo, para:cima});
+        mudancas.push({ti:caem[m],  de:cima,  para:baixo});
+      }
+    }
+    // aplica (depois do loop, pra não bagunçar as leituras acima)
+    mudancas.forEach(mc=>{ if(this.teams[mc.ti]) this.teams[mc.ti].divisao=mc.para; });
+    return mudancas;
+  },
+
+  novaTemporadaCompleta(){
+    this.temporada=(this.temporada||1)+1;
+    // 1) aplica acesso/rebaixamento de TODAS as divisões (times trocam de série)
+    const mudancas=this.aplicarAcessoRebaixamento();
+    const meuMov=mudancas.find(m=>m.ti===this.myTeam);
+    // 2) gols/jogos de CARREIRA acumulam; os da TEMPORADA zeram; disciplina/energia idem
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      p.energia=100; delete p.lesionado;
+      p.golsTemp=0; p.jogosTemp=0;
+      p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
+    }));
+    this.tempEncerrada=false;
+    // 3) remonta a temporada inteira (todas as ligas) com as divisões já atualizadas
+    this.montarTemporada();
+    this.renderShell(); this.showTab('arena');
+    this.salvarSupabase(true);
+    const msg = meuMov
+      ? (meuMov.para<meuMov.de ? `⬆️ Acesso! Agora você disputa a Série ${meuMov.para}.`
+                               : `🔻 Rebaixado para a Série ${meuMov.para}.`)
+      : `Temporada ${this.temporada} iniciada!`;
+    // prêmio em dinheiro por acesso (sobe = divisão de letra menor)
+    if(meuMov && meuMov.para<meuMov.de){ this.premiarAcesso(meuMov.para); }
+    this.setStatus('saveStatus','ok',msg);
+    if(meuMov) setTimeout(()=>this.avisoFLK(meuMov.para<meuMov.de?'⬆️ Acesso!':'🔻 Rebaixamento', msg, meuMov.para<meuMov.de?'var(--lemon)':'var(--loss)'),50);
+  },
+
+  // reinício de temporada num clube específico (usado na DEMISSÃO)
+  reiniciarTemporadaPara(ti){
+    this.myTeam=ti; this.squadView=ti;
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      p.energia=100; delete p.lesionado; p.golsTemp=0; p.jogosTemp=0;
+      p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
+    }));
+    this.tempEncerrada=false;
+    this.montarTemporada();
+  },
+  // esconde o jogo e reexibe o container de pré-jogo (para a tela de demissão)
+  esconderJogo(){
+    const gw=document.getElementById('gameWrap'); if(gw) gw.classList.add('hidden');
+  },
+
+  /* ============ SAVE ============ */
+  // snapshot serializável do estado do jogo
+  snapshot(){
+    // v6: identidade por pid (id do banco) → sobrevive a transferências.
+    // 'composicao' = pids em cada time; 'jogadoresById' = estado por pid.
+    const jogadoresById={};
+    this.teams.forEach(t=>t.players.forEach(p=>{
+      jogadoresById[p.pid]={
+        numero:p.numero, energia:Math.round(p.energia), gols:p.gols||0,
+        jogos:p.jogos||0, lesionado:p.lesionado||0,
+        golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
+        amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
+        attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
+        ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
+        valor:p.valor, aVenda:p.aVenda||false, contratoMeses:p.contratoMeses
+      };
+    }));
+    const snap={
+      versao:7, temporada:this.temporada||1,
+      // --- Fase 1: metadados de SaveSchema (validados no load) ---
+      schemaVersion:this.SCHEMA_VERSION, gameVersion:this.GAME_VERSION,
+      createdAt:this._saveCreatedAt||new Date().toISOString(),
+      updatedAt:new Date().toISOString(),
+      rodada:this.rodada, dia:this.dia, myTeam:this.myTeam,
+      stats:this.stats, resultados:this.resultados,
+      composicao:this.teams.map(t=>t.players.map(p=>p.pid)),  // quem está em cada time
+      grupos:this.grupos||null, fase:this.fase||'pontos', divisao:this.divisao||null,
+      mataMata:this.mataMata||null,
+      jogadoresById,
+      // finanças: saldo por time + extrato do meu time + controle de mês
+      saldos:this.teams.map(t=>t.saldo||0),
+      extrato:this.extrato||[], ultimoMesPago:this.ultimoMesPago||0,
+      cfg:this.cfg, fixtures:this.fixtures,
+      // --- v7: pipeline de divisões, ligas paralelas, confiança e empréstimo ---
+      divisoesTime:this.teams.map(t=>t.divisao),   // divisão atual de cada time (pipeline)
+      ligas:this.serializarLigas(),
+      confianca:this.confianca!=null?this.confianca:this.CONF_INICIAL,
+      demitido:!!this.demitido,
+      emprestimo:this.emprestimo||null,
+    };
+    snap.checksum=this._checksum(snap);
+    return snap;
+  },
+  // checksum leve e determinístico (djb2) sobre o corpo do save, ignorando o
+  // próprio campo checksum. Serve para detectar corrupção/adulteração acidental —
+  // NÃO é segurança (o cliente pode recalcular). A validação de verdade é server-side.
+  _checksum(obj){
+    const str=JSON.stringify(obj, (k,v)=> k==='checksum'? undefined : v);
+    let h=5381; for(let i=0;i<str.length;i++){ h=((h<<5)+h+str.charCodeAt(i))>>>0; }
+    return h.toString(16);
+  },
+  // valida um snapshot ANTES de aplicá-lo. Retorna {ok, motivo}.
+  // Trata o save como dado NÃO confiável (pode vir de import de arquivo).
+  validateSnapshot(s){
+    if(!s || typeof s!=='object') return {ok:false, motivo:'save vazio ou inválido'};
+    // versão de schema: aceita a atual e as anteriores conhecidas (retrocompat)
+    const sv=s.schemaVersion|| (s.versao? s.versao : 0);
+    if(sv> this.SCHEMA_VERSION) return {ok:false, motivo:`save de versão ${sv} mais nova que o jogo (${this.SCHEMA_VERSION}) — atualize o jogo`};
+    // campos estruturais mínimos
+    if(!Array.isArray(this.teams)||!this.teams.length) return {ok:false, motivo:'nenhum time carregado do banco'};
+    const nT=this.teams.length;
+    if(s.myTeam==null || s.myTeam<0 || s.myTeam>=nT) return {ok:false, motivo:`myTeam inválido (${s.myTeam})`};
+    if(s.rodada!=null && (s.rodada<0 || s.rodada>1000)) return {ok:false, motivo:`rodada fora de faixa (${s.rodada})`};
+    if(s.temporada!=null && (s.temporada<1 || s.temporada>10000)) return {ok:false, motivo:`temporada fora de faixa (${s.temporada})`};
+    if(s.confianca!=null && (s.confianca<0 || s.confianca>100)) return {ok:false, motivo:`confiança fora de 0..100 (${s.confianca})`};
+    // composição: pids têm que existir no banco carregado; nenhum time pode ficar vazio
+    if(s.composicao){
+      if(!Array.isArray(s.composicao)) return {ok:false, motivo:'composição malformada'};
+      const pidsBanco=new Set(); this.teams.forEach(t=>t.players.forEach(p=>pidsBanco.add(p.pid)));
+      let vazios=0, desconhecidos=0;
+      s.composicao.forEach(pids=>{
+        if(!Array.isArray(pids) || pids.length===0){ vazios++; return; }
+        pids.forEach(pid=>{ if(!pidsBanco.has(pid)) desconhecidos++; });
+      });
+      // base desatualizada: muitos pids sumiram → save incompatível
+      if(desconhecidos>0 && desconhecidos> pidsBanco.size*0.5)
+        return {ok:false, motivo:'base de jogadores mudou muito desde este save (pids ausentes)'};
+      // time sem nenhum jogador → estado quebrado
+      if(vazios>0) return {ok:false, motivo:`${vazios} time(s) ficariam sem jogadores`};
+    }
+    // atributos e energia dentro da faixa (amostra: se algo veio 0..100 estourado)
+    if(s.jogadoresById){
+      for(const pid in s.jogadoresById){
+        const sp=s.jogadoresById[pid];
+        if(sp.energia!=null && (sp.energia<0 || sp.energia>100)) return {ok:false, motivo:`energia inválida no pid ${pid}`};
+        if(sp.attrs){ for(const k in sp.attrs){ const v=sp.attrs[k]; if(typeof v==='number' && (v<0||v>100)) return {ok:false, motivo:`atributo ${k} fora de 0..100 no pid ${pid}`}; } }
+      }
+    }
+    // checksum: se presente, confere. Divergência = corrupção (aviso, não bloqueio fatal).
+    if(s.checksum){
+      const calc=this._checksum(s);
+      if(calc!==s.checksum) return {ok:true, motivo:'checksum não confere (save possivelmente editado)', aviso:true};
+    }
+    return {ok:true};
+  },
+  // serializa this.ligas (competição de cada divisão) — só dados, sem referências cruzadas
+  serializarLigas(){
+    if(!this.ligas) return null;
+    const out={};
+    Object.keys(this.ligas).forEach(d=>{
+      const lg=this.ligas[d];
+      out[d]={div:lg.div, indices:lg.indices, rodada:lg.rodada,
+        grupos:lg.grupos, fase:lg.fase, mataMata:lg.mataMata,
+        fixtures:lg.fixtures, stats:lg.stats};
+    });
+    return out;
+  },
+
+  // aplica um snapshot sobre os times já carregados do banco.
+  // Valida ANTES de aplicar (Fase 1): save quebrado é rejeitado e o caller
+  // decide o fallback (novaTemporada). Retorna {ok, motivo}.
+  aplicarSnapshot(s){
+    const v=this.validateSnapshot(s);
+    if(!v.ok){
+      // não aplica nada — deixa o estado atual intacto e avisa
+      if(this.avisoFLK) this.avisoFLK('Save incompatível',
+        `Não foi possível restaurar este save: ${v.motivo}. Começando uma temporada nova.`,'var(--loss)');
+      return {ok:false, motivo:v.motivo};
+    }
+    if(v.aviso && this.setStatus) this.setStatus('saveStatus','info', v.motivo);
+    this._saveCreatedAt = s.createdAt || new Date().toISOString();
+    this.temporada=s.temporada||1;
+    this.rodada=s.rodada||0; this.dia=s.dia||1; this.myTeam=s.myTeam||0;
+    // v7: restaura a DIVISÃO de cada time ANTES de qualquer remontagem (pipeline)
+    if(s.divisoesTime) s.divisoesTime.forEach((d,ti)=>{ if(this.teams[ti]) this.teams[ti].divisao=d; });
+    this.stats=s.stats; this.resultados=s.resultados||[];
+    this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
+    if(s.grupos!==undefined) this.grupos=s.grupos;
+    if(s.fase) this.fase=s.fase;
+    if(s.divisao){ this.divisao=s.divisao; this.formato=Competicao.formatoDe(s.divisao); }
+    if(s.mataMata!==undefined) this.mataMata=s.mataMata;
+    this.cfg=s.cfg||this.teams.map(t=>this.cfgInicial(t));
+    // v7: confiança da diretoria + empréstimo
+    this.confianca = (s.confianca!=null)? s.confianca : this.CONF_INICIAL;
+    this.demitido = !!s.demitido;
+    this.emprestimo = s.emprestimo||null;
+    // finanças
+    if(s.saldos) s.saldos.forEach((v,ti)=>{ if(this.teams[ti]) this.teams[ti].saldo=v; });
+    this.extrato=s.extrato||[]; this.ultimoMesPago=s.ultimoMesPago||0;
+
+    if((s.versao||4)>=6 && s.composicao && s.jogadoresById){
+      // --- v6: recompõe elencos por pid (transferências persistem) ---
+      // pool = todos os jogadores carregados do banco, indexados por pid
+      const pool={};
+      this.teams.forEach(t=>t.players.forEach(p=>{ pool[p.pid]=p; }));
+      // reaplica estado por pid
+      for(const pid in s.jogadoresById){
+        const p=pool[pid], sp=s.jogadoresById[pid]; if(!p) continue;
+        p.numero=sp.numero; p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
+        p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
+        p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
+        if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
+        if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
+        if(sp.contratoMeses!=null) p.contratoMeses=sp.contratoMeses;
+        p.aVenda=sp.aVenda||false;
+        if(sp.attrs){
+          p.attrs=sp.attrs;
+          p.attrsDec=sp.attrsDec||Object.assign({},sp.attrs);
+          p._ovInicialNat=sp.ovIni; p._growth=sp.growth; p._capAttr=sp.capAttr;
+          p._mktFactor=sp.mkt!=null?sp.mkt:1.0;
+          p._ancora=(sp.ovIni!=null && sp.capAttr!=null);
+          if(sp.valor!=null) p.valor=sp.valor;
+          Evolucao.recalcForca(p);
+        }
+      }
+      // reconstrói cada elenco na ordem salva
+      s.composicao.forEach((pids,ti)=>{
+        const t=this.teams[ti]; if(!t) return;
+        t.players=pids.map(pid=>pool[pid]).filter(Boolean);
+      });
+    } else {
+      // --- retrocompat v4/v5: estado por posição dentro do time fixo ---
+      if(s.jogadores) s.jogadores.forEach((arr,ti)=>{
+        const t=this.teams[ti]; if(!t) return;
+        const byNum={}; t.players.forEach(p=>byNum[p.numero]=p);
+        arr.forEach(sp=>{ const p=byNum[sp.numero]; if(p){
+          p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
+          if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
+          if(sp.attrs){
+            p.attrs=sp.attrs;
+            p.attrsDec=sp.attrsDec||Object.assign({},sp.attrs);
+            p._ovInicialNat=sp.ovIni; p._growth=sp.growth; p._capAttr=sp.capAttr;
+            p._mktFactor=sp.mkt!=null?sp.mkt:1.0;
+            p._ancora=(sp.ovIni!=null && sp.capAttr!=null);
+            if(sp.valor!=null) p.valor=sp.valor;
+            Evolucao.recalcForca(p);
+          }
+        }});
+      });
+      if((s.versao||4)<5) this.teams.forEach(t=>t.players.forEach(p=>Evolucao.inicializar(p)));
+    }
+    // v7: restaura as ligas paralelas (competição de cada divisão)
+    this.restaurarLigas(s);
+    this.squadView=0; this.renderShell();
+    return {ok:true};
+  },
+  // reconstrói this.ligas a partir do save (ou remonta do zero em saves antigos)
+  restaurarLigas(s){
+    if(s.ligas){
+      this.ligas={};
+      Object.keys(s.ligas).forEach(d=>{
+        const lg=s.ligas[d];
+        this.ligas[d]={div:lg.div, formato:Competicao.formatoDe(d),
+          indices:lg.indices||this.indicesDaDivisao(d), rodada:lg.rodada||0,
+          grupos:lg.grupos||null, fase:lg.fase||'pontos', mataMata:lg.mataMata||null,
+          fixtures:lg.fixtures||[], stats:lg.stats||[]};
+      });
+      // religa a liga ativa (divisão do usuário) aos campos do motor ao vivo,
+      // usando as MESMAS referências salvas (fixtures/stats/grupos/mataMata)
+      const ativa=this.ligas[this.divisao];
+      if(ativa){
+        this._ligaAtiva=ativa;
+        this.grupos=ativa.grupos; this.fase=ativa.fase; this.mataMata=ativa.mataMata;
+        this.fixtures=ativa.fixtures;
+        // this.stats indexado por índice GLOBAL; aponta p/ as linhas de cada liga
+        this.stats=this.teams.map((t,i)=>({i,pts:0,j:0,v:0,e:0,d:0,gp:0,gc:0}));
+        Object.values(this.ligas).forEach(lg=>lg.stats.forEach(st=>{ this.stats[st.i]=st; }));
+      }
+    } else {
+      // save pré-v7: só a divisão do usuário existia — remonta as outras divisões
+      this.montarTemporada();
+    }
+  },
+
+  // salva no Supabase (auto após rodada + botão manual)
+  async salvarSupabase(silencioso){
+    const meta={temporada:this.temporada||1, rodada:this.rodada, dia:this.dia, myTeam:this.myTeam};
+    const okHud=()=>{ const hud=document.getElementById('saveHint');
+      if(hud){ hud.textContent='✓ salvo'; setTimeout(()=>{if(hud)hud.textContent='';},2000); } };
+    // convidado: salva neste dispositivo
+    if(this.convidado){
+      try{
+        localStorage.setItem('flk_save_'+(this.slotAtual||1), JSON.stringify({
+          clube:this.teams[this.myTeam]?.nome||'Carreira', ...meta,
+          estado:this.snapshot(), updated_at:new Date().toISOString()
+        }));
+        if(!silencioso) this.setStatus('saveStatus','ok','Salvo neste dispositivo.');
+        okHud();
+      }catch(e){ if(!silencioso) this.setStatus('saveStatus','err','Falha ao salvar: '+e.message); }
+      return;
+    }
+    if(!this.sb || !this.userId){ if(!silencioso) this.setStatus('saveStatus','err','Você não está logado.'); return; }
+    try{
+      const row={ user_id:this.userId, slot:String(this.slotAtual||1),
+        temporada:meta.temporada, rodada:meta.rodada, dia:meta.dia, my_team:meta.myTeam,
+        estado:this.snapshot(), updated_at:new Date().toISOString() };
+      const {error}=await this.sb.from('game_save').upsert(row,{onConflict:'user_id,slot'});
+      if(error) throw error;
+      if(!silencioso) this.setStatus('saveStatus','ok',`Salvo (rodada ${this.rodada}).`);
+      okHud();
+    }catch(e){ if(!silencioso) this.setStatus('saveStatus','err','Falha ao salvar: '+e.message); }
+  },
+
+  async carregarSupabase(){
+    // O load oficial é por slot (game_save por user_id+slot), feito no menu inicial.
+    // Mantido só como atalho informativo na aba Dados.
+    this.setStatus('saveStatus','info','Use o menu inicial (Carregar Jogo) para restaurar um slot salvo.');
+  },
+
+  // export/import JSON (backup local)
+  exportSave(){
+    const blob=new Blob([JSON.stringify(this.snapshot())],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=`flk-arena-t${this.temporada||1}-r${this.rodada}.json`; a.click(); URL.revokeObjectURL(a.href);
+    this.setStatus('saveStatus','ok',`Backup exportado (rodada ${this.rodada}).`);
+  },
+  importSave(o){
+    const r=this.aplicarSnapshot(o)||{ok:false,motivo:'desconhecido'};
+    if(r.ok) this.setStatus('saveStatus','ok',`Backup carregado (rodada ${this.rodada}).`);
+    else this.setStatus('saveStatus','err','Save inválido: '+r.motivo);
+  },
+};
+
+/* tabs binding (uma vez) */
+document.getElementById('tabs').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-tab]'); if(b) App.showTab(b.dataset.tab);
+});
+
+App.boot();
