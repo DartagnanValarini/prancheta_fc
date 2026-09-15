@@ -59,16 +59,16 @@ Cada fase tem um **objetivo**, **por que agora**, e o **critério de pronto**. A
 
 **Objetivo:** eliminar as incoerências que a auditoria achou, sem reescrever arquitetura.
 
-- **Calibração numérica**
-  - `chanceGol *0.03 → *0.027` (estabiliza ~2,5 gols/jogo).
-  - Bônus de mando: de +40 absoluto para percentual (escala melhor entre séries).
+- ✅ **Calibração numérica** — medida pelo `harness_calibracao.js` (20k jogos/série, 90 min/jogo, motor real de `chanceGol`).
+  - ✅ `chanceGol *0.03 → *0.027` — gols/jogo **2,71 → 2,44** (no alvo ~2,5).
+  - ✅ Bônus de mando: de `+40` absoluto para **+7% percentual** sobre o ataque (`MANDO_PCT:0.07`). Escala igual entre séries: spread A/B/C/D cai de **0,020 → 0,011** gols; vantagem de mandante preservada (gols mandante/visitante 1,031x nos dois; domínio 37,8% → 37,2%).
 - **Camada `Rating` (a mais importante da fase)** — um objeto único que responde: `overallGlobal`, `overallPosição(pos, role)`, `rendimento`, e (na Fase 4) `matchRating`. Todos os sistemas passam a consultar essa camada. Feito **dentro do monolito**.
 - **Corrigir substituição/slot** — o reserva que entra assume `posição = slot de quem saiu` + role correspondente; `posicaoNatural` do jogador não sobrescreve o slot tático.
 - **Formação real na expectativa** — `expectativaJogo` usa a escalação/formação atuais, não um 4-3-3 fabricado.
 - **Evolução por tipo de posição** — natural 100% / treinada 70% / improvisada 30%.
 - **Energia menos punitiva ou explicitamente acumulativa** — hoje partida ~−9 e 3 dias +6 = saldo −3/ciclo. Ou ajustar (90 min → −7) ou deixar claro na UI que é fadiga acumulada.
 
-**Pronto quando:** harness mede ~2,5 gols/jogo; substituição preserva a força tática; presidente e motor concordam sobre "favorito"; nenhum jogador troca de identidade no banco.
+**Pronto quando:** harness mede ~2,5 gols/jogo ✅ (2,44 com `*0.027` + mando percentual); substituição preserva a força tática; presidente e motor concordam sobre "favorito"; nenhum jogador troca de identidade no banco.
 
 ---
 
@@ -257,7 +257,7 @@ Para não travar as ligas nem criar grupos mortos:
 A ordem que concilia "arrumar a casa" com o destino online:
 
 **Primeiro (valem por si, melhoram o single-player):**
-1. Calibrações numéricas (`0.027`, mando %) — 1 sessão, mensurável no harness.
+1. ✅ Calibrações numéricas (`0.027`, mando %) — feito e medido no harness (2,71 → 2,44 gols/jogo).
 2. Camada `Rating` + substituição/slot + formação real na expectativa — resolve as maiores incoerências da auditoria.
 3. Auditar/eliminar save legado + `SaveSchema` validado — pré-requisito de tudo online.
 
@@ -342,4 +342,19 @@ Coisas que o online vai exigir e que **vale implementar já no single-player** q
 - O `checksum` do save é anti-corrupção, não segurança. Nunca confiar nele contra adulteração — isso é papel do servidor (Fase 2).
 - `validateSnapshot` roda contra `this.teams` já carregado do banco; se a base mudar (pids novos), saves antigos são rejeitados por design (base desatualizada) e o jogo começa limpo no slot em vez de quebrar.
 - A tabela `FORMATO_DIVISOES` tem invariante: `acessos` de uma divisão = `rebaixa` da de cima. Quebrar isso faz os tamanhos das séries derivarem (o harness de divisões pega).
+
+---
+
+## Entrega — Calibração da Fase 0 (harness + `*0.027` + mando percentual)
+
+### O que foi feito
+- **Harness de calibração (`harness_calibracao.js`).** Roda o loop minuto-a-minuto real do motor (`chanceGol` × 90 min) em 20k jogos por série (A/B/C/D), varrendo forças de time realistas e os três estilos. Reporta gols/jogo global e por série, spread entre séries, domínio do mandante e razão gols mandante/visitante. Serve de rede para qualquer mexida futura no motor de gol.
+- **Baseline medido (código anterior, `*0.03` + mando `+40` absoluto):** **2,706 gols/jogo**; spread A/B/C/D 0,020; mandante 37,8% / empate 26,2% / visitante 36,0%; razão mando 1,031x.
+- **Calibração aplicada (`*0.027` + mando `+7%` percentual, `MANDO_PCT:0.07`):** **2,436 gols/jogo** (no alvo ~2,5 do roadmap); spread A/B/C/D 0,011 (mando percentual escala mais uniforme entre séries); mandante 37,2% / empate 27,6% / visitante 35,2%; razão mando 1,031x (vantagem de casa preservada).
+- **Prova do que o roadmap pedia:** o multiplicador puxou o gols/jogo de 2,71 para 2,44 (estabiliza ~2,5) e o mando virou percentual sem perder a vantagem de casa, com spread entre séries menor — exatamente os dois efeitos previstos na Fase 0.
+- Alteração espelhada no `app.js` **e** no `prancheta_fc.html` embutido (invariante `diff app.js == JS embutido` mantido).
+
+### Armadilhas conhecidas (não repetir)
+- `MANDO_PCT` é propriedade do objeto `Motor`; `chanceGol` lê `this.MANDO_PCT`. Se o método for chamado desatrelado do objeto (`const f = Motor.chanceGol; f(...)`), `this` se perde — sempre chamar como `Motor.chanceGol(...)`.
+- O harness mede `chanceGol` isolado (força de time amostrada), não uma temporada inteira no motor de 156 equipes; os números batem com o alvo, mas a medição de temporada completa (Fase 1, ~2,59 antes do ajuste) é o número de sistema, não o de unidade.
 

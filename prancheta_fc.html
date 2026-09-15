@@ -1079,11 +1079,13 @@ const Motor={
   // chance de gol de um lado num minuto, dadas as forças EM CAMPO (soma) e estilos
   chanceGol(fAtk, fDef, estiloAtk, estiloDef, mando){
     const est={ofensivo:1.35,normal:1.0,defensivo:0.72};
-    const atk=(fAtk+(mando?40:0))*est[estiloAtk];
+    // Fase 0: mando percentual (+7%) em vez de +40 absoluto — escala igual entre séries.
+    const atk=fAtk*(mando?(1+this.MANDO_PCT):1)*est[estiloAtk];
     const def=fDef*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
-    // normaliza pela escala de soma (~600); mantém ~2-3 gols/jogo
-    return (atk/(def+atk))*0.03;
+    // Fase 0: *0.027 estabiliza ~2,5 gols/jogo (harness_calibracao.js: 2,71 -> 2,44).
+    return (atk/(def+atk))*0.027;
   },
+  MANDO_PCT:0.07,   // bônus de mando percentual sobre o ataque (Fase 0)
 
   // desgaste fixo: -0.1 de energia por minuto jogado (= -1 a cada 10min, -9 na partida)
   desgastarMinuto(onze){
