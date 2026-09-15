@@ -419,14 +419,14 @@
   .btn.jogar{background:var(--lemon); color:#111112; border-color:var(--lemon)}
   .btn.jogar[disabled]{opacity:.5; cursor:default}
   /* --- lista de escolha de clube (5 times) --- */
-  .pre-card-wide{max-width:820px; width:calc(100% - 32px)}
+  .pre-card-wide{width:calc(100% - 32px)}
   .clube-lista{display:flex; flex-direction:column; gap:8px; margin:16px 0}
   .clube-lin{display:flex; align-items:center; gap:14px; width:100%; text-align:left; cursor:pointer;
     background:var(--panel); border:2px solid var(--line); border-radius:12px; padding:12px 16px;
-    transition:border-color .12s, transform .12s}
+    box-sizing:border-box; transition:border-color .12s, transform .12s}
   .clube-lin:hover{border-color:var(--lemon); transform:translateY(-1px)}
   .clube-escudo{flex-shrink:0; display:flex; align-items:center; justify-content:center}
-  .clube-info{display:flex; flex-direction:column; gap:3px; min-width:150px; flex:1 1 auto}
+  .clube-info{display:flex; flex-direction:column; gap:3px; min-width:0; flex:1 1 auto}
   .clube-nome{font-family:'Bungee'; font-size:15px; color:var(--white); letter-spacing:.3px; line-height:1.15}
   .clube-tag{font-family:'Space Mono'; font-size:9px; font-weight:700; color:var(--gray2); text-transform:uppercase; letter-spacing:.5px}
   .clube-metas{display:flex; gap:20px; flex-shrink:0}
@@ -434,7 +434,8 @@
   .clube-meta b{font-family:'Bungee'; font-size:12px; color:var(--lemon)}
   .clube-meta small{font-family:'Space Mono'; font-size:8px; color:var(--gray2); text-transform:uppercase; margin-top:2px}
   .clube-go{flex-shrink:0; font-family:'Space Mono'; font-weight:700; font-size:11px; color:var(--lemon)}
-  @media(max-width:620px){ .clube-metas{display:none} .clube-nome{font-size:14px} }
+  @media(max-width:720px){ .clube-metas{gap:12px} .clube-meta{min-width:44px} }
+  @media(max-width:560px){ .clube-metas{display:none} .clube-nome{font-size:14px} }
   .esc-teamnome{font-family:'Bungee'; font-size:15px; color:var(--white); letter-spacing:.3px}
   .esc-badge{font-family:'Space Mono'; font-weight:700; font-size:9px; letter-spacing:1px;
     text-transform:uppercase; color:#111112; background:var(--lemon); padding:3px 7px; border-radius:4px}
@@ -569,6 +570,9 @@
   .pre-card{background:var(--panel); border:2px solid var(--line); border-radius:14px;
     padding:26px; width:100%; max-width:420px}
   .pre-card.wide{max-width:640px}
+  /* card largo da seleção de clubes: precisa vencer o max-width:420px de .pre-card
+     (mesma especificidade, então tem de vir DEPOIS na cascata) */
+  .pre-card.pre-card-wide{max-width:860px}
   .pre-title{font-family:'Bungee'; font-size:15px; color:var(--white); margin-bottom:4px}
   .pre-hint{font-family:'Space Mono'; font-size:11px; color:var(--gray2); margin-bottom:18px; line-height:1.6}
   .pre-btn{display:block; width:100%; font-family:'Bungee'; font-size:14px; letter-spacing:.5px;
