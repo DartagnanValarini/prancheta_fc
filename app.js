@@ -325,7 +325,14 @@ const Motor={
     return res; // {DEF:{ov,role,pos}, MEI:{...}, ATQ:{...}}
   },
 
-  rendimento(p){ return p.forca*(p.energia/100); },
+  // rendimento = overall EFETIVO × energia. Se vier slot/role, usa o overall NAQUELE
+  // slot (adequação real); sem slot, cai no melhor overall global (p.forca) — compat.
+  rendimento(p, slotPos, role){
+    const base = (p.attrs && slotPos)
+      ? this.overallEm(p, PESOS_POS[slotPos]?slotPos:(SLOT_TO_POS[slotPos]||'MC'), role)
+      : p.forca;
+    return base*(p.energia/100);
+  },
   disp(team){ return team.players.filter(p=>!p.lesionado && !(p.suspenso>0)); },
 
   escalarAuto(team,esquema){
@@ -432,9 +439,9 @@ const Motor={
   },
   MANDO_PCT:0.07,   // bônus de mando percentual sobre o ataque (Fase 0)
 
-  // desgaste fixo: -0.1 de energia por minuto jogado (= -1 a cada 10min, -9 na partida)
+  // desgaste fixo por minuto jogado (Fase 0: ~−7 na partida cheia, saldo do ciclo não-negativo)
   desgastarMinuto(onze){
-    onze.forEach(p=>{ p.energia=Math.max(0, p.energia-0.1); });
+    onze.forEach(p=>{ p.energia=Math.max(0, p.energia-0.078); });
   },
 
   // risco de lesão ao FIM do jogo, baseado na energia final
@@ -522,19 +529,31 @@ const Evolucao={
 
   // aplica UMA rodada de evolução a um jogador, direcionada a posAlvo.
   // Retorna true se algum atributo inteiro mudou (pra saber se recalcula 'forca').
+  // Fase 0: evolução por tipo de posição jogada.
+  // natural (posição-alvo == posição natural)          -> 100%
+  // treinada (mesmo setor da natural: DEF/MEI/ATQ)      -> 70%
+  // improvisada (setor diferente)                        -> 30%
+  fatorPosicaoTreino(p, posAlvo){
+    const nat = p._posNat || (p._ancora ? p._posNat : Motor.melhorGeral(p).pos);
+    if(!nat) return 1;
+    if(posAlvo===nat) return 1.0;
+    return (POS_SETOR[posAlvo] && POS_SETOR[posAlvo]===POS_SETOR[nat]) ? 0.7 : 0.3;
+  },
+
   aplicarRodada(p, posAlvo, jogou, venceu){
     if(!p._ancora) this.inicializar(p);
     const fIdade = this.fatorIdade(p.idade);
     if(fIdade===0) return false;                   // estagnação total
     const fTal = this.fatorTalento(p.talento);
     const fForma = this.fatorForma(jogou, venceu);
+    const fPos = this.fatorPosicaoTreino(p, posAlvo);   // Fase 0: natural/treinada/improvisada
     const pesos = PESOS_POS[posAlvo] || PESOS_POS.MC;
     // monta lista {attr:pesoGrau} da posição (grau 3/2/1)
     const alvos = {};
     for(const grau in pesos){ for(const a of pesos[grau]) alvos[a]=Math.max(alvos[a]||0,+grau); }
     const somaPesos = Object.values(alvos).reduce((s,w)=>s+w,0) || 1;
     let mudou=false;
-    const ganhoTot = this.PASSO_BASE * fIdade * fTal * fForma;
+    const ganhoTot = this.PASSO_BASE * fIdade * fTal * fForma * fPos;
     for(const a in alvos){
       const cap = p._capAttr[a] ?? 100;
       if(fIdade>0 && p.attrsDec[a]>=cap) continue;  // chegou no teto daquele attr
@@ -560,6 +579,25 @@ const Evolucao={
   recalcForca(p){
     p.forca = Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm(p,pos)));
   },
+};
+
+/* ---------- RATING (Fase 0) ----------
+   Camada única de "quão bom é o jogador". Todo sistema (ficha, mercado,
+   substituição, expectativa, artilheiro) consulta AQUI em vez de recalcular,
+   pra que presidente e motor concordem sobre "favorito" e ninguém compare
+   overall global com overall de posição sem querer. Fina de propósito:
+   delega ao Motor, só dá nomes claros ao que cada consulta significa. */
+const Rating = {
+  // melhor overall do jogador em QUALQUER posição (identidade global do jogador)
+  overallGlobal(p){ return p.attrs ? Motor.melhorGeral(p).ov : (p.forca||50); },
+  // overall do jogador NUM slot/role específico (adequação tática real)
+  overallPosicao(p, slotPos, role){
+    if(!p.attrs || !slotPos) return p.forca||50;
+    const posFM = PESOS_POS[slotPos] ? slotPos : (SLOT_TO_POS[slotPos]||'MC');
+    return Motor.overallEm(p, posFM, role);
+  },
+  // rendimento = overall × energia. Com slot → adequação real; sem → global.
+  rendimento(p, slotPos, role){ return Motor.rendimento(p, slotPos, role); },
 };
 
 /* ---------- FIXTURES ---------- */
@@ -1516,16 +1554,19 @@ const App={
       // acha o titular de menor rendimento e um reserva que renda mais na MESMA posição
       let melhorGanho=0, alvo=null, entra=null;
       campo.forEach((tit,idx)=>{
-        const rTit=Motor.forcaAtual(tit, s[slk][idx]);
+        const slot=s[slk][idx], role=tit.role;
+        const rTit=Motor.rendimento(tit, slot, role);
         banco.forEach(res=>{
-          const rRes=res.forca*(res.energia/100)*(res.posicao!==s[slk][idx]?0.75:1);
+          // Fase 0: avalia o reserva NO SLOT que ele ocuparia (não no melhor global dele).
+          const rRes=Motor.rendimento(res, slot, role);
           const ganho=rRes-rTit;
           if(ganho>melhorGanho){ melhorGanho=ganho; alvo=idx; entra=res; }
         });
       });
       if(alvo!=null && entra && melhorGanho>3){
+        const sai=campo[alvo];
         campo[alvo]={ref:entra, forca:entra.forca, energia:entra.energia,
-                     posicao:entra.posicao, nome:entra.nome, numero:entra.numero};
+                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero};
         sub.feitas++; sub.paradas++;
         (tk===s.h?s.jogaramH:s.jogaramA).add(entra.numero);
         s.evs.push({m:this.liveState.min,tipo:'sub',time:tk===s.h?'casa':'fora',quem:entra.nome});
@@ -1779,7 +1820,13 @@ const App={
   },
   forcaDoTime(ti){
     const t=this.teams[ti]; if(!t) return 1;
-    return Motor.forcaOnze(Motor.escalarAuto(t,'4-3-3'),null)||1;
+    // Fase 0: usa a escalação/formação ATUAL do time (não um 4-3-3 fabricado),
+    // pra que o "favorito" do presidente use o mesmo time que entra em campo.
+    const c=this.cfg[ti];
+    if(c && this.onzeDe(ti).length>=7){
+      return Motor.forcaOnze(this.onzeDe(ti), this.slotsDe(ti), this.rolesDe(ti))||1;
+    }
+    return Motor.forcaOnze(Motor.escalarAuto(t,c?.formacao||'4-3-3'),null)||1;
   },
 
   /* ============================================================
@@ -1801,11 +1848,11 @@ const App={
     impossivel: {v:+15, e:+8, d:0  },
   },
   // classifica a partida em 5 categorias comparando forças (escala de forcaOnze,
-  // que é a média por jogador ~50-70). Mando de campo vale ~+3 nessa escala.
-  MANDO_FORCA:3,
+  // que é a média por jogador ~50-70). Mando percentual via Motor.MANDO_PCT (Fase 0).
   expectativaJogo(meuTi, advTi, mando){
-    const fMeu=this.forcaDoTime(meuTi)+(mando?this.MANDO_FORCA:0);
-    const fAdv=this.forcaDoTime(advTi)+(mando?0:this.MANDO_FORCA);
+    // Fase 0: mando percentual (+7%), coerente com chanceGol (MANDO_PCT).
+    const fMeu=this.forcaDoTime(meuTi)*(mando?(1+Motor.MANDO_PCT):1);
+    const fAdv=this.forcaDoTime(advTi)*(mando?1:(1+Motor.MANDO_PCT));
     const dif=fMeu-fAdv;
     if(dif>=10)  return 'favorito';     // ~1.5 divisões acima
     if(dif>=4)   return 'ligeiro';
@@ -2382,8 +2429,11 @@ const App={
     const sub=lado==='H'?s.subH:s.subA;
     // aplica todas as trocas pendentes
     ctx.pendentes.forEach(({saiIdx,entra})=>{
+      const sai=campo[saiIdx];
+      // Fase 0: o reserva assume o SLOT TÁTICO de quem saiu (posição + role),
+      // não a posição natural dele — preserva a força tática do time.
       campo[saiIdx]={ref:entra, forca:entra.forca, energia:entra.energia,
-                     posicao:entra.posicao, nome:entra.nome, numero:entra.numero};
+                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero};
       sub.feitas++;
       (lado==='H'?s.jogaramH:s.jogaramA).add(entra.numero);
       s.evs.push({m:L.min,tipo:'sub',time:lado==='H'?'casa':'fora',quem:entra.nome});
@@ -3438,7 +3488,8 @@ const App={
      os resultados a partir de uma força-base. Barato e suficiente para exibição. */
   // simula UM confronto (usando a força REAL dos onzes) e devolve o placar
   simularConfrontoReal(h, a){
-    const fh=this.forcaBaseTime(h)+this.MANDO_FORCA, fa=this.forcaBaseTime(a);  // mando na escala de forcaOnze
+    // Fase 0: mando percentual (+7%), coerente com o motor real.
+    const fh=this.forcaBaseTime(h)*(1+Motor.MANDO_PCT), fa=this.forcaBaseTime(a);
     const tot=Math.max(1,fh+fa);
     const gc=this.poisson((fh/tot)*2.6), gf=this.poisson((fa/tot)*2.6);
     return {gc, gf};

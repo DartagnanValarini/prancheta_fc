@@ -54,7 +54,7 @@ Cada fase tem um **objetivo**, **por que agora**, e o **critério de pronto**. A
 
 ---
 
-### 🟢 FASE 0 — Quick wins + coerência do motor (single-player)
+### 🟢 FASE 0 — Quick wins + coerência do motor (single-player) ✅ CONCLUÍDA
 *Arrumar a casa numérica e conceitual. Tudo isto melhora o jogo atual e não depende de servidor.*
 
 **Objetivo:** eliminar as incoerências que a auditoria achou, sem reescrever arquitetura.
@@ -62,13 +62,13 @@ Cada fase tem um **objetivo**, **por que agora**, e o **critério de pronto**. A
 - ✅ **Calibração numérica** — medida pelo `harness_calibracao.js` (20k jogos/série, 90 min/jogo, motor real de `chanceGol`).
   - ✅ `chanceGol *0.03 → *0.027` — gols/jogo **2,71 → 2,44** (no alvo ~2,5).
   - ✅ Bônus de mando: de `+40` absoluto para **+7% percentual** sobre o ataque (`MANDO_PCT:0.07`). Escala igual entre séries: spread A/B/C/D cai de **0,020 → 0,011** gols; vantagem de mandante preservada (gols mandante/visitante 1,031x nos dois; domínio 37,8% → 37,2%).
-- **Camada `Rating` (a mais importante da fase)** — um objeto único que responde: `overallGlobal`, `overallPosição(pos, role)`, `rendimento`, e (na Fase 4) `matchRating`. Todos os sistemas passam a consultar essa camada. Feito **dentro do monolito**.
-- **Corrigir substituição/slot** — o reserva que entra assume `posição = slot de quem saiu` + role correspondente; `posicaoNatural` do jogador não sobrescreve o slot tático.
-- **Formação real na expectativa** — `expectativaJogo` usa a escalação/formação atuais, não um 4-3-3 fabricado.
-- **Evolução por tipo de posição** — natural 100% / treinada 70% / improvisada 30%.
-- **Energia menos punitiva ou explicitamente acumulativa** — hoje partida ~−9 e 3 dias +6 = saldo −3/ciclo. Ou ajustar (90 min → −7) ou deixar claro na UI que é fadiga acumulada.
+- ✅ **Camada `Rating` (a mais importante da fase)** — objeto único `Rating` (`overallGlobal`, `overallPosicao(pos, role)`, `rendimento`) que delega ao `Motor`; todos os sistemas consultam essa camada. `rendimento` agora aceita slot/role e usa a adequação real da posição (não mais o melhor overall global), então reserva fora de posição não "rende" como titular. Feito **dentro do monolito**.
+- ✅ **Corrigir substituição/slot** — o reserva que entra assume `posição = slot de quem saiu` + `role` correspondente (caminho do usuário **e** da CPU); `posicaoNatural` não sobrescreve mais o slot tático. A CPU também passou a avaliar o reserva **no slot que ocuparia**, não no melhor global dele.
+- ✅ **Formação real na expectativa** — `forcaDoTime`/`expectativaJogo` usam a escalação/formação atuais (`onzeDe/slotsDe/rolesDe`), não um 4-3-3 fabricado. Mando alinhado ao percentual do motor (`Motor.MANDO_PCT`), inclusive no quick-sim Poisson; `MANDO_FORCA` absoluto removido.
+- ✅ **Evolução por tipo de posição** — `Evolucao.fatorPosicaoTreino`: natural 100% / treinada (mesmo setor) 70% / improvisada (outro setor) 30%, multiplicando o ganho por rodada.
+- ✅ **Energia menos punitiva** — desgaste de partida de −0,1/min (−9) para −0,078/min (~−7), tirando o saldo negativo por ciclo. Ajuste no motor, sem mexer na UI.
 
-**Pronto quando:** harness mede ~2,5 gols/jogo ✅ (2,44 com `*0.027` + mando percentual); substituição preserva a força tática; presidente e motor concordam sobre "favorito"; nenhum jogador troca de identidade no banco.
+**Pronto quando:** harness mede ~2,5 gols/jogo ✅ (2,43); substituição preserva a força tática ✅; presidente e motor concordam sobre "favorito" ✅ (mesma escalação real + mesmo mando percentual); nenhum jogador troca de identidade no banco ✅ (herda o slot tático). Verificado por `harness_fase0.js` (9/9).
 
 ---
 
@@ -358,3 +358,25 @@ Coisas que o online vai exigir e que **vale implementar já no single-player** q
 - `MANDO_PCT` é propriedade do objeto `Motor`; `chanceGol` lê `this.MANDO_PCT`. Se o método for chamado desatrelado do objeto (`const f = Motor.chanceGol; f(...)`), `this` se perde — sempre chamar como `Motor.chanceGol(...)`.
 - O harness mede `chanceGol` isolado (força de time amostrada), não uma temporada inteira no motor de 156 equipes; os números batem com o alvo, mas a medição de temporada completa (Fase 1, ~2,59 antes do ajuste) é o número de sistema, não o de unidade.
 
+---
+
+## Entrega — Fase 0 concluída (Rating + substituição + expectativa + evolução + energia)
+
+### O que foi feito
+- **Camada `Rating`.** Objeto único (`overallGlobal`, `overallPosicao(pos, role)`, `rendimento`) que delega ao `Motor`; os sistemas passam a consultar essa camada em vez de recalcular. `Motor.rendimento(p, slot, role)` agora usa a adequação real do slot — antes usava `p.forca` (melhor overall global), o que fazia reserva fora de posição "render" como titular.
+- **Substituição/slot.** Reserva que entra herda o slot tático de quem saiu (`posicao` + `role`), no caminho do usuário **e** da CPU (antes ambos gravavam `entra.posicao`, a posição natural). A CPU também passou a pontuar o reserva no slot que ocuparia (`Motor.rendimento(res, slot, role)`), não no melhor global dele.
+- **Formação real na expectativa.** `forcaDoTime` usa a escalação/formação atuais (`onzeDe/slotsDe/rolesDe`) quando há onze montado; só cai no auto-escalar (com a formação escolhida, não 4-3-3 fixo) como fallback. Mando unificado no percentual `Motor.MANDO_PCT` em `expectativaJogo` e no quick-sim Poisson; constante `MANDO_FORCA` absoluta removida.
+- **Evolução por tipo de posição.** `Evolucao.fatorPosicaoTreino(p, posAlvo)`: natural 100% / treinada (mesmo setor DEF/MEI/ATQ) 70% / improvisada (setor diferente) 30%, multiplicando o ganho por rodada.
+- **Energia.** Desgaste de partida de −0,1/min (−9 na cheia) para −0,078/min (~−7), removendo o saldo negativo por ciclo. Ajuste de motor, UI intocada (decisão do Dart).
+- **Harness de comportamento (`harness_fase0.js`).** Carrega o `app.js` real num sandbox (stubs de DOM) e afirma: Rating diferencia posição, substituição preserva o slot, evolução escala por tipo de posição. **9/9 checks.**
+- Tudo espelhado no `prancheta_fc.html` embutido (invariante `diff app.js == JS embutido` verificado: 211.627 bytes idênticos).
+
+### Verificação
+- `harness_fase0.js`: 9/9 (Rating, substituição, evolução).
+- `harness_calibracao.js`: gols/jogo 2,71 → 2,43 (calibração intacta).
+- `node --check app.js`: OK.
+
+### Armadilhas conhecidas (não repetir)
+- `Rating`/`Motor`/`Evolucao` são `const` léxicos (não caem no `globalThis`). Pra testar em Node, o harness reexecuta o `app.js` com um trecho que exporta esses bindings pro sandbox — não dá pra `require` direto.
+- `forcaDoTime` só usa a escalação real se `onzeDe(ti).length>=7`; abaixo disso (time incompleto) cai no auto-escalar. Se mudar o mínimo, conferir que a expectativa não quebra em times recém-montados.
+- Evolução: `fatorPosicaoTreino` depende de `p._posNat`, populado por `Evolucao.inicializar`. Jogador sem âncora inicializada calcula a posição natural na hora (fallback) — mais caro, mas correto.
