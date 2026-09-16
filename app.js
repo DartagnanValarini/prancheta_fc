@@ -598,6 +598,74 @@ const Rating = {
   },
   // rendimento = overall × energia. Com slot → adequação real; sem → global.
   rendimento(p, slotPos, role){ return Motor.rendimento(p, slotPos, role); },
+
+  /* ---------- MATCH RATING (A1) ----------
+     Nota 0–10 de UMA partida para UM jogador. Base 6,0 (atuação neutra),
+     ajustada pelo que o jogador FEZ e por como estava. Deriva de dados reais
+     do motor (gols na rodada, cartões, energia final, adequação de posição),
+     nunca de números inventados. É o insumo de: evolução por desempenho,
+     jogador da rodada, valorização de mercado e o score do ranking.
+     Parâmetros (tudo opcional exceto p):
+       ctx = {
+         slot, role,          // onde jogou (adequação real)
+         golsFeitos,          // gols do jogador na partida (_golsRodada)
+         golsSofridosTime,    // gols que o TIME dele levou (nota do GK/defesa)
+         resultado,           // 'v' | 'e' | 'd' (do time do jogador)
+         amarelos, expulso,   // disciplina na partida
+         energiaFinal,        // 0–100 ao apito final
+         minutos              // minutos em campo (default 90)
+       }
+  */
+  matchRating(p, ctx){
+    ctx = ctx || {};
+    const min = (ctx.minutos!=null) ? ctx.minutos : 90;
+    if(min<=0) return null;                 // não entrou em campo: sem nota
+    let nota = 6.0;                          // atuação neutra
+
+    // 1) adequação de posição: jogar fora da melhor posição derruba a base.
+    //    compara o overall NO SLOT com o overall global do jogador.
+    const ovSlot = this.overallPosicao(p, ctx.slot, ctx.role);
+    const ovGlob = this.overallGlobal(p);
+    if(ovGlob>0){
+      const adeq = ovSlot/ovGlob;           // 1.0 = na posição; <1 = improvisado
+      nota += (adeq-1)*3.0;                 // -0.3 por 10% fora de posição
+    }
+
+    const posFM = PESOS_POS[ctx.slot] ? ctx.slot : (SLOT_TO_POS[ctx.slot]||'MC');
+    const ehGK = posFM==='GK';
+
+    // 2) resultado do time (empurrãozinho coletivo)
+    if(ctx.resultado==='v') nota += 0.6;
+    else if(ctx.resultado==='d') nota -= 0.5;
+
+    // 3) gols marcados — peso alto, decisivo pra artilheiro virar nota alta
+    const gols = ctx.golsFeitos||0;
+    if(gols>0) nota += gols*1.3;
+
+    // 4) clean sheet / gols sofridos — pesa pro GK e zaga, leve pro resto
+    const gsof = ctx.golsSofridosTime||0;
+    if(ehGK || posFM==='DC' || posFM==='DL' || posFM==='DR' || posFM==='WBL' || posFM==='WBR'){
+      const peso = ehGK ? 1.0 : 0.5;
+      if(gsof===0) nota += 1.2*peso;        // não sofreu: bônus
+      else nota -= Math.min(2.0, gsof*0.45)*peso; // sofreu: penalidade limitada
+    }
+
+    // 5) disciplina
+    if(ctx.amarelos) nota -= 0.3*ctx.amarelos;
+    if(ctx.expulso)  nota -= 1.5;
+
+    // 6) energia final — quem terminou no talo rendeu; quem apagou, menos
+    const en = (ctx.energiaFinal!=null) ? ctx.energiaFinal : (p.energia||100);
+    if(en<40) nota -= 0.4;
+    else if(en>80) nota += 0.15;
+
+    // 7) minutos parciais aproximam a nota do neutro (jogou pouco = menos impacto)
+    if(min<90){ const f=min/90; nota = 6.0 + (nota-6.0)*Math.max(0.4,f); }
+
+    // trava 0–10, uma casa decimal
+    nota = Math.max(0, Math.min(10, nota));
+    return Math.round(nota*10)/10;
+  },
 };
 
 /* ---------- FIXTURES ---------- */
@@ -1566,7 +1634,8 @@ const App={
       if(alvo!=null && entra && melhorGanho>3){
         const sai=campo[alvo];
         campo[alvo]={ref:entra, forca:entra.forca, energia:entra.energia,
-                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero};
+                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero,
+                     _minutos:Math.max(1,90-this.liveState.min)};   // A1: minutos que o reserva vai jogar
         sub.feitas++; sub.paradas++;
         (tk===s.h?s.jogaramH:s.jogaramA).add(entra.numero);
         s.evs.push({m:this.liveState.min,tipo:'sub',time:tk===s.h?'casa':'fora',quem:entra.nome});
@@ -1655,6 +1724,38 @@ const App={
           const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+renda;
           this.addExtrato('Bilheteria vs '+(this.teams[advTi]?.abrev||'?'), +renda);
         }
+      }
+      // --- MATCH RATING (A1): nota 0–10 de cada jogador em campo ---
+      // Calculado ANTES de limpar _golsRodada, pois a nota lê os gols da partida.
+      const resH = gc>gf?'v':(gc<gf?'d':'e');
+      const resA = gf>gc?'v':(gf<gc?'d':'e');
+      const notaLado=(campo, gsofTime, res)=>campo.forEach(c=>{ if(!c.ref) return;
+        const nota=Rating.matchRating(c.ref, {
+          slot:c.posicao, role:c.role,
+          golsFeitos:c.ref._golsRodada||0,
+          golsSofridosTime:gsofTime,
+          resultado:res,
+          amarelos:c.ref._amarelosRodada||0,
+          expulso:!!c.ref._expulso,
+          energiaFinal:Math.round(c.energia),
+          minutos:c._minutos!=null?c._minutos:90
+        });
+        if(nota!=null){
+          c.ref._notaRodada=nota;                                    // nota da última partida (pra UI da rodada)
+          c.ref._somaNotas=(c.ref._somaNotas||0)+nota;               // acumulador temporada
+          c.ref._qtdNotas=(c.ref._qtdNotas||0)+1;                    // nº de notas na temporada
+          if(nota>(c.ref._melhorNota||0)) c.ref._melhorNota=nota;    // recorde da temporada
+        }
+      });
+      notaLado(campoH, gf, resH);   // a defesa da casa sofreu 'gf' gols
+      notaLado(campoA, gc, resA);   // a defesa de fora sofreu 'gc' gols
+      // A1: craque do jogo do MEU time (maior nota) — pro feedback pós-rodada
+      if(h===this.myTeam || a===this.myTeam){
+        const meuCampo = (h===this.myTeam) ? campoH : campoA;
+        let craque=null;
+        meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota))
+          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, pos:c.posicao}; });
+        this._craqueRodada=craque;
       }
       // grava energia final e conta gols individuais
       campoH.concat(campoA).forEach(c=>{ if(c.ref){
@@ -2433,7 +2534,8 @@ const App={
       // Fase 0: o reserva assume o SLOT TÁTICO de quem saiu (posição + role),
       // não a posição natural dele — preserva a força tática do time.
       campo[saiIdx]={ref:entra, forca:entra.forca, energia:entra.energia,
-                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero};
+                     posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero,
+                     _minutos:Math.max(1,90-L.min)};   // A1: minutos que o reserva vai jogar
       sub.feitas++;
       (lado==='H'?s.jogaramH:s.jogaramA).add(entra.numero);
       s.evs.push({m:L.min,tipo:'sub',time:lado==='H'?'casa':'fora',quem:entra.nome});
@@ -2997,6 +3099,7 @@ const App={
           <div class="ficha-line"><span>Altura / Peso</span><b>${sel.altura?sel.altura.toFixed(2)+'m':'–'} / ${sel.peso?Math.round(sel.peso)+'kg':'–'}</b></div>
           <div class="ficha-line"><span>Contrato</span><b>${this.contratoTxt(sel.contratoMeses)}</b></div>
           <div class="ficha-line"><span>Temporada (J/G)</span><b>${sel.jogosTemp||0} / ${sel.golsTemp||0}</b></div>
+          <div class="ficha-line"><span>Nota média</span>${this.notaChip(this.notaMediaTemp(sel))}${sel._notaRodada?` <span style="color:var(--muted);font-size:.85em">(últ. ${this.notaChip(sel._notaRodada)})</span>`:''}</div>
           <div class="ficha-line"><span>Carreira (J/G)</span><b>${sel.jogos||0} / ${sel.gols||0}</b></div>
           <div class="ficha-line"><span>Disciplina</span><b>🟨 ${sel.amarelos||0} · 🟥 ${sel.expulsoes||0}</b></div>
           ${this.indisponivel(sel)?`<div class="ficha-line"><span>Situação</span><b style="color:var(--loss)">${this.motivoIndisp(sel)}</b></div>`:''}
@@ -3010,6 +3113,13 @@ const App={
         </div>
       </div>`;
   },
+
+  // A1: média de nota da temporada (null se ainda não jogou)
+  notaMediaTemp(p){ return (p._qtdNotas>0) ? (p._somaNotas/p._qtdNotas) : null; },
+  // A1: cor da nota estilo boletim (verde ≥7, amarelo ≥5, vermelho abaixo)
+  corNota(n){ if(n==null) return 'var(--muted)'; if(n>=7) return 'var(--lemon)'; if(n>=5) return '#e8c547'; return 'var(--loss)'; },
+  // A1: chip HTML de uma nota (uma casa decimal, colorido). Vazio se null.
+  notaChip(n){ if(n==null) return '<span style="color:var(--muted)">–</span>'; return `<b style="color:${this.corNota(n)}">${n.toFixed(1)}</b>`; },
 
   // texto do pé ideal pra role (pra alertar quando trocado)
   peIdealTxt(posFM, role){
@@ -3829,6 +3939,8 @@ const App={
       p.energia=100; delete p.lesionado;
       p.golsTemp=0; p.jogosTemp=0;
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
+      // A1: notas são por temporada — zeram junto com gols/jogos
+      p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
     }));
     this.tempEncerrada=false;
     // 3) remonta a temporada inteira (todas as ligas) com as divisões já atualizadas
@@ -3851,6 +3963,7 @@ const App={
     this.teams.forEach(t=>t.players.forEach(p=>{
       p.energia=100; delete p.lesionado; p.golsTemp=0; p.jogosTemp=0;
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
+      p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
     }));
     this.tempEncerrada=false;
     this.montarTemporada();
@@ -3872,6 +3985,7 @@ const App={
         jogos:p.jogos||0, lesionado:p.lesionado||0,
         golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
+        somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
         attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
         ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
         valor:p.valor, aVenda:p.aVenda||false, contratoMeses:p.contratoMeses
@@ -4011,6 +4125,8 @@ const App={
         p.numero=sp.numero; p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
         p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
         p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
+        p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
+        if(sp.melhorNota) p._melhorNota=sp.melhorNota; if(sp.notaRodada) p._notaRodada=sp.notaRodada;
         if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
         if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
         if(sp.contratoMeses!=null) p.contratoMeses=sp.contratoMeses;
