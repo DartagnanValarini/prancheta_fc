@@ -3780,6 +3780,9 @@ const App={
   corNota(n){ if(n==null) return 'var(--muted)'; if(n>=7) return 'var(--lemon)'; if(n>=5) return '#e8c547'; return 'var(--loss)'; },
   // A1: chip HTML de uma nota (uma casa decimal, colorido). Vazio se null.
   notaChip(n){ if(n==null) return '<span style="color:var(--muted)">–</span>'; return `<b style="color:${this.corNota(n)}">${n.toFixed(1)}</b>`; },
+  // escapa texto pra render seguro em innerHTML. Nomes de jogador hoje são gerados
+  // pelo jogo, mas nome de clube/usuário (Bloco C) virá do usuário — usar sempre.
+  esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
 
   // texto do pé ideal pra role (pra alertar quando trocado)
   peIdealTxt(posFM, role){
@@ -4086,6 +4089,73 @@ const App={
     this.salvarSupabase(true); this.renderShell(); this.showTab('mercado');
   },
 
+  /* ---------- ESTATÍSTICAS DA TEMPORADA (A2) ----------
+     Agrega jogadores da MINHA divisão a partir de dados que já existem
+     (golsTemp do motor, notas do A1). Tudo re-derivável — nada persistido novo. */
+
+  // todos os jogadores da minha divisão, com o time anexado, para rankings
+  _jogadoresDaMinhaDivisao(){
+    const div=this.divisao;
+    const out=[];
+    this.indicesDaDivisao(div).forEach(ti=>{
+      const t=this.teams[ti]; if(!t) return;
+      t.players.forEach(p=>out.push({p, ti, timeNome:t.nome, timeAbrev:t.abrev}));
+    });
+    return out;
+  },
+  // top artilheiros da temporada (gols > 0), maior primeiro
+  topArtilheiros(n=10){
+    return this._jogadoresDaMinhaDivisao()
+      .filter(o=>(o.p.golsTemp||0)>0)
+      .sort((a,b)=>(b.p.golsTemp||0)-(a.p.golsTemp||0) || (b.p._somaNotas||0)-(a.p._somaNotas||0))
+      .slice(0,n);
+  },
+  // melhores notas médias da temporada (mínimo de jogos pra evitar amostra pequena)
+  topNotas(n=10, minJogos=3){
+    return this._jogadoresDaMinhaDivisao()
+      .filter(o=>(o.p._qtdNotas||0)>=minJogos)
+      .map(o=>({...o, media:o.p._somaNotas/o.p._qtdNotas}))
+      .sort((a,b)=>b.media-a.media)
+      .slice(0,n);
+  },
+  // craque da última rodada do MEU time (setado no encerrarRodada)
+  craqueDaRodada(){ return this._craqueRodada||null; },
+
+  // A2: sparkline SVG de uma série numérica (sem libs). vals = array de números.
+  sparkline(vals, cor){
+    const n=vals.length;
+    if(n<2) return '<div style="color:var(--muted);font-size:.85em;padding:8px 0">Um gráfico aparece a partir da 2ª temporada.</div>';
+    const W=260,H=54,pad=4;
+    const min=Math.min(...vals), max=Math.max(...vals), amp=(max-min)||1;
+    const x=i=>pad+i*(W-2*pad)/(n-1);
+    const y=v=>H-pad-((v-min)/amp)*(H-2*pad);
+    const pts=vals.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const c=cor||'var(--lemon)';
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block">
+      <polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(n-1).toFixed(1)}" cy="${y(vals[n-1]).toFixed(1)}" r="3" fill="${c}"/>
+    </svg>`;
+  },
+
+  // A2: retrato do meu clube nesta temporada (pra série histórica)
+  retratoClube(){
+    const t=this.teams[this.myTeam]; if(!t) return null;
+    const jog=t.players||[];
+    const ovs=jog.map(p=>Rating.overallGlobal(p)).filter(v=>v>0);
+    const ovMedio = ovs.length ? Math.round(ovs.reduce((a,b)=>a+b,0)/ovs.length) : 0;
+    const valorElenco = jog.reduce((a,p)=>a+(this.valorDe?this.valorDe(p):0),0);
+    return { temporada:this.temporada||1, divisao:this.divisao,
+             saldo:Math.round(t.saldo||0), valorElenco:Math.round(valorElenco), ovMedio };
+  },
+  // registra o retrato no histórico (idempotente por temporada)
+  registrarHistoricoClube(){
+    const r=this.retratoClube(); if(!r) return;
+    if(!Array.isArray(this.histClube)) this.histClube=[];
+    if(this.histClube.some(h=>h.temporada===r.temporada)) return; // já registrado
+    this.histClube.push(r);
+    if(this.histClube.length>50) this.histClube=this.histClube.slice(-50); // teto
+  },
+
   renderCompeticoes(){
     const el=document.getElementById('tab-competicoes');
     if(!el) return;
@@ -4101,6 +4171,7 @@ const App={
         ${(this.mataMata||this.fase==='ko'||this.fase==='fim')?`<button class="cmp-tab ${aba==='ko'?'on':''}" data-cmp="ko">Mata-mata</button>`:''}
         ${!this.grupos?`<button class="cmp-tab ${aba==='liga'?'on':''}" data-cmp="liga">${nomeDiv}</button>`:''}
         ${outras.map(d=>`<button class="cmp-tab ${aba===d?'on':''}" data-cmp="${d}">Série ${d}</button>`).join('')}
+        <button class="cmp-tab ${aba==='stats'?'on':''}" data-cmp="stats">📊 Estatísticas</button>
       </div>
       <div id="cmpBody"><div class="cmp-nota">Carregando...</div></div>`;
     el.querySelectorAll('[data-cmp]').forEach(b=>b.onclick=()=>{ this.cmpAba=b.dataset.cmp; this.renderCompeticoes(); });
@@ -4158,6 +4229,48 @@ const App={
           <span class="cmp-pos">${pos+1}º</span><span class="cmp-nome">${this.teams[s.i].nome}${flag(s.i)}</span>
           <span class="cmp-j">${s.j}j</span><span class="cmp-pts">${s.pts}</span></div>`).join('')}
       </div></div>`;
+      return;
+    }
+    if(aba==='stats'){
+      const arts=this.topArtilheiros(10);
+      const notas=this.topNotas(10,3);
+      const craque=this.craqueDaRodada();
+      // A2: série histórica + temporada corrente (ao vivo)
+      const serie=[...(this.histClube||[])];
+      const atual=this.retratoClube();
+      if(atual && !serie.some(h=>h.temporada===atual.temporada)) serie.push(atual);
+      const linhaArt=(o,pos)=>`<div class="cmp-row ${o.ti===this.myTeam?'eu':''}">
+        <span class="cmp-pos">${pos+1}º</span>
+        <span class="cmp-nome">${this.esc(o.p.nome)} <span style="color:var(--muted);font-size:.85em">${o.timeAbrev||''}</span>${flag(o.ti)}</span>
+        <span class="cmp-pts">${o.p.golsTemp||0}</span>
+      </div>`;
+      const linhaNota=(o,pos)=>`<div class="cmp-row ${o.ti===this.myTeam?'eu':''}">
+        <span class="cmp-pos">${pos+1}º</span>
+        <span class="cmp-nome">${this.esc(o.p.nome)} <span style="color:var(--muted);font-size:.85em">${o.timeAbrev||''}</span>${flag(o.ti)}</span>
+        <span class="cmp-pts" style="color:${this.corNota(o.media)}">${o.media.toFixed(1)}</span>
+      </div>`;
+      body.innerHTML=`
+        ${craque?`<div class="cmp-nota" style="border-color:var(--lemon)">
+          ⭐ <b>Craque da última rodada:</b> ${this.esc(craque.nome)} —
+          nota <b style="color:${this.corNota(craque.nota)}">${craque.nota.toFixed(1)}</b>${craque.gols>0?` · ${craque.gols} gol${craque.gols>1?'s':''}`:''}
+        </div>`:''}
+        <div class="cmp-grid">
+          <div class="cmp-grupo meu" style="grid-column:1/-1">
+            <div class="cmp-grupo-h">📉 Evolução do clube <span style="color:var(--muted);font-size:.8em">(por temporada)</span></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:10px 12px">
+              <div><div style="color:var(--muted);font-size:.8em;margin-bottom:2px">Saldo — atual ${this.fmtM((atual?atual.saldo:0)/1e6)}</div>${this.sparkline(serie.map(h=>h.saldo),'var(--lemon)')}</div>
+              <div><div style="color:var(--muted);font-size:.8em;margin-bottom:2px">Overall médio — atual ${atual?atual.ovMedio:'–'}</div>${this.sparkline(serie.map(h=>h.ovMedio),'#e8c547')}</div>
+            </div>
+          </div>
+          <div class="cmp-grupo meu">
+            <div class="cmp-grupo-h">⚽ Artilharia · ${nomeDiv}</div>
+            ${arts.length?arts.map(linhaArt).join(''):'<div class="cmp-nota">Ainda não há gols nesta temporada.</div>'}
+          </div>
+          <div class="cmp-grupo">
+            <div class="cmp-grupo-h">📈 Melhores notas <span style="color:var(--muted);font-size:.8em">(mín. 3 jogos)</span></div>
+            ${notas.length?notas.map(linhaNota).join(''):'<div class="cmp-nota">Notas aparecem após alguns jogos disputados.</div>'}
+          </div>
+        </div>`;
       return;
     }
     // outras divisões: dados REAIS (this.ligas). Meu time não está aqui, mas mantemos o padrão.
@@ -4590,6 +4703,7 @@ const App={
   },
 
   novaTemporadaCompleta(){
+    this.registrarHistoricoClube();   // A2: fecha o retrato da temporada que terminou
     this.temporada=(this.temporada||1)+1;
     // 1) aplica acesso/rebaixamento de TODAS as divisões (times trocam de série)
     const mudancas=this.aplicarAcessoRebaixamento();
@@ -4659,6 +4773,7 @@ const App={
       updatedAt:new Date().toISOString(),
       rodada:this.rodada, dia:this.dia, myTeam:this.myTeam,
       stats:this.stats, resultados:this.resultados,
+      histClube:this.histClube||[],   // A2: série histórica do meu clube
       composicao:this.teams.map(t=>t.players.map(p=>p.pid)),  // quem está em cada time
       grupos:this.grupos||null, fase:this.fase||'pontos', divisao:this.divisao||null,
       mataMata:this.mataMata||null,
@@ -4760,6 +4875,7 @@ const App={
     // v7: restaura a DIVISÃO de cada time ANTES de qualquer remontagem (pipeline)
     if(s.divisoesTime) s.divisoesTime.forEach((d,ti)=>{ if(this.teams[ti]) this.teams[ti].divisao=d; });
     this.stats=s.stats; this.resultados=s.resultados||[];
+    this.histClube=Array.isArray(s.histClube)?s.histClube:[];   // A2
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;
     if(s.fase) this.fase=s.fase;
