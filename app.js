@@ -62,6 +62,7 @@ class SupabaseProvider{
           potential:p.potential??null,      // overall-alvo na posição natural
           talento:p.talento??3,             // 1..5 velocidade de evolução
           aVenda:p.avenda??false,           // transferível
+          moral:p.moral??65,                // A4: moral inicial neutra (65)
           // 'forca' de exibição = melhor overall entre as posições
           forca: Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm({attrs},pos))),
         };
@@ -331,7 +332,9 @@ const Motor={
     const base = (p.attrs && slotPos)
       ? this.overallEm(p, PESOS_POS[slotPos]?slotPos:(SLOT_TO_POS[slotPos]||'MC'), role)
       : p.forca;
-    return base*(p.energia/100);
+    // A4: moral tempera o rendimento (suave). Rating pode não existir em testes isolados.
+    const fMoral = (typeof Rating!=='undefined' && Rating.fatorMoral) ? Rating.fatorMoral(p) : 1;
+    return base*(p.energia/100)*fMoral;
   },
   disp(team){ return team.players.filter(p=>!p.lesionado && !(p.suspenso>0)); },
 
@@ -391,7 +394,9 @@ const Motor={
       base = p.forca;
       if(slotPos && p.posicao!==slotPos) base*=0.75;
     }
-    return base * (p.energia/100);
+    // A4: moral tempera a força efetiva na partida (mesmo fator suave do rendimento)
+    const fMoral = (typeof Rating!=='undefined' && Rating.fatorMoral) ? Rating.fatorMoral(p) : 1;
+    return base * (p.energia/100) * fMoral;
   },
 
   // adequação (%) do jogador a um slot — pra exibir no campo (verde/amarelo/vermelho)
@@ -665,6 +670,54 @@ const Rating = {
     // trava 0–10, uma casa decimal
     nota = Math.max(0, Math.min(10, nota));
     return Math.round(nota*10)/10;
+  },
+
+  /* ---------- MORAL / FORMA / STATUS (A4) ----------
+     Moral = 0–100 por jogador (p.moral), neutra em ~65. Reage às decisões do
+     usuário (jogar × banco, resultado, nota do A1) e afeta rendimento e mercado.
+     Status é DERIVADO (não persistido) da moral + contexto, calculado na hora. */
+  MORAL_NEUTRA:65,
+  moralDe(p){ return (p.moral!=null) ? p.moral : this.MORAL_NEUTRA; },
+
+  // multiplicador de rendimento pela moral: 0→0.92, 65→1.0, 100→1.06 (suave)
+  fatorMoral(p){
+    const m=this.moralDe(p);
+    if(m>=this.MORAL_NEUTRA) return 1 + (m-this.MORAL_NEUTRA)/(100-this.MORAL_NEUTRA)*0.06;
+    return 1 - (this.MORAL_NEUTRA-m)/this.MORAL_NEUTRA*0.08;
+  },
+
+  // aplica variação de moral após a rodada. ctx: {jogou, resultado, nota, foiCraque}
+  atualizarMoralRodada(p, ctx){
+    let m=this.moralDe(p); ctx=ctx||{};
+    if(ctx.jogou){
+      m+=1.5;                                        // jogar já anima
+      if(ctx.resultado==='v') m+=2.5; else if(ctx.resultado==='d') m-=2.0;
+      if(ctx.nota!=null){ m += (ctx.nota-6.0)*1.6; } // nota alta empolga, baixa frustra
+      if(ctx.foiCraque) m+=2.0;
+      p._semJogar=0;
+    } else {
+      // ficou de fora: desânimo cresce com o tempo sem minutos
+      p._semJogar=(p._semJogar||0)+1;
+      m -= 1.0 + Math.min(3.0, p._semJogar*0.5);
+    }
+    // deriva lentamente pro neutro (evita extremos travados)
+    m += (this.MORAL_NEUTRA-m)*0.04;
+    p.moral=Math.max(0,Math.min(100,Math.round(m*10)/10));
+    return p.moral;
+  },
+
+  // status/humor derivado (rótulo + cor). NÃO persistido — sempre recalculado.
+  statusJogador(p, ehReserva){
+    const m=this.moralDe(p);
+    const mg=(p.attrs)?Motor.melhorGeral(p).ov:(p.forca||50);
+    const pot=p.potential||mg;
+    const jovemPromissor = (p.idade!=null && p.idade<=23 && pot>mg+3);
+    if(m<35 && ehReserva) return {txt:'Quer sair',    cor:'var(--loss)',  emoji:'🚪'};
+    if(m<40)              return {txt:'Insatisfeito',  cor:'var(--loss)',  emoji:'😤'};
+    if(jovemPromissor && m>=55) return {txt:'Em ascensão', cor:'var(--lemon)', emoji:'📈'};
+    if(m>=80)             return {txt:'Motivado',     cor:'var(--lemon)', emoji:'🔥'};
+    if(m>=60)             return {txt:'Contente',     cor:'var(--lemon)', emoji:'🙂'};
+    return {txt:'Neutro', cor:'var(--muted)', emoji:'😐'};
   },
 };
 
@@ -1815,13 +1868,22 @@ const App={
       notaLado(campoH, gf, resH);   // a defesa da casa sofreu 'gf' gols
       notaLado(campoA, gc, resA);   // a defesa de fora sofreu 'gc' gols
       // A1: craque do jogo do MEU time (maior nota) — pro feedback pós-rodada
+      let craqueRef=null;
       if(h===this.myTeam || a===this.myTeam){
         const meuCampo = (h===this.myTeam) ? campoH : campoA;
         let craque=null;
-        meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota))
-          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, pos:c.posicao}; });
+        meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota)){
+          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
         this._craqueRodada=craque;
       }
+      // A4: atualiza MORAL de todos os jogadores dos dois times (jogaram ou não)
+      const jogouSet=new Set([...campoH,...campoA].map(c=>c.ref).filter(Boolean));
+      [{ti:h,res:resH},{ti:a,res:resA}].forEach(({ti,res})=>{
+        this.teams[ti].players.forEach(p=>{
+          const jogou=jogouSet.has(p);
+          Rating.atualizarMoralRodada(p, {jogou, resultado:res, nota:jogou?p._notaRodada:null, foiCraque:(p===craqueRef)});
+        });
+      });
       // grava energia final e conta gols individuais
       campoH.concat(campoA).forEach(c=>{ if(c.ref){
         c.ref.energia=Math.max(0,Math.round(c.energia));
@@ -2281,7 +2343,10 @@ const App={
     const pot=p.potential||mg.ov;
     const premio=Math.max(0, this.curvaValor(pot)-this.curvaValor(mg.ov))
       * this.fatorConfiancaIdade(p.idade) * 0.6;
-    return base+premio;
+    // A4: moral tempera o valor (insatisfeito vale menos; motivado, um pouco mais). Suave: ±5%.
+    const m=(p.moral!=null)?p.moral:65;
+    const fMoral = 1 + (m-65)/100*0.5;   // moral 0→0.675, 65→1.0, 100→1.175 → clamp abaixo
+    return (base+premio) * Math.max(0.9, Math.min(1.05, fMoral));
   },
   // valor final exibido = Nível A * market_factor (Nível B, salvo no snapshot)
   valorDe(p){
@@ -3165,6 +3230,8 @@ const App={
           <div class="ficha-line"><span>Contrato</span><b>${this.contratoTxt(sel.contratoMeses)}</b></div>
           <div class="ficha-line"><span>Temporada (J/G)</span><b>${sel.jogosTemp||0} / ${sel.golsTemp||0}</b></div>
           <div class="ficha-line"><span>Nota média</span>${this.notaChip(this.notaMediaTemp(sel))}${sel._notaRodada?` <span style="color:var(--muted);font-size:.85em">(últ. ${this.notaChip(sel._notaRodada)})</span>`:''}</div>
+          ${(()=>{ const ehRes=onzeNums&&!onzeNums.includes(sel.numero); const st=Rating.statusJogador(sel,ehRes); const m=Rating.moralDe(sel);
+            return `<div class="ficha-line"><span>Moral</span><b style="color:${st.cor}">${st.emoji} ${st.txt}</b> <span style="color:var(--muted);font-size:.85em">(${Math.round(m)})</span></div>`; })()}
           <div class="ficha-line"><span>Carreira (J/G)</span><b>${sel.jogos||0} / ${sel.gols||0}</b></div>
           <div class="ficha-line"><span>Disciplina</span><b>🟨 ${sel.amarelos||0} · 🟥 ${sel.expulsoes||0}</b></div>
           ${this.indisponivel(sel)?`<div class="ficha-line"><span>Situação</span><b style="color:var(--loss)">${this.motivoIndisp(sel)}</b></div>`:''}
@@ -4276,6 +4343,7 @@ const App={
         golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
         somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
+        moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
         attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
         ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
         valor:p.valor, aVenda:p.aVenda||false, contratoMeses:p.contratoMeses
@@ -4420,6 +4488,7 @@ const App={
         p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
         p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
         p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
+        p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
         if(sp.melhorNota) p._melhorNota=sp.melhorNota; if(sp.notaRodada) p._notaRodada=sp.notaRodada;
         if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
         if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
