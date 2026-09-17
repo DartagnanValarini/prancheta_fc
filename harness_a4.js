@@ -56,5 +56,11 @@ const rTriste  =Motor.rendimento({...base,moral:20},'ST');
 ck('mesmo overall: motivado > neutro > triste', rMotivado>rNeutro && rNeutro>rTriste, `${rMotivado.toFixed(1)}/${rNeutro.toFixed(1)}/${rTriste.toFixed(1)}`);
 ck('sem moral == neutro (retrocompat)', Math.abs(Motor.rendimento(base,'ST')-rNeutro)<1e-6);
 
+console.log('\n[5] Tendencia de overall (item 4)');
+ck('sem _ovBase => flat (sem seta)', Rating.tendenciaOverall({attrs:null,forca:70})==='flat' && Rating.setaTendencia({attrs:null,forca:70})==='');
+ck('overall subiu >=1 => up (seta verde)', (()=>{const p={attrs:null,forca:72,_ovBase:70};return Rating.tendenciaOverall(p)==='up' && /var\(--lemon\)/.test(Rating.setaTendencia(p));})());
+ck('overall caiu >=1 => down (seta vermelha)', (()=>{const p={attrs:null,forca:68,_ovBase:70};return Rating.tendenciaOverall(p)==='down' && /var\(--loss\)/.test(Rating.setaTendencia(p));})());
+ck('variacao <1 ponto => flat', Rating.tendenciaOverall({attrs:null,forca:70.4,_ovBase:70})==='flat');
+
 console.log(`\n=== ${ok} ok, ${fail} falhas ===`);
 process.exit(fail?1:0);

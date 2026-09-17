@@ -63,6 +63,7 @@ class SupabaseProvider{
           talento:p.talento??3,             // 1..5 velocidade de evolução
           aVenda:p.avenda??false,           // transferível
           moral:p.moral??65,                // A4: moral inicial neutra (65)
+          _ovBase:null,                     // item 4: base de tendência (setado no 1º render/temporada)
           // 'forca' de exibição = melhor overall entre as posições
           forca: Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm({attrs},pos))),
         };
@@ -678,6 +679,23 @@ const Rating = {
      Status é DERIVADO (não persistido) da moral + contexto, calculado na hora. */
   MORAL_NEUTRA:65,
   moralDe(p){ return (p.moral!=null) ? p.moral : this.MORAL_NEUTRA; },
+
+  // tendência de overall na temporada: compara overall atual com _ovBase (capturado
+  // no início da temporada). Retorna 'up'|'down'|'flat'. Ignora ruído < 1 ponto.
+  tendenciaOverall(p){
+    const atual=this.overallGlobal(p);
+    const base=(p._ovBase!=null)?p._ovBase:atual;
+    if(atual>=base+1) return 'up';
+    if(atual<=base-1) return 'down';
+    return 'flat';
+  },
+  // seta HTML da tendência (▲ verde / ▼ vermelha / nada se estável)
+  setaTendencia(p){
+    const t=this.tendenciaOverall(p);
+    if(t==='up')   return ' <span style="color:var(--lemon);font-size:.75em">▲</span>';
+    if(t==='down') return ' <span style="color:var(--loss);font-size:.75em">▼</span>';
+    return '';
+  },
 
   // multiplicador de rendimento pela moral: 0→0.92, 65→1.0, 100→1.06 (suave)
   fatorMoral(p){
@@ -1811,6 +1829,10 @@ const App={
 
   encerrarRodada(){
     const L=this.liveState;
+    // guarda de idempotência: se ESTA rodada já foi encerrada, não conta de novo
+    // (o relógio e o "pular partida" podem ambos chamar encerrarRodada).
+    if(L && L._encerrada) return;
+    if(L) L._encerrada=true;
     this.resultados=[];
     this._evoluiu=new Set();   // jogadores já evoluídos nesta rodada (os que jogaram)
     L.sims.forEach(s=>{
@@ -2765,7 +2787,9 @@ const App={
     const direita = live ? `
       <div class="panel">
         <div class="ptitle">Rodada ao vivo <span class="lbl" id="liveLbl">round ${L.done?this.rodada:this.rodada+1}</span></div>
-        <div class="live-list">${L.jogos.map(([h,a],i)=>{
+        <div class="live-list">${L.jogos.map(([h,a],i)=>({h,a,i}))
+          .sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; })
+          .map(({h,a,i})=>{
           const th=this.teams[h], ta=this.teams[a], me=h===this.myTeam||a===this.myTeam;
           return `<div class="live-match ${me?'me':''}" id="live-${i}">
             <div class="lm-teams">
@@ -2779,7 +2803,7 @@ const App={
     : `
       <div class="panel">
         <div class="ptitle">Última rodada <span class="lbl">${this.rodada?'round '+this.rodada:'—'}</span></div>
-        <div id="resultados">${this.resultados.length? this.resultados.map(r=>{
+        <div id="resultados">${this.resultados.length? [...this.resultados].sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; }).map(r=>{
           const th=this.teams[r.h],ta=this.teams[r.a],me=r.h===this.myTeam||r.a===this.myTeam;
           const hc=r.gc>r.gf?'w':r.gc<r.gf?'l':'',ac=r.gf>r.gc?'w':r.gf<r.gc?'l':'';
           return `<div class="match ${me?'me':''}">
@@ -3072,7 +3096,7 @@ const App={
             </div>
             <div class="pitch-h">
               ${colunas.map(col=>`<div class="pitch-col">${col.map(({pos,p})=>{
-                if(!p) return `<div class="slot-h empty"><div class="doth empty">+</div><div class="slot-hpos">${pos}</div></div>`;
+                if(!p) return `<div class="slot-h empty"><div class="doth empty">+</div><div class="slot-hnm">&nbsp;</div><div class="slot-hpos">${pos}</div></div>`;
                 const ov=Motor.overallEm(p,pos,this.roleDe(i,p.numero)), cor=Motor.corAdequacao(ov);
                 const selDot=p.numero===this.selPlayer;
                 return `<div class="slot-h ${selDot?'sel':''}" data-selnum="${p.numero}">
@@ -3306,7 +3330,7 @@ const App={
           return `<span class="pos-tag pos-${mg.pos}">${mg.pos}</span>`; })()}</span>
         <span class="nome">${p.nome}${p.lesionado?` <span style="color:var(--loss);font-size:10px">🩹 ${p.lesionado}d</span>`:''}
           <span style="color:var(--gray2);font-size:10px;margin-left:6px">rend ${Math.round(Motor.rendimento(p))}</span></span>
-        <span class="forca-num">${p.forca}</span>
+        <span class="forca-num">${p.forca}${Rating.setaTendencia(p)}</span>
         <span class="barwrap"><span class="n">${p.energia}%</span>
           <span class="bar"><i class="bar-en ${low?'low':''}" style="width:${p.energia}%"></i></span></span>
       </div>`;}).join('');
@@ -3389,7 +3413,7 @@ const App={
               <tbody>${porSalario.map(p=>{
                 const ov=Motor.melhorGeral(p).ov;
                 return `<tr class="mk-row"><td class="l mk-nome">${p.nome}</td>
-                  <td class="mk-f">${ov}</td>
+                  <td class="mk-f">${ov}${Rating.setaTendencia(p)}</td>
                   <td class="mk-money">${this.fmtReais((p.salario||0)*1000)}</td></tr>`;
               }).join('')}</tbody>
             </table>
@@ -3461,7 +3485,7 @@ const App={
                 const mg=Motor.melhorGeral(p); const ov=mg.ov;
                 return `<tr class="mk-row"><td class="l mk-nome"><a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${i}">${p.nome}</a> <span class="mk-idade">${p.idade}a</span></td>
                   <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
-                  <td class="mk-f">${ov}</td>
+                  <td class="mk-f">${ov}${Rating.setaTendencia(p)}</td>
                   <td class="mk-money">${this.fmtM(p.valor)}</td>
                   <td><input type="checkbox" data-venda="${p.pid}" ${p.aVenda?'checked':''}></td></tr>`;
               }).join('')}</tbody>
@@ -3477,7 +3501,7 @@ const App={
                 const mg=Motor.melhorGeral(p); const ov=mg.ov;
                 return `<tr class="mk-row"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · ${p.idade}a</span></td>
                   <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
-                  <td class="mk-f">${ov}</td>
+                  <td class="mk-f">${ov}${Rating.setaTendencia(p)}</td>
                   <td class="mk-money">${this.fmtM(p.valor)}</td>
                   <td><button class="mini-btn" data-negociar="${p.pid}">Negociar</button></td></tr>`;
               }).join('')}</tbody>
@@ -4294,6 +4318,7 @@ const App={
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
       // A1: notas são por temporada — zeram junto com gols/jogos
       p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
+      p._ovBase=Rating.overallGlobal(p);   // item 4: base da tendência de overall
     }));
     this.tempEncerrada=false;
     // 3) remonta a temporada inteira (todas as ligas) com as divisões já atualizadas
@@ -4319,6 +4344,7 @@ const App={
       p.energia=100; delete p.lesionado; p.golsTemp=0; p.jogosTemp=0;
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
       p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
+      p._ovBase=Rating.overallGlobal(p);   // item 4: base da tendência de overall
     }));
     this.tempEncerrada=false;
     this.objetivos=Objetivos.novaTemporada(this.divisao);   // A3
@@ -4344,6 +4370,7 @@ const App={
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
         somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
         moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
+        ovBase:p._ovBase!=null?p._ovBase:null,   // item 4
         attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
         ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
         valor:p.valor, aVenda:p.aVenda||false, contratoMeses:p.contratoMeses
@@ -4489,6 +4516,7 @@ const App={
         p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
         p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
         p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
+        p._ovBase=(sp.ovBase!=null)?sp.ovBase:null;   // item 4
         if(sp.melhorNota) p._melhorNota=sp.melhorNota; if(sp.notaRodada) p._notaRodada=sp.notaRodada;
         if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
         if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
