@@ -201,6 +201,17 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ---
 
-## 5. Resumo em uma frase
+## 5. Melhorias e ajustes de UX (backlog — do teste de jogo)
+
+Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no polimento (Bloco D) ou como quick wins.
+
+- **⚙️ Botão de Configurações** — uma tela/aba de ajustes do jogador. Candidatos: velocidade da simulação (relógio da partida), frequência do save (auto-save a cada X rodadas / manual), talvez volume de áudio (quando entrar D4), e futuramente o toggle de "remover anúncios" (Bloco B). É o lar natural de várias preferências que hoje não têm onde morar. Baixo/médio esforço; alto valor percebido.
+- **📊 Estabilidade da contagem de jogos/pontos na tabela** — investigar a fundo o relato de "2 jogos / 6 pontos após a rodada 1". O motor conta certo em teste isolado (1 jogo por rodada); suspeita principal é save criado com código antigo carregando valor já dobrado, ou caminho de UII específico. Já removida a soma condicional `+1` na exibição e adicionada guarda de idempotência em `encerrarRodada`. **Confirmar com jogo novo** e, se persistir, capturar o caminho exato.
+- **🎯 Ficha/consistência do campo** — as posições das bolinhas no campo (vazio vs. escalado) já foram fixadas com altura de slot constante; validar em todas as formações no reteste.
+- **🖥️ Responsividade do sticky** — a barra de abas fixa foi calibrada pra colar abaixo do header; validar em telas estreitas (mobile) onde o header/abas podem quebrar em mais linhas e exigir ajuste dos offsets.
+
+---
+
+## 6. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.

@@ -2746,7 +2746,7 @@ const App={
         return `<tr class="${me?'me':''} ${jogaAgora?'jogando':''}" data-team="${s.i}">
           <td class="l pos ${z}">${idx+1}</td>
           <td class="l"><span class="abrev">${t.abrev}</span>${t.nome}${jogaAgora?' <span class="live-dot">●</span>':''}</td>
-          <td class="pts">${s.pts}</td><td>${s.j+(jogaAgora?1:0)}</td><td>${s.v}</td>
+          <td class="pts">${s.pts}</td><td>${s.j}</td><td>${s.v}</td>
           <td>${s.e}</td><td>${s.d}</td>
           <td style="color:${sg>0?'var(--lemon)':sg<0?'var(--loss)':'var(--gray)'}">${sg>0?'+':''}${sg}</td>
         </tr>`;}).join('')}</tbody></table>`;

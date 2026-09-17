@@ -41,7 +41,7 @@
 
   /* ===== TABS ===== */
   nav.tabs{display:flex; gap:6px; margin-bottom:20px; flex-wrap:wrap;
-    position:sticky; top:0; z-index:50; background:var(--black); padding:10px 0 8px;
+    position:sticky; top:56px; z-index:45; background:var(--black); padding:10px 0 8px;
     border-bottom:1px solid var(--line)}
   nav.tabs button{
     font-family:'Bungee'; font-size:13px; text-transform:uppercase;
@@ -166,8 +166,8 @@
   /* ===== CAMPO HORIZONTAL (estilo FM) ===== */
   .pitch-h{display:flex; gap:6px; background:linear-gradient(90deg,#0f240f,#16301a,#0f240f); border:3px solid var(--line); border-radius:14px; padding:14px 10px; width:100%; aspect-ratio:1.55/1; max-height:566px; align-items:stretch; position:relative}
   .pitch-h::before{content:''; position:absolute; top:16px; bottom:16px; left:50%; width:2px; background:rgba(255,255,255,.06)}
-  .pitch-col{flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:18px}
-  .slot-h{text-align:center; cursor:pointer; width:100%; max-width:92px}
+  .pitch-col{flex:1; display:flex; flex-direction:column; justify-content:space-evenly; align-items:center; gap:0}
+  .slot-h{text-align:center; cursor:pointer; width:100%; max-width:92px; height:82px; display:flex; flex-direction:column; align-items:center; justify-content:center}
   .slot-h .doth{width:48px; height:48px; margin:0 auto 4px; border-radius:50%; background:var(--panel); border:2.5px solid var(--lemon); display:flex; align-items:center; justify-content:center; font-family:'Bungee'; font-size:15px; color:var(--lemon); box-shadow:2px 2px 0 var(--shadow)}
   .slot-h .doth.empty{border-style:dashed; border-color:var(--gray2); color:var(--gray2); background:transparent}
   .slot-h.sel .doth{box-shadow:0 0 0 3px rgba(210,255,0,.35), 2px 2px 0 var(--shadow)}
@@ -491,7 +491,7 @@
 
   /* ===== RODADA AO VIVO (todas as partidas simultâneas, painel direito) ===== */
   .live-head{display:flex; align-items:center; gap:16px; flex-wrap:wrap; background:var(--panel); border:2px solid var(--lemon); border-radius:12px; padding:12px 16px; box-shadow:4px 4px 0 var(--shadow);
-    position:sticky; top:58px; z-index:40}
+    position:sticky; top:112px; z-index:40}
   .live-title{font-family:'Bungee'; font-size:20px; color:var(--white)}
   .live-clockbox{display:flex; align-items:center; gap:12px; flex:1; min-width:200px}
   .live-progwrap{flex:1; height:12px; background:var(--black); border:2px solid var(--line); border-radius:8px; overflow:hidden; min-width:100px}
@@ -3422,7 +3422,7 @@ const App={
         return `<tr class="${me?'me':''} ${jogaAgora?'jogando':''}" data-team="${s.i}">
           <td class="l pos ${z}">${idx+1}</td>
           <td class="l"><span class="abrev">${t.abrev}</span>${t.nome}${jogaAgora?' <span class="live-dot">●</span>':''}</td>
-          <td class="pts">${s.pts}</td><td>${s.j+(jogaAgora?1:0)}</td><td>${s.v}</td>
+          <td class="pts">${s.pts}</td><td>${s.j}</td><td>${s.v}</td>
           <td>${s.e}</td><td>${s.d}</td>
           <td style="color:${sg>0?'var(--lemon)':sg<0?'var(--loss)':'var(--gray)'}">${sg>0?'+':''}${sg}</td>
         </tr>`;}).join('')}</tbody></table>`;
