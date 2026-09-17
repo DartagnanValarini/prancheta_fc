@@ -2838,7 +2838,7 @@ const App={
     // tabela exibida: se for a MINHA série (e grupo do meu time), usa a ao vivo; senão, estática da liga
     const tabelaExibida = (()=>{
       if(ehMinha && (!aGrupos || this.arenaGrupoD===this.grupoDeNaLiga(aLiga, this.myTeam)))
-        return this.tabelaHTML(live?this.deltasAoVivo():null);
+        return this.tabelaHTML((live && !L.done)?this.deltasAoVivo():null);
       return this.tabelaSerieHTML(aSerie, aGrupos?this.arenaGrupoD:null);
     })();
 

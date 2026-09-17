@@ -20,11 +20,14 @@
   .bungee{font-family:'Bungee',cursive; font-weight:400; letter-spacing:.5px; text-transform:uppercase}
 
   /* ===== HEADER / NAV ARCADE (full-bleed: linha lemon até a borda) ===== */
+  /* bloco fixo: header + abas grudam juntos no topo, como um componente só */
+  .topbar-fixed{position:sticky; top:0; z-index:50; background:var(--black);
+    margin-top:-16px; margin-bottom:20px}
   header.topnav{
-    position:sticky; top:0; z-index:50; background:var(--black);
+    background:var(--black);
     border-bottom:3px solid var(--lemon);
     /* estende até as bordas da viewport, saindo do .wrap */
-    width:100vw; margin-left:calc(-50vw + 50%); margin-top:-16px; margin-bottom:20px;
+    width:100vw; margin-left:calc(-50vw + 50%); margin-top:0;
     padding:14px max(24px, calc((100vw - 1920px)/2 + 24px));
     display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
   }
@@ -40,8 +43,8 @@
   .hud .chip.scorecard{background:var(--lemon); color:var(--black); border-color:var(--lemon)}
 
   /* ===== TABS ===== */
-  nav.tabs{display:flex; gap:6px; margin-bottom:20px; flex-wrap:wrap;
-    position:sticky; top:56px; z-index:45; background:var(--black); padding:10px 0 8px;
+  nav.tabs{display:flex; gap:6px; flex-wrap:wrap;
+    background:var(--black); padding:10px 0 8px;
     border-bottom:1px solid var(--line)}
   nav.tabs button{
     font-family:'Bungee'; font-size:13px; text-transform:uppercase;
@@ -490,8 +493,7 @@
   .slot.slot-sel .dot{background:var(--lemon); color:var(--black); box-shadow:0 0 0 3px rgba(210,255,0,.3), 2px 2px 0 var(--shadow)}
 
   /* ===== RODADA AO VIVO (todas as partidas simultâneas, painel direito) ===== */
-  .live-head{display:flex; align-items:center; gap:16px; flex-wrap:wrap; background:var(--panel); border:2px solid var(--lemon); border-radius:12px; padding:12px 16px; box-shadow:4px 4px 0 var(--shadow);
-    position:sticky; top:112px; z-index:40}
+  .live-head{display:flex; align-items:center; gap:16px; flex-wrap:wrap; background:var(--panel); border:2px solid var(--lemon); border-radius:12px; padding:12px 16px; box-shadow:4px 4px 0 var(--shadow)}
   .live-title{font-family:'Bungee'; font-size:20px; color:var(--white)}
   .live-clockbox{display:flex; align-items:center; gap:12px; flex:1; min-width:200px}
   .live-progwrap{flex:1; height:12px; background:var(--black); border:2px solid var(--line); border-radius:8px; overflow:hidden; min-width:100px}
@@ -643,6 +645,7 @@
 </div>
 
 <div class="wrap hidden" id="gameWrap">
+  <div class="topbar-fixed">
   <header class="topnav">
     <div class="logo">PRANCHETA<b>.</b>FC<b>!</b></div>
     <div class="hud">
@@ -662,6 +665,7 @@
     <button data-tab="financas">Finanças</button>
     <button data-tab="dados">Dados</button>
   </nav>
+  </div>
 
   <section id="tab-arena"></section>
   <section id="tab-escala" class="hidden"></section>
@@ -3514,7 +3518,7 @@ const App={
     // tabela exibida: se for a MINHA série (e grupo do meu time), usa a ao vivo; senão, estática da liga
     const tabelaExibida = (()=>{
       if(ehMinha && (!aGrupos || this.arenaGrupoD===this.grupoDeNaLiga(aLiga, this.myTeam)))
-        return this.tabelaHTML(live?this.deltasAoVivo():null);
+        return this.tabelaHTML((live && !L.done)?this.deltasAoVivo():null);
       return this.tabelaSerieHTML(aSerie, aGrupos?this.arenaGrupoD:null);
     })();
 

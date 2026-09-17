@@ -30,4 +30,18 @@ jogaUmaRodada();
 console.log('apos R2: j=',stat(0).j,'| total liga J=',App.ligas.D.stats.reduce((a,s)=>a+s.j,0),'| rodada=',App.rodada);
 const ok = stat(0).j===2 && App.rodada===2;
 console.log(ok ? '\n✅ CONTAGEM CORRETA: 2 rodadas = 2 jogos por time' : '\n❌ CONTAGEM ERRADA');
-process.exit(0);
+if(!ok) process.exitCode=1;
+
+// --- REGRESSAO Bug pontos dobrados (tabela Arena) ---
+(function(){
+  const stat=i=>App.stats.find(s=>s.i===i);
+  App.montarTemporada(); App.cfg=App.teams.map(t=>App.cfgInicial(t)); App.escalarMelhor();
+  const p=App.prepararRodada();
+  App.liveState={jogos:p.jogos,sims:p.sims,min:0,timer:null,playing:true,done:false,fase:'1T',paused:false,subOpen:false};
+  App.pularRodada();
+  const L=App.liveState, meu=0, real=stat(meu).pts;
+  const semDelta=App.classificacao((L && !L.done)?App.deltasAoVivo():null).find(s=>s.i===meu);
+  console.log('\n--- pontos na tabela apos rodada encerrada ---');
+  console.log(semDelta.pts===real ? '✅ pts NAO dobra (L.done nao aplica deltas): '+real : '❌ pts dobrou: '+semDelta.pts+' vs real '+real);
+  if(semDelta.pts!==real){ process.exitCode=1; }
+})();
