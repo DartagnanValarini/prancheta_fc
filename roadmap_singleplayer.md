@@ -201,7 +201,29 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ---
 
-## 5. Melhorias e ajustes de UX (backlog — do teste de jogo)
+## 5. Estratégia de distribuição e anúncios (DECIDIDO)
+
+> **Um código-fonte (`prancheta_fc.html`), duas distribuições.** A rede de anúncios é escolhida automaticamente pela superfície onde o jogo roda. AdSense e AdMob **nunca** coexistem na mesma tela (proibido pelas políticas do Google).
+
+**Versão WEB** — HTML hospedado (Netlify/Vercel/GitHub Pages), aberto no navegador.
+- Rede: **Google AdSense** (banner/display). Exige aprovação do site + política de privacidade.
+- Limitação: AdSense **não tem formato recompensado**. O "assista pra dobrar o prêmio" não existe igual aqui.
+- Bom para: jogar no PC, divulgar por link, receita cedo sem depender de loja, funil web→app.
+
+**Versão APP** — o mesmo HTML embrulhado com **Capacitor** (sem reescrever o jogo), publicado na Play Store.
+- Rede: **Google AdMob** (recompensado opt-in + a compra "remover anúncios"). É o modelo completo do Bloco B.
+- Custo: US$25 (conta de desenvolvedor Play, taxa única) + cadastro fiscal do AdMob (Brasil: tratado EUA-BR pra não reter imposto demais) + conta bancária. Pagamento do Google sai ao passar de US$100 acumulados.
+- Bom para: o público natural (celular), receita real (recompensado + compra rendem muito mais que banner).
+
+**Como o código decide:** `mostrarAnuncio()` já é o ponto único de integração. Ele detecta a superfície (navegador vs. dentro do app) e chama a rede certa: no app → AdMob recompensado; na web → AdSense (ou concede a recompensa de outra forma, já que banner não é recompensado). Troca cirúrgica num só lugar; o resto do jogo não muda.
+
+**Decisão pendente (pode ficar pra depois):** na versão web, o bônus "dobrar prêmio" (a) não existe (recompensado vira exclusivo do app, incentivando o download) ou (b) é concedido sem ad (web como vitrine generosa). (a) é mais rentável e cria funil web→app; (b) é mais generoso no navegador.
+
+**O que vale pras DUAS versões:** o servidor (Bloco C) — a compra de "remover anúncios" precisa ser validada no servidor tanto na web quanto no app, senão é o primeiro alvo de cheat. Por isso o Bloco C vem antes do empacotamento: protege a compra e destrava o ranking, independente da superfície.
+
+---
+
+## 6. Melhorias e ajustes de UX (backlog — do teste de jogo)
 
 Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no polimento (Bloco D) ou como quick wins.
 
@@ -212,6 +234,6 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ---
 
-## 6. Resumo em uma frase
+## 7. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.
