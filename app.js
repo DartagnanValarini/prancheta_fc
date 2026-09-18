@@ -1322,6 +1322,23 @@ const App={
   SCHEMA_VERSION:8,
   GAME_VERSION:'0.9.0',
 
+  /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
+  // preferências do jogador, persistidas no save. adFree é CACHE de UI — a
+  // verdade vem do servidor (Bloco C). Nunca confiar nele para liberar nada
+  // sensível; serve só para esconder os anúncios rápido no cliente.
+  OPCOES_PADRAO:{ velocidade:1, autoSaveRodadas:3, adFree:false },
+  VELOCIDADES:[0.5, 1, 2, 3],
+  garantirOpcoes(){
+    if(!this.opcoes || typeof this.opcoes!=='object') this.opcoes={...this.OPCOES_PADRAO};
+    // preenche chaves ausentes (retrocompat com saves antigos)
+    for(const k in this.OPCOES_PADRAO) if(this.opcoes[k]==null) this.opcoes[k]=this.OPCOES_PADRAO[k];
+    return this.opcoes;
+  },
+  // ms por minuto de jogo, aplicando a velocidade escolhida (base 667ms = ~30s/tempo)
+  msPorMinuto(){ const v=this.garantirOpcoes().velocidade||1; return Math.max(80, Math.round(667/v)); },
+  // o jogador removeu anúncios? (cache local; servidor confirma no Bloco C)
+  semAnuncios(){ return !!this.garantirOpcoes().adFree; },
+
   sb:null,              // client Supabase compartilhado (auth + saves)
   slotAtual:null,       // slot de save em uso ('1'|'2'|'3')
   userId:null,          // uuid do usuário logado (null = convidado)
@@ -1652,7 +1669,7 @@ const App={
       if(L.min>=90){ clearInterval(L.timer); L.playing=false; L.done=true; L.fase='fim';
         this.encerrarRodada(); }
     };
-    L.timer=setInterval(tick, 667); // ~30s por tempo
+    L.timer=setInterval(tick, this.msPorMinuto()); // velocidade configurável (Configurações)
   },
 
   // simula 1 minuto de TODAS as partidas, com energia dinâmica e força=soma
@@ -4113,9 +4130,70 @@ const App={
     });
     return {fechar, el:ov};
   },
+  /* ---------- TELA DE CONFIGURAÇÕES (Bloco B) ---------- */
+  abrirConfig(){
+    const o=this.garantirOpcoes();
+    const velLabels={0.5:'Lenta (0.5×)',1:'Normal (1×)',2:'Rápida (2×)',3:'Turbo (3×)'};
+    const velBtns=this.VELOCIDADES.map(v=>
+      `<button class="cfg-opt ${o.velocidade===v?'on':''}" data-cfg-vel="${v}">${velLabels[v]}</button>`).join('');
+    const saveBtns=[1,3,5].map(n=>
+      `<button class="cfg-opt ${o.autoSaveRodadas===n?'on':''}" data-cfg-save="${n}">A cada ${n} rodada${n>1?'s':''}</button>`).join('');
+    const adFree=this.semAnuncios();
+    const corpo=`
+      <div class="cfg-sec">
+        <div class="cfg-h">⏱️ Velocidade da partida</div>
+        <div class="cfg-row">${velBtns}</div>
+        <div class="cfg-hint">Controla o ritmo do relógio durante os jogos.</div>
+      </div>
+      <div class="cfg-sec">
+        <div class="cfg-h">💾 Salvamento automático</div>
+        <div class="cfg-row">${saveBtns}</div>
+        <div class="cfg-hint">Com que frequência o jogo salva sozinho após as rodadas.</div>
+      </div>
+      <div class="cfg-sec">
+        <div class="cfg-h">${adFree?'✅':'📺'} Anúncios</div>
+        <div class="cfg-adbox">
+          ${adFree
+            ? `<div style="color:var(--lemon)">Você removeu os anúncios. Obrigado pelo apoio! 💚</div>`
+            : `<div style="color:var(--gray2);line-height:1.6;margin-bottom:10px">Jogue de graça com anúncios opcionais, ou remova todos com uma compra única.</div>
+               <button class="btn primary" data-cfg-buyad>Remover anúncios</button>`}
+        </div>
+      </div>`;
+    this.modalFLK({ titulo:'⚙️ Configurações', corpoHTML:corpo,
+      botoes:[{txt:'Fechar', tipo:'primary'}] });
+    // liga os controles (modalFLK não tem hook pós-render)
+    const wrap=document.getElementById('flkModal'); if(!wrap) return;
+    wrap.querySelectorAll('[data-cfg-vel]').forEach(b=>b.onclick=()=>{
+      o.velocidade=parseFloat(b.dataset.cfgVel); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
+    wrap.querySelectorAll('[data-cfg-save]').forEach(b=>b.onclick=()=>{
+      o.autoSaveRodadas=parseInt(b.dataset.cfgSave,10); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
+    const buy=wrap.querySelector('[data-cfg-buyad]');
+    if(buy) buy.onclick=()=>this.comprarRemoverAnuncios();
+  },
+  // fluxo de compra "remover anúncios" — PLACEHOLDER (Bloco B/C).
+  // Hoje simula a compra e liga a flag local. Quando o billing entrar, este
+  // método dispara a compra real e só liga adFree após o servidor confirmar
+  // a posse (entitlement). NUNCA confiar só no cliente para isso.
+  comprarRemoverAnuncios(){
+    this.modalFLK({ titulo:'Remover anúncios',
+      corpoHTML:`<div style="line-height:1.7">
+        <p>Compra única que remove <b>todos os anúncios</b> do jogo, para sempre.</p>
+        <p style="color:var(--muted);font-size:.85em">Sem assinatura. Sem pay-to-win — você não compra vantagem, só remove os anúncios.</p>
+        <p style="color:var(--muted);font-size:.8em;margin-top:10px">⚠️ Placeholder: a compra real (loja + validação no servidor) entra num passo seguinte.</p>
+      </div>`,
+      botoes:[
+        {txt:'Simular compra', tipo:'primary', onClick:()=>{
+          this.garantirOpcoes().adFree=true;
+          this.salvarSupabase&&this.salvarSupabase(true);
+          this.avisoFLK('Anúncios removidos','Obrigado pelo apoio! Os anúncios foram desativados. 💚','var(--lemon)');
+          return false;
+        }},
+        {txt:'Agora não', tipo:'sm'}
+      ] });
+  },
+
   // aviso simples estilo FLK (substitui alert)
-  avisoFLK(titulo, msg, cor){
-    this.modalFLK({titulo, corpoHTML:`<div style="color:${cor||'var(--white)'};line-height:1.6">${msg}</div>`,
+  avisoFLK(titulo, msg, cor){    this.modalFLK({titulo, corpoHTML:`<div style="color:${cor||'var(--white)'};line-height:1.6">${msg}</div>`,
       botoes:[{txt:'Entendido',tipo:'primary sm'}]});
   },
 
@@ -4386,6 +4464,7 @@ const App={
       stats:this.stats, resultados:this.resultados,
       histClube:this.histClube||[],   // A2: série histórica do meu clube
       objetivos:this.objetivos||null,  // A3: pacote de objetivos da temporada
+      opcoes:this.garantirOpcoes(),    // Bloco B: preferências do jogador
       composicao:this.teams.map(t=>t.players.map(p=>p.pid)),  // quem está em cada time
       grupos:this.grupos||null, fase:this.fase||'pontos', divisao:this.divisao||null,
       mataMata:this.mataMata||null,
@@ -4489,6 +4568,7 @@ const App={
     this.stats=s.stats; this.resultados=s.resultados||[];
     this.histClube=Array.isArray(s.histClube)?s.histClube:[];   // A2
     this.objetivos=(s.objetivos&&s.objetivos.div)?s.objetivos:null;   // A3 (garantirObjetivos recria se faltar)
+    this.opcoes=(s.opcoes&&typeof s.opcoes==='object')?{...this.OPCOES_PADRAO,...s.opcoes}:{...this.OPCOES_PADRAO};   // Bloco B
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;
     if(s.fase) this.fase=s.fase;
@@ -4644,5 +4724,6 @@ const App={
 document.getElementById('tabs').addEventListener('click',e=>{
   const b=e.target.closest('button[data-tab]'); if(b) App.showTab(b.dataset.tab);
 });
+(function(){ const g=document.getElementById('btnConfig'); if(g) g.onclick=()=>App.abrirConfig(); })();
 
 App.boot();
