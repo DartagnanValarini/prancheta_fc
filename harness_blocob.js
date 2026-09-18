@@ -51,5 +51,26 @@ App.opcoes=null;   // simula reload
 App.opcoes=(snapOpc&&typeof snapOpc==='object')?{...App.OPCOES_PADRAO,...snapOpc}:{...App.OPCOES_PADRAO};
 ck('opcoes sobrevivem ao roundtrip', App.opcoes.velocidade===2 && App.opcoes.autoSaveRodadas===5 && App.semAnuncios()===true);
 
+console.log('\n[5] anúncio recompensado (mostrarAnuncio)');
+// com adFree: recompensa direta, sem modal
+App.opcoes={adFree:true};
+let recebeu=false; App.mostrarAnuncio({onRecompensa:()=>{recebeu=true;}});
+ck('adFree => recompensa direta (sem ad)', recebeu===true);
+// sem adFree e sem modalFLK (stub) => cai no fallback e recompensa
+App.opcoes={adFree:false}; const modalBak=App.modalFLK; App.modalFLK=null;
+let recebeu2=false; App.mostrarAnuncio({onRecompensa:()=>{recebeu2=true;}});
+ck('sem ad-sdk (fallback) => recompensa concedida', recebeu2===true);
+App.modalFLK=modalBak;
+
+console.log('\n[6] bônus de objetivo respeita adUsado e credita');
+App.divisao='D';
+App.teams=[{id:'T0',abrev:'T0',nome:'Meu',divisao:'D',saldo:0,players:[]}]; App.myTeam=0;
+App.addExtrato=function(){};
+App.objetivos={div:'D',principal:{id:'x'},principalStatus:'aberto',
+  sec:[{id:'gols',ev:'gols',titulo:'G',desc:'',meta:1,prog:1,feito:true,premioBase:2e6,adUsado:false}]};
+App.opcoes={adFree:true};
+ck('1o resgate credita o bonus', App.resgatarBonusAd('gols')===true && App.teams[0].saldo===2e6);
+ck('2o resgate falha (adUsado)', App.resgatarBonusAd('gols')===false && App.teams[0].saldo===2e6);
+
 console.log(`\n=== ${ok} ok, ${fail} falhas ===`);
 process.exit(fail?1:0);

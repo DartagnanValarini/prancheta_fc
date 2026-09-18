@@ -3682,25 +3682,43 @@ const App={
     this._objetivosConcluidos.push({id:s.id, titulo:s.titulo, premio:s.premioBase});
   },
   // gancho de AD (Bloco B): dobra o prêmio de um objetivo já concluído, uma vez
+  /* ---------- ANÚNCIOS RECOMPENSADOS (Bloco B) ----------
+     mostrarAnuncio é o ÚNICO ponto de integração de ad do jogo. Hoje é um
+     placeholder (modal de confirmação). Quando o SDK entrar (AdMob/rewarded),
+     só este método muda: dispara o ad real e chama onRecompensa apenas no
+     callback de "recompensa concedida"; onCancelar se o usuário fecha antes.
+     Quem removeu anúncios (adFree) NUNCA vê ad — recebe a recompensa direto. */
+  mostrarAnuncio({titulo, descricao, onRecompensa, onCancelar}){
+    if(this.semAnuncios()){ onRecompensa&&onRecompensa(); return; }  // comprou: sem ad, recompensa direta
+    if(this.modalFLK){
+      this.modalFLK({ titulo:titulo||'▶ Assistir anúncio',
+        corpoHTML:`<p style="line-height:1.6">${descricao||'Assista a um anúncio curto para receber a recompensa.'}</p>
+          <p style="color:var(--muted);font-size:.85em">Recompensa opcional — nunca obrigatória.</p>
+          <p style="color:var(--muted);font-size:.75em;margin-top:8px">⚠️ Placeholder: o anúncio real entra com o empacotamento (loja).</p>`,
+        botoes:[
+          {txt:'Assistir e receber', tipo:'primary', onClick:()=>{ onRecompensa&&onRecompensa(); return false; }},
+          {txt:'Agora não', tipo:'sm', onClick:()=>{ onCancelar&&onCancelar(); return false; }}
+        ] });
+    } else { onRecompensa&&onRecompensa(); }
+  },
   resgatarBonusAd(secId){
     const o=this.garantirObjetivos(); const s=o.sec.find(x=>x.id===secId);
     if(!s || !s.feito || s.adUsado) return false;
     s.adUsado=true;
-    const t=this.teams[this.myTeam]; if(t){ t.saldo=(t.saldo||0)+s.premioBase; this.addExtrato('Bônus 2x (anúncio): '+s.titulo, +s.premioBase); }
+    const t=this.teams[this.myTeam]; if(t){ t.saldo=(t.saldo||0)+s.premioBase; this.addExtrato('Bônus 2x'+(this.semAnuncios()?'':' (anúncio)')+': '+s.titulo, +s.premioBase); }
     return true;
   },
-  // PLACEHOLDER do rewarded ad (Bloco B). Hoje só confirma e credita; quando o
-  // SDK de anúncios entrar, este método dispara o ad real e só credita no callback
-  // de "recompensa concedida". Mantém a lógica de crédito isolada em resgatarBonusAd.
+  // dobra o prêmio de um objetivo concluído: via ad (grátis) ou direto (adFree).
   assistirAnuncioBonus(secId){
     const o=this.garantirObjetivos(); const s=o.sec.find(x=>x.id===secId);
     if(!s || !s.feito || s.adUsado) return;
-    const aplicar=()=>{ if(this.resgatarBonusAd(secId)){ this.salvarSupabase&&this.salvarSupabase(true); this.renderCompeticoes(); this.renderFinancas&&this.renderFinancas();
-      this.avisoFLK&&this.avisoFLK('🎁 Bônus em dobro!', `Prêmio de "${s.titulo}" dobrado: +${this.fmtM(s.premioBase/1e6)}.`, 'var(--lemon)'); } };
-    if(this.modalFLK){
-      this.modalFLK({ titulo:'▶ Assistir anúncio', corpoHTML:`<p>Assista a um anúncio curto para <b>dobrar</b> o prêmio de "${this.esc(s.titulo)}" (+${this.fmtM(s.premioBase/1e6)}).</p><p style="color:var(--muted);font-size:.85em">Recompensa opcional — nunca obrigatória.</p>`,
-        botoes:[{txt:'Assistir e dobrar', tipo:'primary', onClick:()=>aplicar()},{txt:'Agora não', tipo:'sm'}] });
-    } else aplicar();
+    this.mostrarAnuncio({
+      titulo:'▶ Dobrar prêmio',
+      descricao:`Dobre o prêmio de "${this.esc(s.titulo)}" — mais <b>${this.fmtM(s.premioBase/1e6)}</b> no seu caixa.`,
+      onRecompensa:()=>{ if(this.resgatarBonusAd(secId)){
+        this.salvarSupabase&&this.salvarSupabase(true); this.renderCompeticoes(); this.renderFinancas&&this.renderFinancas();
+        this.avisoFLK&&this.avisoFLK('🎁 Bônus em dobro!', `Prêmio de "${s.titulo}" dobrado: +${this.fmtM(s.premioBase/1e6)}.`, 'var(--lemon)'); } }
+    });
   },
   avaliarPrincipal(destino){
     const o=this.garantirObjetivos(); const P=o.principal; if(!P || o.principalStatus!=='aberto') return null;
@@ -3830,7 +3848,7 @@ const App={
             ${s.feito
               ? (s.adUsado
                   ? `<span class="obj-premio">+${this.fmtM(s.premioBase/1e6)} <span style="color:var(--muted)">(2x resgatado)</span></span>`
-                  : `<button class="btn sm obj-ad" data-objad="${s.id}">▶ Dobrar (+${this.fmtM(s.premioBase/1e6)}) c/ anúncio</button>`)
+                  : `<button class="btn sm obj-ad" data-objad="${s.id}">${this.semAnuncios()?'':'▶ '}Dobrar (+${this.fmtM(s.premioBase/1e6)})${this.semAnuncios()?'':' c/ anúncio'}</button>`)
               : `<span class="obj-premio">Prêmio ${this.fmtM(s.premioBase/1e6)}</span>`}
           </div>
         </div>`).join('');
