@@ -646,6 +646,22 @@
   .obj-prog{font-family:'Space Mono'; font-weight:700; font-size:11px; color:var(--white)}
   .obj-premio{font-family:'Space Mono'; font-size:10px; color:var(--gray)}
   .obj-ad{font-size:10px !important; padding:5px 9px !important; background:var(--lemon) !important; color:#0a0f04 !important; font-weight:700}
+  /* C3 — Ranking */
+  .rk-wrap{padding:4px 2px}
+  .rk-head{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+  .rk-head h2{font-family:'Bungee',cursive; font-size:18px; color:var(--white); margin:0}
+  .rk-sub{color:var(--gray2,#9a9d94); font-size:12px; line-height:1.5; margin:6px 0 12px}
+  .rk-empty{color:var(--gray2,#9a9d94); font-size:13px; padding:18px 4px; text-align:center; border:1px dashed var(--line); border-radius:8px}
+  .rk-table{width:100%; border-collapse:collapse; font-size:13px}
+  .rk-table th{font-family:'Space Mono'; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--gray2,#9a9d94); padding:8px 6px; border-bottom:2px solid var(--line); text-align:center}
+  .rk-table th.l{text-align:left}
+  .rk-table td{padding:9px 6px; border-bottom:1px solid var(--line); text-align:center; color:var(--white)}
+  .rk-table td.l{text-align:left}
+  .rk-table tr.rk-eu td{background:rgba(210,255,0,.10)}
+  .rk-table tr.rk-eu td.l{border-left:3px solid var(--lemon)}
+  .rk-table tr.rk-susp td{color:var(--gray2,#9a9d94)}
+  .rk-table tr.rk-susp td.l{text-decoration:line-through; text-decoration-color:var(--loss)}
+  .rk-selo{display:inline-block; font-family:'Space Mono'; font-size:9px; font-weight:700; letter-spacing:.5px; color:#0a0f04; background:var(--loss); padding:2px 6px; border-radius:5px; margin-left:6px; text-decoration:none; vertical-align:middle; white-space:nowrap}
 </style>
 </head>
 <body>
@@ -677,6 +693,7 @@
     <button data-tab="competicoes">Competições</button>
     <button data-tab="mercado">Mercado</button>
     <button data-tab="financas">Finanças</button>
+    <button data-tab="ranking">Ranking</button>
     <button data-tab="dados">Dados</button>
   </nav>
   </div>
@@ -687,6 +704,7 @@
   <section id="tab-competicoes" class="hidden"></section>
   <section id="tab-mercado" class="hidden"></section>
   <section id="tab-financas" class="hidden"></section>
+  <section id="tab-ranking" class="hidden"></section>
   <section id="tab-dados" class="hidden"></section>
 </div>
 
@@ -2038,6 +2056,91 @@ const App={
   // o jogador removeu anúncios? (cache local; servidor confirma no Bloco C)
   semAnuncios(){ return !!this.garantirOpcoes().adFree; },
 
+  /* ===================== BLOCO C — cliente das Edge Functions =====================
+     A fronteira estreita da Via 1: só a POSSE do remove-ads (C2) e o SCORE do
+     ranking (C3) passam pelo servidor. Tudo com o JWT da sessão do usuário. */
+  FUNCS_URL(){ return this.SUP_URL.replace('.supabase.co','.functions.supabase.co'); },
+  async _tokenSessao(){
+    try{ const {data}=await this.sb.auth.getSession(); return data?.session?.access_token||null; }
+    catch(e){ return null; }
+  },
+  async chamarFuncao(nome, metodo, corpo){
+    // convidado não tem servidor: sem JWT, nada de posse verificada nem ranking.
+    if(this.convidado) return {ok:false, offline:true};
+    const token=await this._tokenSessao();
+    if(!token) return {ok:false, offline:true};
+    try{
+      const r=await fetch(`${this.SUP_URL}/functions/v1/${nome}`, {
+        method:metodo,
+        headers:{ 'Authorization':`Bearer ${token}`, 'apikey':this.SUP_KEY,
+                  ...(corpo?{'Content-Type':'application/json'}:{}) },
+        ...(corpo?{body:JSON.stringify(corpo)}:{})
+      });
+      const data=await r.json().catch(()=>({}));
+      return {ok:r.ok, status:r.status, data};
+    }catch(e){ return {ok:false, erro:e.message}; }
+  },
+
+  /* ---------- C2: posse do remove-ads (a VERDADE mora no servidor) ---------- */
+  // hidrata App.opcoes.adFree a partir do servidor no boot. O save local é só cache.
+  async hidratarEntitlement(){
+    const r=await this.chamarFuncao('entitlement','GET');
+    if(r.ok && r.data){
+      const o=this.garantirOpcoes();
+      o.adFree=!!r.data.ad_free;   // servidor manda; forjar adFree no cliente não sobrevive a isto
+    }
+  },
+  // registra a compra no servidor (hoje o backend é stub até o SDK da loja entrar).
+  async registrarCompraRemoveAds(source, purchaseRef){
+    const r=await this.chamarFuncao('entitlement','POST', {source:source||'web', purchase_ref:purchaseRef||null});
+    if(r.ok && r.data && r.data.ad_free){ this.garantirOpcoes().adFree=true; return {ok:true}; }
+    return {ok:false, offline:r.offline, motivo:(r.data&&r.data.error)||r.erro||'falha'};
+  },
+
+  /* ---------- C3: submissão do score do treinador ---------- */
+  // contadores leves de carreira (persistidos no snapshot). Insumo do ranking.
+  garantirCarreira(){
+    if(!this.carreira || typeof this.carreira!=='object') this.carreira={titulos:0, acessos:0};
+    if(this.carreira.titulos==null) this.carreira.titulos=0;
+    if(this.carreira.acessos==null) this.carreira.acessos=0;
+    return this.carreira;
+  },
+  // score do treinador: pesos simples e explicáveis (o servidor só checa plausibilidade).
+  scoreTreinador(){
+    const c=this.garantirCarreira();
+    const ordemDiv={D:0,C:1,B:2,A:3};
+    const melhorDiv=(this.histClube||[]).reduce((m,h)=>{
+      return (ordemDiv[h.divisao]??0)>(ordemDiv[m]??0)?h.divisao:m;
+    }, this.divisao||'D');
+    const bonusDiv=(ordemDiv[melhorDiv]||0)*500;   // chegar mais alto vale pontos
+    return { score: c.titulos*1000 + c.acessos*400 + ((this.temporada||1)-1)*100 + bonusDiv,
+             titulos:c.titulos, acessos:c.acessos, temporadas:(this.temporada||1),
+             melhor_divisao:melhorDiv };
+  },
+  nomeTreinador(){
+    if(this.convidado) return 'Convidado';
+    const email=Menu?.user?.email||'';
+    return email ? email.split('@')[0].slice(0,40) : 'Treinador';
+  },
+  async submeterRanking(){
+    const s=this.scoreTreinador();
+    const r=await this.chamarFuncao('ranking-submit','POST', {
+      ...s, treinador:this.nomeTreinador(),
+      assinado: this._saveAssinado!==false   // C1→C3: save não-assinado vira selo de suspeito
+    });
+    return r.ok ? {ok:true, suspeito:r.data?.suspeito, motivo:r.data?.motivo} : {ok:false, offline:r.offline};
+  },
+  // lê a tabela pública do ranking (leitura direta, sem função)
+  async lerRanking(limite){
+    try{
+      const {data,error}=await this.sb.from('ranking')
+        .select('treinador,score,titulos,acessos,temporadas,melhor_divisao,suspeito,motivo_suspeita')
+        .order('score',{ascending:false}).limit(limite||50);
+      if(error) throw error;
+      return data||[];
+    }catch(e){ return null; }
+  },
+
   sb:null,              // client Supabase compartilhado (auth + saves)
   slotAtual:null,       // slot de save em uso ('1'|'2'|'3')
   userId:null,          // uuid do usuário logado (null = convidado)
@@ -2056,6 +2159,9 @@ const App={
     }
     this.renderShell();
     await Menu.iniciar();   // login → menu → slot → jogo
+    // C2: a posse do remove-ads vem do SERVIDOR (o save local é só cache).
+    // Roda depois do menu para já ter a sessão; silencioso se offline/convidado.
+    this.hidratarEntitlement().catch(()=>{});
   },
 
 
@@ -3444,8 +3550,9 @@ const App={
   showTab(name){
     document.querySelectorAll('nav.tabs button').forEach(b=>
       b.classList.toggle('active', b.dataset.tab===name));
-    ['arena','escala','elenco','competicoes','mercado','financas','dados'].forEach(t=>
+    ['arena','escala','elenco','competicoes','mercado','financas','ranking','dados'].forEach(t=>
       document.getElementById('tab-'+t).classList.toggle('hidden', t!==name));
+    if(name==='ranking') this.renderRanking();   // C3: carrega a tabela pública sob demanda
   },
 
   // HTML da tabela de classificação (aceita deltas ao vivo p/ reordenar)
@@ -4641,6 +4748,53 @@ const App={
       </div></div>`;
   },
 
+  /* ---------- C3: aba de RANKING (leitura pública + selo de suspeito) ---------- */
+  async renderRanking(){
+    const el=document.getElementById('tab-ranking'); if(!el) return;
+    const meuNome=this.nomeTreinador();
+    el.innerHTML=`<div class="rk-wrap">
+      <div class="rk-head">
+        <h2>🏆 Ranking de treinadores</h2>
+        <button class="btn sm" id="rkReload">↻ Atualizar</button>
+      </div>
+      <p class="rk-sub">Score = títulos·1000 + acessos·400 + temporadas·100 + melhor divisão. Saves com progresso implausível ou sem assinatura aparecem <b>marcados</b> — não são removidos.</p>
+      <div id="rkBody">${this.msgCarregando('Carregando ranking...')}</div>
+    </div>`;
+    const rec=document.getElementById('rkReload'); if(rec) rec.onclick=()=>this.renderRanking();
+
+    if(this.convidado){
+      document.getElementById('rkBody').innerHTML=
+        `<div class="rk-empty">Entre com uma conta para o seu clube aparecer no ranking. O convidado não sobe score pro servidor.</div>`;
+      return;
+    }
+    const linhas=await this.lerRanking(50);
+    const body=document.getElementById('rkBody'); if(!body) return;
+    if(linhas===null){ body.innerHTML=`<div class="rk-empty">Não foi possível carregar o ranking agora.</div>`; return; }
+    if(!linhas.length){ body.innerHTML=`<div class="rk-empty">Ninguém no ranking ainda. Termine uma temporada para entrar.</div>`; return; }
+
+    body.innerHTML=`<table class="rk-table"><thead><tr>
+        <th class="l">#</th><th class="l">Treinador</th>
+        <th>Score</th><th>🏆</th><th>⬆️</th><th>Temp.</th><th>Melhor</th>
+      </tr></thead><tbody>${linhas.map((r,i)=>{
+        const eu = !this.convidado && (r.treinador===meuNome);
+        const susp = !!r.suspeito;
+        const cls = [eu?'rk-eu':'', susp?'rk-susp':''].filter(Boolean).join(' ');
+        const selo = susp ? `<span class="rk-selo" title="${(r.motivo_suspeita||'Progresso não verificado').replace(/"/g,'')}">⚠ suspeito</span>` : '';
+        return `<tr class="${cls}">
+          <td class="l">${i+1}</td>
+          <td class="l">${this.esc(r.treinador||'—')} ${selo}</td>
+          <td>${(r.score||0).toLocaleString('pt-BR')}</td>
+          <td>${r.titulos||0}</td>
+          <td>${r.acessos||0}</td>
+          <td>${r.temporadas||0}</td>
+          <td>Série ${r.melhor_divisao||'D'}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  },
+  // escape mínimo p/ texto vindo do servidor (nomes de treinador)
+  esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
+  msgCarregando(t){ return `<div class="rk-empty">${t}</div>`; },
+
   renderDados(){
     const el=document.getElementById('tab-dados');
     const conectado=this.teams.length>0;
@@ -4900,9 +5054,21 @@ const App={
       </div>`,
       botoes:[
         {txt:'Simular compra', tipo:'primary', onClick:()=>{
-          this.garantirOpcoes().adFree=true;
-          this.salvarSupabase&&this.salvarSupabase(true);
-          this.avisoFLK('Anúncios removidos','Obrigado pelo apoio! Os anúncios foram desativados. 💚','var(--lemon)');
+          // C2: a posse é concedida e VERIFICADA no servidor (não confiada ao cliente).
+          if(this.convidado){
+            this.avisoFLK('Faça login','A compra de remover anúncios fica na sua conta — entre para comprar (o convidado não tem posse na nuvem).','var(--loss)');
+            return false;
+          }
+          this.registrarCompraRemoveAds('web').then(res=>{
+            if(res.ok){
+              this.salvarSupabase&&this.salvarSupabase(true);
+              this.avisoFLK('Anúncios removidos','Obrigado pelo apoio! Os anúncios foram desativados. 💚','var(--lemon)');
+            } else if(res.offline){
+              this.avisoFLK('Sem conexão','Não foi possível falar com o servidor agora. Tente novamente.','var(--loss)');
+            } else {
+              this.avisoFLK('Falha na compra', res.motivo||'Tente novamente.','var(--loss)');
+            }
+          });
           return false;
         }},
         {txt:'Agora não', tipo:'sm'}
@@ -5102,10 +5268,23 @@ const App={
     // A3: avalia a meta da diretoria ANTES de trocar de divisão (usa o destino da minha liga)
     const minhaLiga=this.ligas&&this.ligas[this.divisao];
     if(minhaLiga){ this._resultadoPrincipal=this.avaliarPrincipal(this.destinosDaLiga(minhaLiga)); }
+    // C3: contabiliza carreira ANTES de virar (usa a temporada que terminou).
+    // Título: fui campeão da minha liga (mata-mata) ou 1º nos pontos corridos.
+    const car=this.garantirCarreira();
+    // campeão: mata-mata (Série D) tem campeao explícito; pontos corridos = 1º colocado.
+    let fuiCampeao=false;
+    if(minhaLiga && minhaLiga.mataMata && minhaLiga.mataMata.campeao!=null){
+      fuiCampeao = (minhaLiga.mataMata.campeao===this.myTeam);
+    } else {
+      const ordem=this.classificacao();
+      fuiCampeao = !!(ordem && ordem.length && ordem[0].i===this.myTeam);
+    }
+    if(fuiCampeao) car.titulos++;
     this.temporada=(this.temporada||1)+1;
     // 1) aplica acesso/rebaixamento de TODAS as divisões (times trocam de série)
     const mudancas=this.aplicarAcessoRebaixamento();
     const meuMov=mudancas.find(m=>m.ti===this.myTeam);
+    if(meuMov && meuMov.para<meuMov.de) car.acessos++;   // C3: subi de divisão = acesso
     // 2) gols/jogos de CARREIRA acumulam; os da TEMPORADA zeram; disciplina/energia idem
     this.teams.forEach(t=>t.players.forEach(p=>{
       p.energia=100; delete p.lesionado;
@@ -5130,6 +5309,8 @@ const App={
     if(meuMov && meuMov.para<meuMov.de){ this.premiarAcesso(meuMov.para); }
     this.setStatus('saveStatus','ok',msg);
     if(meuMov) setTimeout(()=>this.avisoFLK(meuMov.para<meuMov.de?'⬆️ Acesso!':'🔻 Rebaixamento', msg, meuMov.para<meuMov.de?'var(--lemon)':'var(--loss)'),50);
+    // C3: manda o score pro ranking (servidor roda plausibilidade e carimba suspeito).
+    this.submeterRanking().catch(()=>{});
   },
 
   // reinício de temporada num clube específico (usado na DEMISSÃO)
@@ -5181,6 +5362,7 @@ const App={
       stats:this.stats, resultados:this.resultados,
       histClube:this.histClube||[],   // A2: série histórica do meu clube
       objetivos:this.objetivos||null,  // A3: pacote de objetivos da temporada
+      carreira:this.garantirCarreira(),// C3: contadores de carreira (títulos/acessos) p/ o ranking
       opcoes:this.garantirOpcoes(),    // Bloco B: preferências do jogador
       composicao:this.teams.map(t=>t.players.map(p=>p.pid)),  // quem está em cada time
       grupos:this.grupos||null, fase:this.fase||'pontos', divisao:this.divisao||null,
@@ -5326,6 +5508,7 @@ const App={
     this.stats=s.stats; this.resultados=s.resultados||[];
     this.histClube=Array.isArray(s.histClube)?s.histClube:[];   // A2
     this.objetivos=(s.objetivos&&s.objetivos.div)?s.objetivos:null;   // A3 (garantirObjetivos recria se faltar)
+    this.carreira=(s.carreira&&typeof s.carreira==='object')?{titulos:s.carreira.titulos||0, acessos:s.carreira.acessos||0}:{titulos:0, acessos:0};   // C3
     this.opcoes=(s.opcoes&&typeof s.opcoes==='object')?{...this.OPCOES_PADRAO,...s.opcoes}:{...this.OPCOES_PADRAO};   // Bloco B
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;

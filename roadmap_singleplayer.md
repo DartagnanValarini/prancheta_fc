@@ -111,7 +111,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ---
 
-### 🟠 BLOCO C — Anti-cheat Via 1 + Ranking que sinaliza (EM ANDAMENTO)
+### 🟠 BLOCO C — Anti-cheat Via 1 + Ranking que sinaliza (✅ CONCLUÍDO 09/2026)
 *Autoridade estreita no servidor + ranking honesto que expõe, não expulsa.*
 
 > **Via 1:** o jogo inteiro continua rodando no navegador (single-player, offline, diversão local). Só uma **fronteira estreita** passa a ser decidida/validada pelo servidor: (a) a **compra do remove-ads** e (b) o **score que sobe pro ranking**. O resto do save fica no cliente — e tudo bem, porque nada disso sozinho vira dinheiro real.
@@ -125,18 +125,18 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - Testado: `smoke_c1` 5/5 (assinatura válida confere; adulterar `saldo` quebra; reordenar chaves não quebra; sig ausente = não-assinado). Regressão dos harnesses existentes intacta.
 - **Falta ligar:** o veredito ainda não é *exibido* na UI (o save adulterado carrega, só fica marcado internamente). A visibilidade acontece via selo no ranking (C3).
 
-**C2. Posse de compra verificada no servidor. — ⏳ backend pronto, falta ligar no cliente**
+**C2. Posse de compra verificada no servidor. — ✅ FEITO (09/2026)**
 - A flag "removeu ads" (B2) vive no servidor e é **checada lá**, não confiada ao cliente. É a única coisa comprável, então a única que *precisa* de autoridade real.
 - Edge Function `entitlement` no ar (GET devolve posse; POST concede — hoje **stub**, sem SDK de loja: aceita e grava `source`+`purchase_ref` com idempotência, no lugar exato onde a validação Play/checkout web entra).
-- *Falta no cliente:* `App.comprarRemoverAnuncios()` deve chamar o POST e `garantirOpcoes().adFree` deve ser HIDRATADO pelo GET no boot (hoje `adFree` vem só do save local).
-- *Pronto quando:* forjar a flag no cliente não desliga os ads (o servidor manda a verdade).
+- Cliente: `App.hidratarEntitlement()` roda no `boot()` (depois do menu) e **sobrescreve `adFree` com a verdade do servidor** — forjar `adFree` no save local não sobrevive ao boot. `App.comprarRemoverAnuncios()` chama `registrarCompraRemoveAds()` (POST) em vez de simular local; convidado é barrado (posse fica na conta). `App.chamarFuncao()` centraliza as chamadas com o JWT da sessão.
+- *Pronto quando:* forjar a flag no cliente não desliga os ads (o servidor manda a verdade). ✅
+- *Falta pro modelo REAL (Bloco B/E):* a validação de compra de verdade (Play Billing / checkout web) no POST — hoje é stub que concede.
 
-**C3. Ranking de treinadores que SINALIZA o suspeito. — ⏳ backend pronto, falta cliente + tela**
-- Score do treinador (títulos, acessos, Match Rating acumulado, campanha) sobe pro servidor.
-- **Detector de plausibilidade server-side (na Edge Function `ranking-submit`):** títulos/acessos ≤ temporadas; Série A exige ≥3 temporadas (subir 3 divisões); teto de score por temporada; e **`assinado` (C1) confere?**. Clampa faixas e carimba `suspeito`+`motivo`.
-- Save implausível **NÃO é removido** — entra no ranking com **selo público de suspeito**. O cheater aparece, mas **carimbado** — o vexame social faz o resto.
-- *Falta no cliente:* função que monta o payload (incl. `assinado: App._saveAssinado`) e faz POST; **aba/tela de Ranking** (leitura pública da tabela) com o selo ⚠ nos suspeitos.
-- *Pronto quando:* o ranking mostra todos, mas quem tem save implausível/não-assinado aparece visivelmente marcado como suspeito.
+**C3. Ranking de treinadores que SINALIZA o suspeito. — ✅ FEITO (09/2026)**
+- Score do treinador sobe pro servidor na virada de temporada (`novaTemporadaCompleta` → `submeterRanking`). Contadores de carreira (`App.carreira.titulos/acessos`) são incrementados na virada (campeão = mata-mata `campeao` ou 1º dos pontos corridos; acesso = subiu de divisão) e **persistidos no snapshot**. `scoreTreinador()`: títulos·1000 + acessos·400 + temporadas·100 + melhor-divisão·500.
+- **Detector de plausibilidade server-side (Edge Function `ranking-submit`):** títulos/acessos ≤ temporadas; Série A exige ≥3 temporadas; teto de score por temporada; e **`assinado` (C1) confere?** (o cliente manda `assinado: App._saveAssinado`). Clampa faixas e carimba `suspeito`+`motivo`. Testado isolado: 8/8.
+- **Aba Ranking** (nova, entre Finanças e Dados): `renderRanking()` lê a tabela pública (`App.lerRanking`), destaca o meu clube (lemon) e marca suspeitos com selo ⚠ + nome riscado + `motivo` no tooltip. Save implausível **aparece carimbado, não é removido**.
+- *Pronto quando:* o ranking mostra todos, mas quem tem save implausível/não-assinado aparece visivelmente marcado como suspeito. ✅
 
 **Infra desta rota (toda no Supabase — ZERO GCP novo): — ✅ NO AR (09/2026)**
 - **Tabelas:** `entitlement` (posse do remove-ads por user; RLS: dono só LÊ, escrita só via service_role) + `ranking` (score + `suspeito` + `motivo_suspeita` + carimbo; leitura pública, escrita só via Edge Function). Migration `bloco_c_entitlement_ranking`.
@@ -144,7 +144,9 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - **RLS + constraints:** cada user só LÊ a própria linha de posse; faixas válidas (`check`) no banco como segunda muralha; ninguém grava o próprio score direto.
 - **Custo:** praticamente zero no plano grátis do Supabase. Sem VM, sem Cloud Run, sem IAM de GCP.
 
-> **Próximo passo do Bloco C (ordem):** (1) hidratar `adFree` pelo GET do `entitlement` no boot + ligar o POST no `comprarRemoverAnuncios`; (2) submissão de ranking na virada de temporada mandando `App._saveAssinado`; (3) aba de Ranking com o selo de suspeito.
+> **Bloco C fechado.** Falta só o que depende de outros blocos: a validação de compra REAL (Play Billing / checkout web) no POST do `entitlement` — hoje stub — que entra junto do empacotamento (Bloco B2 real + E). O ranking e o anti-cheat já estão de pé e testados. **Nota de teste manual:** as Edge Functions não puderam ser exercitadas por HTTP do meu ambiente (rede do sandbox bloqueia o host do Supabase); validei a lógica de plausibilidade isolada (8/8) e confirmei que ambas as funções estão ACTIVE com verify_jwt e o RLS correto. Vale um teste rápido no navegador: comprar remove-ads logado, recarregar (deve continuar sem ads), e terminar uma temporada pra aparecer no ranking.
+>
+> **Próximo grande passo (rota):** com A, B (parcial) e C prontos, seguir pro **Bloco D — Onboarding (D1)**, a maior alavanca de retenção, e depois o empacotamento (E) que destrava a compra real.
 
 ---
 
