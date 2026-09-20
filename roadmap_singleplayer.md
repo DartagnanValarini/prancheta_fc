@@ -1,5 +1,7 @@
 # 🎯 Prancheta FC! — Roadmap SINGLE-PLAYER (rota de lançamento)
 
+> **📌 Fonte da verdade = este repositório GitHub** (`github.com/DartagnanValarini/prancheta_fc`, branch `main`). Decisão 09/2026: o roadmap e o contexto são mantidos AQUI, não mais no `dev_docs` do Supabase (aqueles ficam como arquivo histórico, congelados). Para retomar o projeto: ler este arquivo.
+
 > **Decisão de rota:** foco 100% num **single-player LANÇÁVEL e BOM**. O modo online **sai da prioridade** (NÃO do futuro) — pode virar um produto separado, com motor próprio, *se* o single fizer sucesso. Este documento é a rota ativa; o `roadmap.md` antigo continua como referência viva da visão online, que ainda vamos usar mais pra frente.
 >
 > **Filosofia mantida:** profundidade sim, complexidade e tempo não. Partida rápida, "só mais uma rodada".
@@ -24,7 +26,7 @@ O que **já existe e funciona** em `app.js` (4.141 linhas, monolito injetado no 
 - **Competição** 4 séries A/B/C/D, config data-driven (`FORMATO_DIVISOES`, `formatoDe`), acesso/rebaixamento, mata-mata.
 - **Finanças:** saldo, extrato, empréstimo com parcelas, premiação por acesso (`PREMIO_ACESSO`), receitas (patrocínio/bilheteria).
 - **Mercado:** `tickMercado`, ofertas, `executarTransferencia` (valida saldo), valor de mercado, contratos.
-- **Save robusto:** `SaveSchema` v8, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2, export/import backup. **Dois modos:** convidado (localStorage) e logado (Supabase `game_save` por user+slot). 3 slots.
+- **Save robusto:** `SaveSchema` v8, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2 (corrupção) **+ assinatura HMAC-SHA256 (C1, anti-cheat)**, export/import backup. **Dois modos:** convidado (localStorage) e logado (Supabase `game_save` por user+slot). 3 slots.
 - **UI completa:** 7 abas (Arena, Escala, Elenco, Competições, Mercado, Finanças, Dados) + overlay de substituição. Design system FLK! Studios.
 
 O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
@@ -35,7 +37,7 @@ O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 - ❌ **Estatísticas de temporada** visíveis (artilharia ao vivo, assistências, jogador da rodada).
 - ❌ **Onboarding / tutorial** — o jogo começa cru; abas mostram "Conecte o Supabase" se vazio.
 - ❌ **Rentabilização** — nenhum hook de ads/compra.
-- ❌ **Anti-cheat** — `App.teams[x].saldo=999` no console + salvar persiste.
+- 🟡 **Anti-cheat** — C1 FEITO: editar `saldo` no console + salvar quebra a assinatura HMAC (`App._saveAssinado=false`). Falta expor o veredito (via selo no ranking C3) e a posse verificada no servidor (C2, backend pronto).
 - ❌ **Ranking online de treinadores** — não existe.
 - ❌ **Partida imersiva** (comentários por atributo, feedback de fadiga, escanteios/finalizações).
 - ❌ **Polimento de lançamento** (som, telas de vazio decentes, PWA/instalável).
@@ -109,32 +111,40 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ---
 
-### 🟠 BLOCO C — Anti-cheat Via 1 + Ranking que sinaliza (DECIDIDO)
+### 🟠 BLOCO C — Anti-cheat Via 1 + Ranking que sinaliza (EM ANDAMENTO)
 *Autoridade estreita no servidor + ranking honesto que expõe, não expulsa.*
 
 > **Via 1:** o jogo inteiro continua rodando no navegador (single-player, offline, diversão local). Só uma **fronteira estreita** passa a ser decidida/validada pelo servidor: (a) a **compra do remove-ads** e (b) o **score que sobe pro ranking**. O resto do save fica no cliente — e tudo bem, porque nada disso sozinho vira dinheiro real.
 >
 > **Verdade honesta:** nenhum anti-cheat client-side é à prova de atacante determinado (o segredo mora no arquivo que você entrega). Via 1 não tenta ser inquebrável — ela **protege o que dá receita** (o remove-ads, validado no servidor) e **mantém o ranking crível** (sinalizando o implausível). Isso basta pro modelo de negócio escolhido.
 
-**C1. Assinar/ofuscar o save (barra o cheat trivial).**
-- Trocar o checksum djb2 (anti-corrupção) por **HMAC com segredo embutido + ofuscação leve** do JSON. Não é inquebrável — eleva de "editável em 5s no console" pra "chato o bastante" pra 99% dos jogadores casuais.
-- *Pronto quando:* editar `saldo`/atributos no console e salvar quebra a assinatura (save marcado como modificado).
+**C1. Assinar/ofuscar o save (barra o cheat trivial). — ✅ FEITO (09/2026)**
+- `App.assinarSnapshot()`/`conferirAssinatura()`: **HMAC-SHA256 via Web Crypto** sobre o JSON **canônico** (chaves ordenadas, ignora `checksum`), com `SAVE_SECRET` embutido. O djb2 (`_checksum`) fica como detector de corrupção acidental; a assinatura é o anti-cheat.
+- Envelope: no convidado a `sig` fica ao lado do `estado` no localStorage; no logado vai embutida como `estado._sig` (a coluna `estado` jsonb é o único container no `game_save`), separada antes de aplicar.
+- `carregarSlot()` confere a assinatura e grava o veredito em **`App._saveAssinado`** — é o insumo que a submissão de ranking (C3) manda pro servidor.
+- Testado: `smoke_c1` 5/5 (assinatura válida confere; adulterar `saldo` quebra; reordenar chaves não quebra; sig ausente = não-assinado). Regressão dos harnesses existentes intacta.
+- **Falta ligar:** o veredito ainda não é *exibido* na UI (o save adulterado carrega, só fica marcado internamente). A visibilidade acontece via selo no ranking (C3).
 
-**C2. Posse de compra verificada no servidor.**
-- A flag "removeu ads" (B2) vive no servidor e é **checada lá**, não confiada ao cliente. É a única coisa comprável, então a única que *precisa* de autoridade real. Uma tabela + uma checagem simples no Supabase.
+**C2. Posse de compra verificada no servidor. — ⏳ backend pronto, falta ligar no cliente**
+- A flag "removeu ads" (B2) vive no servidor e é **checada lá**, não confiada ao cliente. É a única coisa comprável, então a única que *precisa* de autoridade real.
+- Edge Function `entitlement` no ar (GET devolve posse; POST concede — hoje **stub**, sem SDK de loja: aceita e grava `source`+`purchase_ref` com idempotência, no lugar exato onde a validação Play/checkout web entra).
+- *Falta no cliente:* `App.comprarRemoverAnuncios()` deve chamar o POST e `garantirOpcoes().adFree` deve ser HIDRATADO pelo GET no boot (hoje `adFree` vem só do save local).
 - *Pronto quando:* forjar a flag no cliente não desliga os ads (o servidor manda a verdade).
 
-**C3. Ranking de treinadores que SINALIZA o suspeito.**
+**C3. Ranking de treinadores que SINALIZA o suspeito. — ⏳ backend pronto, falta cliente + tela**
 - Score do treinador (títulos, acessos, Match Rating acumulado, campanha) sobe pro servidor.
-- **Detector de plausibilidade server-side:** a evolução do save é fisicamente possível? overall do elenco bate com nº de partidas? saldo cresceu dentro do teto que o jogo permite? assinatura (C1) confere?
-- Save implausível **NÃO é removido** — entra no ranking com um **selo público de suspeito** (ex.: "⚠ Progresso não verificado", ícone de alerta, posição em cinza/riscada). O cheater aparece, mas **carimbado** — o vexame social faz o resto.
+- **Detector de plausibilidade server-side (na Edge Function `ranking-submit`):** títulos/acessos ≤ temporadas; Série A exige ≥3 temporadas (subir 3 divisões); teto de score por temporada; e **`assinado` (C1) confere?**. Clampa faixas e carimba `suspeito`+`motivo`.
+- Save implausível **NÃO é removido** — entra no ranking com **selo público de suspeito**. O cheater aparece, mas **carimbado** — o vexame social faz o resto.
+- *Falta no cliente:* função que monta o payload (incl. `assinado: App._saveAssinado`) e faz POST; **aba/tela de Ranking** (leitura pública da tabela) com o selo ⚠ nos suspeitos.
 - *Pronto quando:* o ranking mostra todos, mas quem tem save implausível/não-assinado aparece visivelmente marcado como suspeito.
 
-**Infra desta rota (toda no Supabase — ZERO GCP novo):**
-- **Tabelas:** `entitlement` (posse do remove-ads por user), `ranking` (score + flag `suspeito` + carimbo de verificação).
-- **Edge Functions:** validar compra (B2/C2); receber submissão de ranking + rodar plausibilidade (C3).
-- **RLS + constraints:** cada user só mexe na própria linha; faixas válidas no banco como segunda muralha.
-- **Custo:** praticamente zero no plano grátis do Supabase até ter muitos usuários. Sem VM, sem Cloud Run, sem IAM de GCP — o Supabase que já hospeda os saves cobre tudo.
+**Infra desta rota (toda no Supabase — ZERO GCP novo): — ✅ NO AR (09/2026)**
+- **Tabelas:** `entitlement` (posse do remove-ads por user; RLS: dono só LÊ, escrita só via service_role) + `ranking` (score + `suspeito` + `motivo_suspeita` + carimbo; leitura pública, escrita só via Edge Function). Migration `bloco_c_entitlement_ranking`.
+- **Edge Functions:** `entitlement` (GET posse / POST concede) e `ranking-submit` (recebe score, roda plausibilidade, grava com selo). Ambas `verify_jwt=true`.
+- **RLS + constraints:** cada user só LÊ a própria linha de posse; faixas válidas (`check`) no banco como segunda muralha; ninguém grava o próprio score direto.
+- **Custo:** praticamente zero no plano grátis do Supabase. Sem VM, sem Cloud Run, sem IAM de GCP.
+
+> **Próximo passo do Bloco C (ordem):** (1) hidratar `adFree` pelo GET do `entitlement` no boot + ligar o POST no `comprarRemoverAnuncios`; (2) submissão de ranking na virada de temporada mandando `App._saveAssinado`; (3) aba de Ranking com o selo de suspeito.
 
 ---
 

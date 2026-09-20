@@ -1769,15 +1769,20 @@ const Menu={
       if(!App.provider) App.provider=new SupabaseProvider(App.SUP_URL,App.SUP_KEY);
       await App.novaTemporada(['A','B','C','D']);
       App.slotAtual=slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
-      let estado=null;
+      let estado=null, sig=null;
       if(this.convidado){
         const raw=localStorage.getItem('flk_save_'+slot);
-        if(raw) estado=JSON.parse(raw).estado;
+        if(raw){ const env=JSON.parse(raw); estado=env.estado; sig=env.sig||null; }
       } else {
         const {data}=await App.sb.from('game_save').select('estado')
           .eq('user_id',this.user.id).eq('slot',String(slot)).maybeSingle();
         estado=data?.estado||null;
+        // C1: a assinatura vem embutida no envelope como _sig; separa antes de aplicar
+        if(estado && estado._sig!==undefined){ sig=estado._sig; estado={...estado}; delete estado._sig; }
       }
+      // C1: confere a assinatura HMAC. O veredito alimenta o ranking (C3) — save
+      // não-assinado/adulterado entra no placar CARIMBADO como suspeito, não é barrado.
+      App._saveAssinado = estado ? await App.conferirAssinatura(estado, sig) : true;
       let aplicado={ok:true};
       if(estado) aplicado=App.aplicarSnapshot(estado)||{ok:true};
       // save inválido/incompatível: começa uma temporada nova neste slot (aviso já dado)
@@ -5203,6 +5208,47 @@ const App={
     let h=5381; for(let i=0;i<str.length;i++){ h=((h<<5)+h+str.charCodeAt(i))>>>0; }
     return h.toString(16);
   },
+
+  /* ===================== BLOCO C / C1 — ASSINATURA DO SAVE =====================
+     Objetivo: barrar o cheat TRIVIAL (App.teams[x].saldo=999 no console + salvar).
+     Não é inquebrável — o segredo mora no arquivo que entregamos. A meta é subir
+     de "editável em 5s" para "chato o bastante" pro casual, e produzir o insumo
+     `_saveAssinado` que o ranking (C3) usa pra decidir plausibilidade.
+     Assinatura = HMAC-SHA256(estado) via Web Crypto, sobre o JSON canônico do
+     snapshot. Guardada no ENVELOPE do save (fora do estado), não dentro dele. */
+  SAVE_SECRET:'pfc_v1_a7Q2-nEon-Lemon-D2FF00-!prancheta',   // segredo embutido (ofuscação, não cofre)
+  _cryptoOk(){ return typeof crypto!=='undefined' && crypto.subtle && typeof TextEncoder!=='undefined'; },
+  // JSON canônico: chaves ordenadas, ignorando o checksum interno, pra a assinatura
+  // ser estável independentemente da ordem de serialização.
+  _canonical(obj){
+    const seen=new WeakSet();
+    const ord=(v)=>{
+      if(v && typeof v==='object'){
+        if(seen.has(v)) return null; seen.add(v);
+        if(Array.isArray(v)) return v.map(ord);
+        return Object.keys(v).filter(k=>k!=='checksum').sort()
+          .reduce((o,k)=>{ o[k]=ord(v[k]); return o; },{});
+      }
+      return v;
+    };
+    return JSON.stringify(ord(obj));
+  },
+  async _hmac(str){
+    if(!this._cryptoOk()) return null;
+    const enc=new TextEncoder();
+    const key=await crypto.subtle.importKey('raw', enc.encode(this.SAVE_SECRET),
+      {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
+    const sig=await crypto.subtle.sign('HMAC', key, enc.encode(str));
+    return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  },
+  // assina um snapshot: devolve a hex da HMAC (ou null se o ambiente não tiver crypto)
+  async assinarSnapshot(snap){ return await this._hmac(this._canonical(snap)); },
+  // confere: recomputa a HMAC e compara. Sem crypto ou sem sig => não-assinado.
+  async conferirAssinatura(snap, sig){
+    if(!sig || !this._cryptoOk()) return false;
+    const calc=await this._hmac(this._canonical(snap));
+    return !!calc && calc===sig;
+  },
   // valida um snapshot ANTES de aplicá-lo. Retorna {ok, motivo}.
   // Trata o save como dado NÃO confiável (pode vir de import de arquivo).
   validateSnapshot(s){
@@ -5391,9 +5437,11 @@ const App={
     // convidado: salva neste dispositivo
     if(this.convidado){
       try{
+        const estado=this.snapshot();
+        const sig=await this.assinarSnapshot(estado);   // C1: assina o corpo do save
         localStorage.setItem('flk_save_'+(this.slotAtual||1), JSON.stringify({
           clube:this.teams[this.myTeam]?.nome||'Carreira', ...meta,
-          estado:this.snapshot(), updated_at:new Date().toISOString()
+          estado, sig, updated_at:new Date().toISOString()
         }));
         if(!silencioso) this.setStatus('saveStatus','ok','Salvo neste dispositivo.');
         okHud();
@@ -5402,9 +5450,16 @@ const App={
     }
     if(!this.sb || !this.userId){ if(!silencioso) this.setStatus('saveStatus','err','Você não está logado.'); return; }
     try{
+      const estado=this.snapshot();
+      const sig=await this.assinarSnapshot(estado);   // C1: assina o corpo do save
+      // a coluna `estado` (jsonb) é o único container do save no banco: guardamos a
+      // assinatura em _sig, FORA do objeto assinado (o _canonical ignora chaves extras
+      // do envelope só se estiverem no topo do que foi assinado — por isso assinamos
+      // `estado` ANTES de anexar _sig).
+      const envelope={...estado, _sig:sig};
       const row={ user_id:this.userId, slot:String(this.slotAtual||1),
         temporada:meta.temporada, rodada:meta.rodada, dia:meta.dia, my_team:meta.myTeam,
-        estado:this.snapshot(), updated_at:new Date().toISOString() };
+        estado:envelope, updated_at:new Date().toISOString() };
       const {error}=await this.sb.from('game_save').upsert(row,{onConflict:'user_id,slot'});
       if(error) throw error;
       if(!silencioso) this.setStatus('saveStatus','ok',`Salvo (rodada ${this.rodada}).`);
