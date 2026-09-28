@@ -104,6 +104,16 @@ Outros achados jogando:
 - **Ranking global tem só 78 treinadores** com pontos (o 1º, "GRINGO", tem 10.543 pts contra 933 do 2º — provável conta de teste/dev). Uma temporada péssima me levou de #76 a #35: o ranking premia volume, não desempenho. Base ativa pequena.
 - Mercado mundial real: Brasil A–D, 9 ligas sul-americanas e Alemanha/Itália/Inglaterra/Espanha/Portugal; **cota de estrangeiros**.
 
+### 1.10 Como o mundo é montado (inspeção do save no navegador, 28/09)
+- **Não é gerado do zero.** A base é um banco **real** estilo Football Manager: 80 clubes BR + 51 internacionais, ~30 jogadores por clube, atributos 1–20 (fin, pas, dri, des, cab, cru, vis, pos, com, det, vel, res, fis, agi, ref, mao), idade, pé, empresário real (ex.: "Trust Football"), valor, comportamento ("Exemplar").
+- Um **"pack oficial"** baixado do servidor (`rf98:pack:oficial:v1`, ~200 KB, 449 patches) troca nome do clube, escudo e **nome de cada jogador real por um fictício** (ex.: Bahia → "Tricolor Baiano"; "Kanu" → "Matheus Teixeira"). O mapeamento é **fixo** (igual para todo mundo). **O nome real continua no save** (campo `_n0`, ex.: "Luciano Juba").
+- **Futebol feminino = o mesmo elenco masculino com nomes femininos** (`squadFem` usa os mesmos IDs).
+- **Na hora da carreira**, a partir de uma **semente (`seed`)**, o jogo monta: sorteio do clube, orçamento de cada clube, capacidade dos estádios, calendário, sorteios das copas, evolução dos jogadores e transferências da CPU. É a tela "Divisões e clubes / Elencos e contratos / Calendário e copas / Mercado inicial".
+- A **força exibida é recalibrada por divisão**: o `rawF` real (ex.: 83) vira o `f` do jogo (62); meu goleiro da Série D tinha `rawF` 55 → força 10. Por isso a Série D mostra números de 7 a 14.
+- Guarda as **3 últimas notas** de cada jogador (`r3`), gols, assistências, clean sheets, cartões.
+- Config interna: narrador **"galvao"** com **voz** ligada, modo "classic", regras de salário (Bosman, estrangeiros).
+- O save local tem **~5,1 MB** no localStorage (no limite dos ~5 MB do navegador) e o nome interno é `elifoot2026_save`.
+
 ### 1.9 Problemas / inconsistências
 - **Resenha vendida como pronta** nas páginas de SEO, mas "em breve" dentro do jogo; quem assina hoje paga só temporadas extras + Ultrassônico.
 - Tamanho da sala muda por página: 3–8, até 10, até 20.
