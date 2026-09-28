@@ -289,6 +289,38 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ---
 
+## 6.2 Layout da página do clube — DECIDIDO APLICAR (09/2026)
+
+> Referência: RetroFoot, tela de Formação no desktop — `docs/concorrentes/prints/retrofoot/00_referencia_pagina_clube_desktop.png` (+ `11_hub_formacao.jpg`, `21_hub_semana6_forma.jpg`).
+> **Regra:** copiar a **disposição** (onde cada coisa fica), **não** o visual. Tudo no design system FLK! — fundo `#111112`, neon lemon `#D2FF00`, Bungee + Space Mono, sombra dura, estética arcade.
+
+### Estrutura (desktop)
+- **Menu lateral esquerdo fixo**, recolhível ("Recolher menu"): escudo + nome do clube + divisão/temporada no topo; itens com ícone. Mapeamento das abas atuais (`data-tab`): **Formação** (`escala`, vira a tela inicial do clube) · **Mercado** (`mercado`) · **Elenco & Base** (`elenco`) · **Campeonatos** (`competicoes`) · **Finanças** (`financas`) · **Ranking** (`ranking`) · **Dados/Config** (`dados`) · Sair. A `arena` atual é absorvida pela Formação (card do adversário + botão de jogar) — revisar o que sobra dela.
+- **Cabeçalho do clube** (faixa larga no topo do conteúdo): escudo grande, nome do clube, nome do treinador, país · divisão · **data** · **temporada**; à direita **caixa**, **forma (5 últimos V/E/D)** e botão **Salvar**.
+- **Conteúdo em 2 colunas:**
+  - **Esquerda — Elenco (tabela):** selo **T/R** (titular/reserva), posição, nome, nacionalidade, idade, **força**, **nota** (média das 5 últimas — ver §6.1 item 5), **barra de energia**, valor. Abaixo, cards **Moral do plantel** e **Confiança da diretoria / segurança no cargo**.
+  - **Direita (em cima):** grade de **formações** em botões com mini-barras DEF/MEI/ATA + **Auto**, **11 melhores** e **Selecionar descansados** · ao lado, **card do próximo adversário** (escudo, casa/fora, rodada, mini-tabela comparativa J/V/D/gols/pts) com o **botão de ação contextual** (Jogar / Ver sorteio / Avançar).
+  - **Direita (meio):** **faixa da semana** (DOM–SAB), dia do jogo destacado.
+  - **Direita (embaixo):** **campo de escalação** (spec abaixo) com botão de tela cheia.
+- (Opcional, avaliar) faixa superior com o ranking de treinadores e "a sua posição" — **sem** rolar o tempo todo.
+
+### Campo de escalação (spec)
+- **Campo vertical** (gol embaixo, ataque em cima), **com as marcações/áreas do campo desenhadas** (grande área, pequena área, meia-lua, círculo central, linha do meio).
+- **Jogador = camisa** nas cores do clube (`cor1`/`cor2`) com o **número** na camisa; em volta: **selo da força** (canto), **nome** embaixo, **nota** (última ou média das 5) e **barra/valor de energia**.
+- Borda/indicador por **adequação à posição** (natural / treinada / improvisada — motor já calcula 100/70/30%) e legenda de cor.
+- Cabeçalho: "Tática 4-4-2 · onze 11/11 · T titular · R reserva".
+- Troca: **toque no titular → toque no reserva** (celular) e **arrastar** (desktop). Banco com filtro por setor e ordenação por força/energia.
+- **Placas em volta do gramado**: espaço de anúncio na versão web (`mostrarAnuncio()`) ou placas do próprio jogo/patrocinador fictício — **nunca** "ANUNCIE AQUI" vazio.
+
+### Celular
+- Menu lateral vira **barra inferior fixa** (Formação, Elenco, Mercado, Tabela, Mais) + **botão de ação principal** sempre visível no canto.
+- Colunas empilham: cabeçalho → adversário + ação → formações → **campo** → elenco.
+
+### Pronto quando
+- Desktop mostra menu lateral + cabeçalho + 2 colunas com campo vertical de camisas; celular mostra barra inferior; todas as abas atuais acessíveis pelo menu; testado nas 6 formações (validar item "Ficha/consistência do campo" do §6).
+
+---
+
 ## 7. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.
