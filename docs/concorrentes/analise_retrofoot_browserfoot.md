@@ -189,3 +189,54 @@ Lançado em 06/2026 por Eric Arraché (Critical Hits); ~3 mil partidas nas prime
 ## Fontes
 - [retrofoot.com.br](https://www.retrofoot.com.br) · [Guia](https://www.retrofoot.com.br/guia/) · [Ranking](https://www.retrofoot.com.br/ranking/) · [Modo Resenha](https://www.retrofoot.com.br/jogar-com-amigos/) · [Brasfoot vs RetroFoot](https://www.retrofoot.com.br/brasfoot-vs-retrofoot/) · [Media kit](https://www.retrofoot.com.br/media-kit/)
 - [browserfoot.com.br](https://browserfoot.com.br) · [Critical Hits — lançamento do Browserfoot](https://criticalhits.com.br/games/browserfoot-manager-de-futebol-pelo-navegador-e-lancado/)
+
+---
+
+## 4. Ideias de layout (anotadas em 28/09/2026 — ainda não priorizadas)
+
+> Pegar a **estrutura**, não as cores: mantemos o design system FLK! (fundo escuro, neon lemon `#D2FF00`, Bungee + Space Mono).
+> Hoje o `renderEscala` usa campo **horizontal** (`.pitch-h`) com "clica no slot → clica no jogador".
+
+### 4.1 Campo de escalação — `prints/retrofoot/11_hub_formacao.jpg` + [captura do guia deles](https://www.retrofoot.com.br/img/telas/formacao.webp)
+- **Campo vertical** no celular (gol embaixo, ataque em cima); horizontal só no desktop. Mesmo `LINHAS_FM`, troca de eixo por media query.
+- **Token de jogador**: rosto, selo com número, selo com força, nome e **barrinha de energia** embaixo.
+- Borda do token pela adequação à posição (já existe no motor: natural/treinada/improvisada 100/70/30%): lemon / amarelo / vermelho. Hoje só aparece o `.foraPos`.
+- Energia colorida: verde >70%, amarelo 50–70%, vermelho <50% (RetroFoot: rendimento cai abaixo de 70%).
+- **Banco em carrossel** logo abaixo do campo, filtros TODOS/GOL/DEF/MEI/ATA com contagem, ordenar por Força/Energia; "toque no titular → toque no reserva"; arrastar no desktop.
+- **Placas em volta do gramado** → espaço de anúncio na versão web (`mostrarAnuncio()`) ou cosmético/patrocinador do clube (nunca "ANUNCIE AQUI" vazio).
+- Cabeçalho do campo: "Tática 4-4-2 · onze 11/11" + botão tela cheia.
+
+### 4.2 Seletor de formação
+- Formações como **botões com mini-barras DEF/MEI/ATA** embaixo (lê o esquema de relance) em vez do `<select id="formSel">`.
+- Botões **Auto**, **11+ Melhores** e **Selecionar descansados** junto das formações.
+
+### 4.3 Hub
+- **Card do próximo adversário** ao lado do campo: escudo, casa/fora, rodada, mini-tabela comparativa (J/V/D/gols/pts) e **botão de ação contextual** (Jogar / Sorteio / Ver o sorteio).
+- **Faixa da semana** (DOM–SAB) com o dia do jogo destacado.
+- Cabeçalho do clube + linha de status: **forma com 5 bolinhas V/E/D**, moral, "Janela · X semanas".
+- **Desktop em duas colunas** (elenco à esquerda, campo + adversário à direita) com menu lateral recolhível — `prints` do guia.
+- **Celular: barra inferior fixa** com 5 atalhos + **botão de ação principal sempre visível** no canto.
+
+### 4.4 Cards de decisão
+- **Impacto da proposta**: 4 blocos (caixa depois, folha depois, força do setor ±, provável substituto) — `17_mercado.jpg`.
+- **Contador NPC**: avatar + frase + 3 números; fundo verde se fecha no azul, vermelho se fecha no vermelho — `22_negociacao_etapa1_contador.jpg`.
+- **Negociação em etapas** num modal ("Etapa 1 de 3") — `22` a `24`.
+- **Coletiva**: resposta = card com perfil em cima e **selos de efeito** embaixo ("moral +4", "cargo +3") — `19_coletiva_pos_jogo.jpg`.
+
+### 4.5 Partida
+- Placar **sobre a arte do estádio**, relógio em círculo de progresso — `13_partida_camarote.jpg`.
+- **Barra de pressão** sob o placar.
+- **Estatísticas em barras espelhadas** (casa ← → visitante).
+- **Substituição em painel com 2 listas** (em campo / banco) com energia e força — `14_substituicao_intervalo.jpg`.
+
+### 4.6 Momentos em tela cheia
+- **Fim de temporada ilustrado** (muro pichado no rebaixamento, confete no título) + bloco "O que muda agora" com 3 itens — `30_fim_temporada_rebaixamento.jpg`.
+- **Cerimônia de sorteio** com troféu grande e premiação por fase — `10_` e `26_cerimonia_*.jpg`.
+
+### 4.7 Do Browserfoot
+- **Banner de dica por aba**, fechável (onboarding barato) — `prints/browserfoot/03_escalacao.jpg`.
+- **Legenda de cor no campo** ("🟡 posição errada · branco encaixe perfeito").
+- **Seta de tendência** ao lado do OVR (↗ ↘ ↓) — casa com o potencial oculto.
+
+### 4.8 Não copiar
+- Placas "ANUNCIE AQUI" vazias; letreiro de ranking rolando o tempo todo; paleta clara amarelo/azul deles.
