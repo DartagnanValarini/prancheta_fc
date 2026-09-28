@@ -246,6 +246,49 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ---
 
+## 6.1 Mecânicas inspiradas nos concorrentes (backlog — 09/2026)
+
+> Origem: temporadas jogadas no RetroFoot e no Browserfoot — ver `docs/concorrentes/analise_retrofoot_browserfoot.md` (prints em `docs/concorrentes/prints/`).
+> Levantado contra o código atual: **já temos** confiança da diretoria ("HP do treinador") + fluxo de demissão, metas da diretoria por divisão, `fatorMoral` no rendimento, empréstimo, bilheteria, propostas/contrapropostas e substituições no intervalo — os itens abaixo **complementam** isso, não substituem.
+> **Ordem sugerida:** 1 → 2 → 3 → 4 → 5 (baratos, reaproveitam o que existe), depois 6 e 8 (estruturais no mercado). O resto conforme couber.
+
+### Encaixam no Bloco A (loop que engaja)
+1. **Coletiva pós-jogo** *(A4)* — 3 perguntas de um repórter (o jogo / o elenco / o clube), 2–3 respostas por perfil (Protetor, Direto, Técnico…). Cada resposta mexe em **moral** e **confiança da diretoria**, com o efeito visível antes de escolher ("moral +4 · diretoria +2"). Pulável. Esforço baixo (textos + 2 variáveis que já existem).
+2. **Reunião com a diretoria antes da demissão** *(A3/A4)* — quando a confiança cruza um limite, evento com 2 perguntas ("por que piorou?" / "qual o plano?"); a escolha dá fôlego ou piora. Mostrar a **fórmula da confiança** na tela (ex.: X% posição + Y% moral) pra o jogador saber o que corrigir. Hoje a demissão chega sem aviso.
+3. **Contador na compra e na renovação** *(Mercado/Finanças)* — card com 3 números: **caixa depois**, **variação por rodada** e **projeção de fim de temporada**, + uma frase ("Cabe hoje, não cabe amanhã"). Não proíbe, só mostra a consequência. Só UI sobre números que já calculamos.
+4. **Diagnóstico de fim de temporada** *(onboarding disfarçado)* — tela de fechamento com o resultado + 3 dicas tiradas da temporada ("a defesa levou 115 gols — reforce zaga e gol", "elenco terminou esgotado", "caiu cedo na copa") + bloco "O que muda agora" (divisão, folha, cargo).
+5. **Forma recente: últimas 5 notas — jogador E time** *(A1/A2)*
+   - **Jogador:** guardar as **5 últimas notas** (Match Rating) de cada jogador; exibir como forma recente (ex.: `7,0 · 5,6 · 6,4 · 8,1 · 6,9`) na ficha e na escalação.
+   - **Time:** guardar as **5 últimas notas do time**, onde **nota do time na partida = média das notas dos jogadores que atuaram naquela partida** (titulares + quem entrou; quem ficou no banco não conta).
+   - Janela deslizante (FIFO de 5), entra no save (`SaveSchema` → bump de versão + migração com lista vazia).
+   - Destrava: indicador de fase do time no hub, argumento pra coletiva/diretoria, valorização de mercado por fase.
+
+### Mercado
+6. **Negociação em 3 etapas** — (1) **taxa** com o clube, com piso ("abaixo de X eles recusam direto"); (2) **salário** com o jogador, que pode contrapropor; (3) **fechar**, com aviso de risco quando houver (ex.: chance de aposentadoria do veterano). Cada etapa com o card do contador (item 3).
+7. **Impacto antes de aceitar proposta recebida** — caixa depois, folha depois, quanto cai a força do setor, provável substituto no elenco.
+8. **Renovação de contrato com pedido do jogador** — no fim da temporada, cada contrato vencendo pede salário + prazo; aceitar / contrapropor / dispensar, com a projeção "o caixa dura ~X meses". (Hoje temos contrato, não temos renovação.)
+9. **Aposentadoria de veteranos** — chance de parar por idade; renova os elencos da máquina e alimenta o risco do item 6.
+10. **Filtro "cabe no caixa" / "até metade do caixa"** no mercado.
+11. **Leilão** quando vários clubes querem o mesmo jogador — mais complexo, fica por último.
+
+### Calendário e ambiente
+12. **Estadual como pré-temporada** (pulável) — testa o elenco e dá título extra ao time pequeno.
+13. **Humor da torcida → bilheteria** — vitória +, derrota −, clássico perdido pesa mais; torcida eufórica aumenta e revoltada reduz a bilheteria.
+14. **Botão "Selecionar descansados"** na escalação (escala priorizando energia).
+15. **Premiação por fase na copa** — cada fase avançada paga; copa vira fonte de caixa pro time pequeno.
+
+### Decidido NÃO fazer (por ora)
+- **Futebol feminino** — fora do escopo por enquanto.
+- Obrigar o jogador a assistir rodadas de competições que ele não disputa.
+- Sorteio obrigatório de clube (manter escolha livre).
+- Recalcular a força por divisão ao estilo RetroFoot — **mantemos a escala atual do Prancheta** (jogadores fictícios, sobreposição entre divisões já acontece).
+
+### Reservado pra depois
+- **Escudos e imagens dos cards gerados por API** (LLM/gerador de imagem, nada que exista de fato), gerados **uma vez** por time/jogador e gravados no Supabase Storage; gerar sob demanda ao incluir times/jogadores novos. Estilo fixo + semente derivada do ID pra manter consistência.
+- Ideias de layout: `docs/concorrentes/analise_retrofoot_browserfoot.md` §4.
+
+---
+
 ## 7. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.
