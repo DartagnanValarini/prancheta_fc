@@ -1434,6 +1434,104 @@ const Forma={
 };
 
 /* ====================================================================
+   COLETIVA PÓS-JOGO (§6.1 item 1) — 3 perguntas de um repórter depois da
+   partida do MEU time: (1) o jogo, (2) o elenco, (3) o clube. Cada resposta
+   tem um perfil (Protetor, Direto, Técnico…) e um efeito VISÍVEL antes de
+   escolher: moral (do elenco ou de um jogador) e cargo (confiança da diretoria).
+   Respostas são trocas: agradar o vestiário custa diretoria e vice-versa, pra
+   coletiva não virar fonte grátis de confiança. Pulável; desliga nas Configurações.
+   ==================================================================== */
+const Coletiva={
+  REPORTERES:[['Kátia Moreira','Rádio Arquibancada'],['Bruno Tavares','TV Várzea'],['Lia Fontes','Portal Chuteira'],
+    ['Otávio Reis','Jornal do Interior'],['Marta Lopes','Podcast Prancheta'],['Caio Nunes','Rádio Geral AM']],
+  pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; },
+
+  // contexto da partida → 3 perguntas com respostas. ctx vem do App (ver App.contextoColetiva)
+  montar(ctx){
+    const q=[this.perguntaJogo(ctx), this.perguntaElenco(ctx), this.perguntaClube(ctx)].filter(Boolean);
+    return {reporter:this.pick(this.REPORTERES), perguntas:q};
+  },
+  perguntaJogo(c){
+    const placar=`${c.meus}×${c.deles}`, adv=c.adv;
+    if(c.resultado==='v'){
+      const goleada=c.meus-c.deles>=3;
+      return {tema:'O jogo', txt:this.pick(goleada
+          ?[`Goleada de ${placar} sobre o ${adv}. O time encaixou de vez?`,`${placar}! Dá pra dizer que foi a melhor atuação da temporada?`]
+          :[`Vitória por ${placar} sobre o ${adv}. O que decidiu?`,`${placar} contra o ${adv}. Foi mais mérito ou sorte?`]),
+        respostas:[
+          {perfil:'Protetor', txt:'Mérito total dos jogadores. Eles merecem cada elogio.', moral:+3, cargo:0},
+          {perfil:'Direto', txt:'Ganhamos, mas ainda erramos demais. Não dá pra relaxar.', moral:-2, cargo:+2},
+          {perfil:'Técnico', txt:'O plano funcionou: ocupamos bem os espaços e fomos eficientes.', moral:+1, cargo:+1},
+        ]};
+    }
+    if(c.resultado==='e'){
+      return {tema:'O jogo', txt:this.pick([`Empate em ${placar} com o ${adv}. Ficou bom?`,`${placar} com o ${adv}. Ponto ganho ou dois perdidos?`]),
+        respostas:[
+          {perfil:'Protetor', txt:'O grupo lutou até o fim. Ponto conquistado com suor.', moral:+2, cargo:-1},
+          {perfil:'Direto', txt:'Era jogo pra vencer. Vou cobrar no vestiário.', moral:-3, cargo:+2},
+          {perfil:'Técnico', txt:'Faltou capricho no último passe. Vamos ajustar na semana.', moral:0, cargo:+1},
+        ]};
+    }
+    const vexame=c.deles-c.meus>=3;
+    return {tema:'O jogo', txt:this.pick(vexame
+        ?[`Derrota por ${placar} para o ${adv}. O que aconteceu?`,`${placar}… a torcida saiu revoltada. Tem explicação?`]
+        :[`Derrota por ${placar} para o ${adv}. O que faltou?`,`${placar} contra o ${adv}. O time sentiu a pressão?`]),
+      respostas:[
+        {perfil:'Protetor', txt:'A responsabilidade é minha. O grupo fez o que pedi.', moral:+4, cargo:-2},
+        {perfil:'Direto', txt:'Não aceito essa atuação. Vai ter mudança.', moral:-4, cargo:+2},
+        {perfil:'Contido', txt:'Futebol tem dessas. Cabeça no próximo jogo.', moral:0, cargo:0},
+      ]};
+  },
+  perguntaElenco(c){
+    if(c.insatisfeito){
+      const n=c.insatisfeito.nome;
+      return {tema:'O elenco', alvo:c.insatisfeito.numero, txt:`${n} anda reclamando da falta de chances. Ele vai ter espaço?`,
+        respostas:[
+          {perfil:'Abraço', txt:`O ${n.split(' ')[0]} é importante. A chance dele vai chegar.`, moralAlvo:+10, cargo:-1},
+          {perfil:'Firme', txt:'Aqui joga quem treina melhor. Serve pra todo mundo.', moralAlvo:-5, cargo:+1},
+          {perfil:'Contido', txt:'Isso a gente resolve internamente.', moral:0, cargo:0},
+        ]};
+    }
+    if(c.craque){
+      const n=c.craque.nome, pn=n.split(' ')[0];
+      return {tema:'O elenco', alvo:c.craque.numero, txt:this.pick([`${n} foi o destaque com nota ${c.craque.nota.toFixed(1)}. É o craque do time?`,`Todo mundo fala do ${n} hoje. Ele carrega o time?`]),
+        respostas:[
+          {perfil:'Elogio', txt:`O ${pn} é diferenciado. Merece todos os holofotes.`, moralAlvo:+8, cargo:0},
+          {perfil:'Coletivo', txt:'Ninguém ganha sozinho. O destaque é do grupo.', moral:+1, cargo:0},
+          {perfil:'Exigente', txt:`Pode render ainda mais. Vou cobrar o ${pn}.`, moralAlvo:-3, cargo:+1},
+        ]};
+    }
+    return null;
+  },
+  perguntaClube(c){
+    const pos=`${c.posicao}º`;
+    if(c.zonaBoa){
+      return {tema:'O clube', txt:this.pick([`O time está em ${pos}. Dá pra sonhar com a meta ("${c.meta}")?`,`${pos} na tabela. A torcida já fala em "${c.meta}". Promete?`]),
+        respostas:[
+          {perfil:'Ambicioso', txt:'Vamos brigar até o fim. Esse elenco tem condição.', moral:+3, cargo:-1},
+          {perfil:'Pé no chão', txt:'Um jogo de cada vez. Ainda falta muito.', moral:0, cargo:+1},
+          {perfil:'Humilde', txt:'Nosso objetivo é somar pontos, sem euforia.', moral:+1, cargo:0},
+        ]};
+    }
+    return {tema:'O clube', txt:this.pick([`${pos} na tabela e a diretoria ${c.pressao?'está impaciente':'observa'}. Seu cargo está ameaçado?`,`O time está em ${pos}. O que você diz pro torcedor?`]),
+      respostas:[
+        {perfil:'Institucional', txt:'Tenho total apoio da diretoria e confio no planejamento.', moral:0, cargo:+1},
+        {perfil:'Firme', txt:'Vou cobrar mais de todo mundo. Não aceito essa posição.', moral:-2, cargo:+2},
+        {perfil:'Protetor', txt:'O elenco está do meu lado. Vamos virar isso juntos.', moral:+3, cargo:-1},
+      ]};
+  },
+  // selos de efeito da resposta ("moral +3", "cargo −1")
+  selos(r, nomeAlvo){
+    const s=[]; const f=v=>(v>0?'+':'−')+Math.abs(v);
+    if(r.moral) s.push({t:`moral ${f(r.moral)}`, bom:r.moral>0});
+    if(r.moralAlvo) s.push({t:`${nomeAlvo||'jogador'} ${f(r.moralAlvo)}`, bom:r.moralAlvo>0});
+    if(r.cargo) s.push({t:`cargo ${f(r.cargo)}`, bom:r.cargo>0});
+    if(!s.length) s.push({t:'sem efeito', neutro:true});
+    return s;
+  },
+};
+
+/* ====================================================================
    TUTORIAL / PRIMEIRA SESSÃO (D1)
    Boas-vindas do presidente → tour guiado na Escalação → primeira partida →
    dica na Competições. Estado por APARELHO (localStorage), não por save: é
@@ -1586,7 +1684,7 @@ const App={
   // preferências do jogador, persistidas no save. adFree é CACHE de UI — a
   // verdade vem do servidor (Bloco C). Nunca confiar nele para liberar nada
   // sensível; serve só para esconder os anúncios rápido no cliente.
-  OPCOES_PADRAO:{ velocidade:1, autoSaveRodadas:3, adFree:false },
+  OPCOES_PADRAO:{ velocidade:1, autoSaveRodadas:3, adFree:false, coletiva:true },
   VELOCIDADES:[0.5, 1, 2, 3],
   garantirOpcoes(){
     if(!this.opcoes || typeof this.opcoes!=='object') this.opcoes={...this.OPCOES_PADRAO};
@@ -2229,6 +2327,8 @@ const App={
         this.aplicarConfianca(exp, resultado);
         // guarda um "recibo" da partida para o aviso pós-rodada
         this._ultimoJogoConf={exp, resultado, adv:this.teams[advTi]?.nome||'', delta:this._ultimoDeltaConf, conf:this.confianca};
+        this._ultimoJogo={meus:meusGols, deles:golsAdv, resultado, adv:this.teams[advTi]?.nome||'', advTi, rodada:this.rodada};
+        this._coletivaPendente=true;   // coletiva pós-jogo (abre no fecharRodada)
         // --- OBJETIVOS (A3): registra eventos da minha partida ---
         this.registrarEventosObjetivos({resultado, souCasa, meusGols, golsAdv});
         // --- BILHETERIA: só quando MANDO é meu ---
@@ -2274,7 +2374,7 @@ const App={
         const meuCampo = (h===this.myTeam) ? campoH : campoA;
         let craque=null;
         meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota)){
-          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, assist:c.ref._assistRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
+          craque={nome:c.ref.nome, numero:c.ref.numero, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, assist:c.ref._assistRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
         this._craqueRodada=craque;
       }
       // A4: atualiza MORAL de todos os jogadores dos dois times (jogaram ou não)
@@ -2905,6 +3005,7 @@ const App={
         }),
         botoes:[{txt:'Ver escalação', tipo:'primary', onClick:()=>{ this.showTab('escala'); }}]});
     }
+    if(this._coletivaPendente){ this._coletivaPendente=false; this.abrirColetiva(); }
     this.avisarPropostasNovas();
     // tutorial só depois que o jogador respondeu tudo
     this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
@@ -4229,6 +4330,60 @@ const App={
     this.responderOferta(pid, false);
     this.salvarSupabase(true); this.renderShell(); this.showTab('mercado');
   },
+  /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
+  contextoColetiva(){
+    const j=this._ultimoJogo; if(!j) return null;
+    const t=this.teams[this.myTeam];
+    const onze=new Set(this.onzeDe(this.myTeam).map(p=>p.numero));
+    const insat=t.players.filter(p=>!onze.has(p.numero) && Rating.moralDe(p)<40).sort((a,b)=>Rating.moralDe(a)-Rating.moralDe(b))[0];
+    const cls=this.classificacao(), idx=cls.findIndex(s=>s.i===this.myTeam);
+    const obj=this.garantirObjetivos&&this.garantirObjetivos();
+    return {...j, craque:this._craqueRodada||null, insatisfeito:insat?{nome:insat.nome, numero:insat.numero}:null,
+      posicao:idx+1, zonaBoa:idx>=0 && idx+1<=Math.max(1,Math.ceil(cls.length*0.3)),
+      pressao:(this.confianca??this.CONF_INICIAL)<50, meta:(obj&&obj.principal&&obj.principal.titulo)||'a meta'};
+  },
+  moralMediaTime(){ const ps=this.teams[this.myTeam].players; return Math.round(ps.reduce((a,p)=>a+Rating.moralDe(p),0)/Math.max(1,ps.length)); },
+  aplicarRespostaColetiva(r, alvoNum){
+    const t=this.teams[this.myTeam], cl=v=>Math.max(0,Math.min(100,Math.round(v*10)/10));
+    if(r.moral) t.players.forEach(p=>{ p.moral=cl(Rating.moralDe(p)+r.moral); });
+    if(r.moralAlvo && alvoNum!=null){ const p=t.players.find(x=>x.numero===alvoNum); if(p) p.moral=cl(Rating.moralDe(p)+r.moralAlvo); }
+    if(r.cargo){ if(this.confianca==null) this.confianca=this.CONF_INICIAL; this.confianca=Math.max(0,Math.min(100,this.confianca+r.cargo)); }
+  },
+  abrirColetiva(){
+    if(!this.garantirOpcoes().coletiva) return;
+    const ctx=this.contextoColetiva(); if(!ctx) return;
+    const col=Coletiva.montar(ctx); if(!col.perguntas.length) return;
+    const t=this.teams[this.myTeam], tot={moral:0, cargo:0, alvo:0};
+    const passo=(k)=>{
+      const q=col.perguntas[k]; const nomeAlvo=q.alvo!=null?(t.players.find(p=>p.numero===q.alvo)||{}).nome:null;
+      const conf=Math.round(this.confianca??this.CONF_INICIAL), mor=this.moralMediaTime();
+      const corpo=`<div class="mf">
+        <div class="mf-top"><span class="col-mic">🎤</span><div><div class="mf-nome">${this.esc(col.reporter[0])}</div>
+          <div class="mf-sub">${this.esc(col.reporter[1])} · ${ctx.meus}×${ctx.deles} vs ${this.esc(ctx.adv)}</div></div></div>
+        <div class="mf-kpis n2"><div class="mf-kpi"><small>Moral do time</small><b>${mor}/100</b></div>
+          <div class="mf-kpi"><small>Segurança no cargo</small><b>${conf}/100</b></div></div>
+        <div class="mf-destaque"><small>Pergunta ${k+1} de ${col.perguntas.length} · ${q.tema}</small><b class="col-q">“${this.esc(q.txt)}”</b></div>
+        <div class="col-resps">${q.respostas.map((r,i)=>`<button class="col-resp" data-resp="${i}">
+            <small>${r.perfil}</small><span>“${this.esc(r.txt)}”</span>
+            <em>${Coletiva.selos(r, nomeAlvo&&nomeAlvo.split(' ')[0]).map(x=>`<i class="${x.neutro?'n':x.bom?'b':'r'}">${x.t}</i>`).join('')}</em></button>`).join('')}</div>
+      </div>`;
+      return {titulo:'🎤 Coletiva pós-jogo', corpoHTML:corpo,
+        botoes:[{txt:'⏩ Pular a coletiva', tipo:'sm'}],
+        aoAbrir:(el)=>{ el.querySelectorAll('[data-resp]').forEach(b=>b.onclick=()=>{
+          const r=q.respostas[+b.dataset.resp]; this.aplicarRespostaColetiva(r,q.alvo);
+          tot.moral+=r.moral||0; tot.cargo+=r.cargo||0; tot.alvo+=r.moralAlvo||0;
+          if(k+1<col.perguntas.length) this.modalFLK(passo(k+1));
+          else { const m=document.getElementById('flkModal'); if(m) m.remove(); this.fimColetiva(tot); this._proximoDaFila(); }
+        }); }};
+    };
+    this.modalFLK({...passo(0), fila:true});
+  },
+  fimColetiva(tot){
+    const f=v=>(v>0?'+':'')+v;
+    this.renderShell(); if(!this.liveState) this.showTab('escala');
+    Tutorial.toast(`🎤 Coletiva encerrada · moral <b>${f(tot.moral)}</b> · cargo <b>${f(tot.cargo)}</b>`);
+  },
+
   // propostas que chegaram nesta rodada viram modais de decisão (em fila)
   avisarPropostasNovas(){
     (this.ofertasRecebidas||[]).filter(o=>!o.avisada).forEach(o=>{ o.avisada=true; this.decidirVendaUI(o.pid,{fila:true, nova:true}); });
@@ -4895,6 +5050,7 @@ const App={
       const el=ov.querySelector(`[data-flkm-btn="${idx}"]`); if(!el) return;
       el.onclick=()=>{ const keep=b.onClick?b.onClick(lerVals()):false; if(!keep) fechar(); };
     });
+    if(opts.aoAbrir) try{ opts.aoAbrir(ov, fechar); }catch(e){ console.error(e); }
     // foco: primeiro campo, senão o botão principal (último)
     const foco=ov.querySelector('.flkm-field input')||ov.querySelector('.flkm-foot .btn:last-child');
     if(foco) try{ foco.focus({preventScroll:true}); }catch(e){}
@@ -4959,6 +5115,11 @@ const App={
         </div>
       </div>
       <div class="cfg-sec">
+        <div class="cfg-h">🎤 Coletiva pós-jogo</div>
+        <div class="cfg-row"><button class="cfg-opt ${o.coletiva?'on':''}" data-cfg-col="1">Ligada</button><button class="cfg-opt ${!o.coletiva?'on':''}" data-cfg-col="0">Desligada</button></div>
+        <div class="cfg-hint">3 perguntas depois de cada jogo; as respostas mexem na moral e na diretoria.</div>
+      </div>
+      <div class="cfg-sec">
         <div class="cfg-h">🎓 Tutorial</div>
         <div class="cfg-row"><button class="cfg-opt" data-cfg-tut>Rever tutorial</button></div>
         <div class="cfg-hint">Mostra de novo as boas-vindas e o passo a passo da primeira rodada.</div>
@@ -4972,6 +5133,7 @@ const App={
     wrap.querySelectorAll('[data-cfg-save]').forEach(b=>b.onclick=()=>{
       o.autoSaveRodadas=parseInt(b.dataset.cfgSave,10); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const tut=wrap.querySelector('[data-cfg-tut]'); if(tut) tut.onclick=()=>Tutorial.rever();
+    wrap.querySelectorAll('[data-cfg-col]').forEach(b=>b.onclick=()=>{ o.coletiva=b.dataset.cfgCol==='1'; this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const buy=wrap.querySelector('[data-cfg-buyad]');
     if(buy) buy.onclick=()=>this.comprarRemoverAnuncios();
   },
