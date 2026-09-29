@@ -3924,10 +3924,20 @@ const App={
       <button class="fmodal-close" id="fmClose">✕</button>
       <div class="fmodal-layout">
         ${this.cardHTML(i,sel)}
-        <div class="fmodal-ficha">${this.fichaHTML(i,sel)}</div>
+        <div class="fmodal-ficha">${this.fichaHTML(i,sel)}
+          ${i===this.myTeam?`<div class="ficha-acoes">
+            <button class="btn sm" id="fmVender">${sel.aVenda?'✕ Tirar da venda':'💰 Vender'}</button>
+            <button class="btn sm primary" id="fmLeilao" ${this.leilaoDe(sel.pid)||(this.leiloes||[]).some(l=>l.pid===sel.pid)?'disabled':''}>🔨 Leilão</button>
+            <span class="ficha-acoes-hint">${this.leilaoDe(sel.pid)?'Leilão em andamento — veja no Mercado.':sel.aVenda?'À venda: clubes interessados mandam propostas ao fim das rodadas.':`Leilão começa em ${this.fmtReais(this.valorMercadoReais(sel)*this.LEILAO_INICIO)} (60% do valor).`}</span>
+          </div>`:''}</div>
       </div>
     </div></div>`;
     document.getElementById('fmClose').onclick=()=>ov.remove();
+    const bv=document.getElementById('fmVender'); if(bv) bv.onclick=()=>{
+      sel.aVenda=!sel.aVenda; this.salvarSupabase(true); this.renderMercado();
+      Tutorial.toast(sel.aVenda?`💰 <b>${this.esc(sel.nome)}</b> está à venda. Propostas chegam ao fim das rodadas.`:`${this.esc(sel.nome)} saiu da lista de venda.`);
+      this.abrirFichaModal(i,num); };
+    const bl=document.getElementById('fmLeilao'); if(bl) bl.onclick=()=>{ ov.remove(); this.leilaoRapido(sel.pid); };
     ov.querySelector('.fmodal-bg').onclick=(e)=>{ if(e.target.classList.contains('fmodal-bg')) ov.remove(); };
     // efeito 3D + glare no card (adaptado do card enviado pelo usuário)
     const card=ov.querySelector('.pcard'), glare=ov.querySelector('.pcard-glare');
@@ -4876,14 +4886,31 @@ const App={
      aceita o maior lance quando quiser, espera ou recusa todos; no fim do
      prazo, decide. Leilões e propostas vão pro save.
      ==================================================================== */
-  CHANCE_LEILAO:0.4, RODADAS_LEILAO:3,
+  CHANCE_LEILAO:0.4, RODADAS_LEILAO:3, LEILAO_INICIO:0.6,
+  // leilão rápido pelo card do jogador: abre na hora com os clubes que têm caixa;
+  // o lance inicial é 60% do valor real (os demais entram entre 60% e 70%)
+  leilaoRapido(pid){
+    const t=this.teams[this.myTeam], p=t.players.find(x=>x.pid===pid); if(!p) return;
+    if(this.leilaoDe(pid)) return this.verLeilaoUI(pid);
+    const vm=this.valorMercadoReais(p), ini=vm*this.LEILAO_INICIO;
+    const cands=this.teams.map((x,i)=>({t:x,i})).filter(o=>o.i!==this.myTeam && (o.t.saldo||0)>=ini);
+    if(cands.length<2) return this.avisoFLK('Sem interessados','Nenhum clube tem caixa pra disputar esse jogador agora. Tente anunciar à venda.','var(--loss)');
+    this.ofertasRecebidas=(this.ofertasRecebidas||[]).filter(o=>o.pid!==pid);
+    const l=this.abrirLeilao(p, cands, vm, this.LEILAO_INICIO);
+    p.aVenda=true; l.avisadoInicio=true;
+    this.salvarSupabase(true); this.renderMercado();
+    this.verLeilaoUI(pid);
+  },
   leilaoDe(pid){ return (this.leiloes||[]).find(l=>l.pid===pid && l.status==='aberto'); },
   maiorLance(l){ return [...l.lances].sort((a,b)=>b.valor-a.valor)[0]; },
-  abrirLeilao(p, cands, vm){
+  abrirLeilao(p, cands, vm, piso){
     if(!this.leiloes) this.leiloes=[];
     const n=Math.min(cands.length, 2+Math.floor(Math.random()*3));   // 2 a 4 clubes
     const esc=[...cands].sort(()=>Math.random()-0.5).slice(0,n);
-    const lances=esc.map(c=>({ti:c.i, nome:c.t.nome, valor:Math.round(vm*(0.75+Math.random()*0.35)/1e5)*1e5, fora:false}));
+    // piso (leilão rápido): 1º lance exatamente no piso, demais até +10%; senão 75%–110% do valor
+    const lances=esc.map((c,k)=>({ti:c.i, nome:c.t.nome, fora:false, valor: piso!=null
+      ? Math.round(vm*(k===0?piso:piso+Math.random()*0.1)/1e5)*1e5
+      : Math.round(vm*(0.75+Math.random()*0.35)/1e5)*1e5}));
     const l={pid:p.pid, nome:p.nome, lances, rodadas:this.RODADAS_LEILAO, status:'aberto', vm};
     this.leiloes.push(l); return l;
   },
