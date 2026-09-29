@@ -39,8 +39,8 @@ O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 
 - ✅ **Assistências (29/09/2026)** — `Motor.assistente()`: ~78% dos gols têm passe, ponderado por posição (meias/pontas criam mais) e passe+visão+cruzamento; +0,8 na nota da partida; painel 🅰️ na aba Estatísticas, J/G/A na ficha, "🅰️" no lance ao vivo. Save **v10** (`assist`/`assistTemp`; v9 carrega zerado). Gate: `harness_assistencias`.
 - ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
-- ❌ **Carreira longa como gate** (D3). ✅ **Áudio** (D4) feito em 29/09/2026.
-- 🟡 **Layout das outras abas** (Elenco, Mercado, Campeonatos, Finanças) — cabem no celular sem rolagem horizontal, mas ainda não foram redesenhadas no padrão da página do clube.
+- ✅ **Carreira longa como gate** (D3) e ✅ **Áudio** (D4) feitos em 29/09/2026.
+- ✅ **Layout das outras abas** — redesenhadas no padrão FLK em 29/09/2026 (ver §6.2 "Redesenho das outras abas").
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E).
 
 ---
@@ -175,6 +175,11 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 **D3. Estabilidade e bordas.**
 - Carreira longa (10+ temporadas) sem quebra de save. Telas de vazio decentes, erro amigável. Novo harness "carreira longa" como gate de release, junto dos existentes.
+- **✅ FEITO (29/09/2026)**:
+  - **Save enxuto (v12)**: jogador do banco grava só o que **evoluiu** (`ev`: atributo por índice → valor decimal) + `an` (ancorado); teto, overall inicial e growth são **recalculados no load** a partir dos atributos do banco (mesma conta, determinística). Campos no valor padrão são omitidos. Garotos da base guardam os atributos de quando subiram (lista compacta) + evolução. **8,1 MB → 1,1 MB** no início; **1,6 MB após 12 temporadas**; convidado grava **0,5 M caracteres** comprimido. Saves ≤ v11 (formato completo) continuam carregando e são regravados enxutos. Gate: `harness_save_enxuto`.
+  - **Gate de carreira longa**: `harness_carreira_longa` joga **12 temporadas** pelo fluxo real (rodadas → balanço → fim de carreira → renovações → virada) e confere a cada virada: ninguém em dois clubes, elencos ≥ 16, números finitos, séries com o mesmo tamanho, idade média estável (~27), save < 3 MB que volta **idêntico**, load < 3 s (~0,8 s); no fim salva como convidado, recarrega a página e confere tudo igual. Demora ~40 min — roda antes de release, fora da regressão rápida.
+  - **Erros amigáveis** (`Erros`): erro inesperado → modal "😵 Opa, o jogo tropeçou" (carreira segura; Continuar / Salvar e ir ao menu / Copiar detalhes; no máximo 1 a cada 15 s); aba que falha ao desenhar vira cartão "Essa tela não abriu" com **Tentar de novo** e as outras seguem; falha de rede ao carregar explica em português com **Tentar de novo**. Últimos 20 erros ficam em `Erros.log`. Gate: `harness_erros`.
+  - **Desempenho**: o Mercado (varre ~3 mil jogadores, ~300 ms) só desenha com a aba aberta — "pular" rodada ficou ~0,6 s mais rápido.
 
 **D4. Áudio e identidade (alto impacto percebido, baixo custo).**
 - SFX mínimos (gol, apito), música de menu. Eleva muito a percepção de acabamento.
@@ -348,7 +353,8 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - **Troca:** toque num jogador e depois em outro (campo, banco ou tabela) — titular↔reserva, titular↔titular; reserva↔reserva é recusado. No desktop também **arrasta**. Com um titular selecionado dá pra trocar a **função (role)**.
 - **Tutorial** atualizado pros novos alvos. "Round" virou "Rodada" na tela da partida.
 - **Gate:** `harness_layout.js` 61/61 — casca, cabeçalho, todas as abas sem rolagem horizontal (desktop e celular), 9 formações sem camisa fora do campo ou sobreposta (desktop e 390px), trocas por toque e arrasto, Auto/11 melhores/Descansados, ação principal, forma no cabeçalho, ordem de empilhamento no celular.
-- **Fica pra depois:** faixa superior com o ranking de treinadores (opcional no spec); placas como espaço de anúncio na versão web (`mostrarAnuncio()`); redesenho das outras abas no mesmo padrão.
+- **Fica pra depois:** faixa superior com o ranking de treinadores (opcional no spec); placas como espaço de anúncio na versão web (`mostrarAnuncio()`).
+- **Redesenho das outras abas — ✅ FEITO (29/09/2026)**: **Rodada** ganhou o cartão *Próximo jogo* (escudos, mando, posição, força, forma) + *Último jogo*, e a *Última rodada* mostra só o seu grupo (botão "Ver todos os jogos"); **Elenco** com faixa de KPIs (força do 11, idade média, folha, desfalques, contratos no fim) e tabela completa (setor, titular, idade, forma, gols, contrato, força, energia) — clicar abre a ficha; **Mercado** trocou o cartão repetido do clube por KPIs (caixa, folha, à venda, propostas, leilões); **Finanças** abre com o saldo, quantos meses de folha ele paga, a balança entradas × saídas e o **contador** (fim da temporada); **Dados** virou "Sua carreira" (slot, onde fica salvo, Salvar agora / Baixar / Restaurar backup) e o que era de desenvolvimento (Supabase, trocar de time) foi pra "Avançado". Tudo sem rolagem lateral a 390 px. Gate: `harness_visual`.
 
 ---
 

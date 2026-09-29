@@ -71,7 +71,7 @@ const clicar=(page,txt)=>page.click(`#flkModal .flkm-foot .btn:has-text("${txt}"
     const depois=App.teams[App.myTeam].players.map(p=>`${p.pid}:${p.idade}:${p.forca}`).join(',');
     return {schema:snap.schemaVersion, valido:v.ok, gerados:snap.gerados.length, igual:antes===depois};
   });
-  t(sv.schema===11 && sv.valido,'snapshot v11 válido');
+  t(sv.schema>=11 && sv.valido,'snapshot v11+ válido');
   t(sv.igual,`elenco, idades e garotos da base (${sv.gerados} gerados na liga) voltam iguais do save`);
   t(erros.filter(e=>!/ERR_FAILED/.test(e)).length===0,'sem erros de JS');
   await browser.close();

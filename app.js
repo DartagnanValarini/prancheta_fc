@@ -7,6 +7,15 @@ class MockProvider{
   constructor(d){ this.data=d; this.label='MOCK'; }
   async getTeams(){ return JSON.parse(JSON.stringify(this.data.teams)); }
 }
+// ordem fixa dos atributos (colunas do banco). O save v12 usa o ÍNDICE nesta lista.
+const ATTR_ORDEM=["corners","crossing","dribbling","finishing","first_touch","freekick",
+      "heading","long_shots","long_throws","marking","passing","penalty","tackling","technique",
+      "agression","antecipation","bravery","composure","concentration","decisions","determination",
+      "flair","leadership","off_the_ball","positioning","teamwork","vision","work_rate",
+      "acceleration","agility","balance","jump_reach","natural_fitness","pace","stamina","strength",
+      "aerial_reach","command_of_area","communication","handling","kicking","one_on_ones",
+      "reflexes","rushing_out","throwing"];
+
 class SupabaseProvider{
   constructor(url,key){
     if(!window.supabase) throw new Error('supabase-js não carregou');
@@ -32,13 +41,7 @@ class SupabaseProvider{
     }
 
     // colunas de atributo (0-100) que alimentam o cálculo de overall
-    const ATTR_COLS=["corners","crossing","dribbling","finishing","first_touch","freekick",
-      "heading","long_shots","long_throws","marking","passing","penalty","tackling","technique",
-      "agression","antecipation","bravery","composure","concentration","decisions","determination",
-      "flair","leadership","off_the_ball","positioning","teamwork","vision","work_rate",
-      "acceleration","agility","balance","jump_reach","natural_fitness","pace","stamina","strength",
-      "aerial_reach","command_of_area","communication","handling","kicking","one_on_ones",
-      "reflexes","rushing_out","throwing"];
+    const ATTR_COLS=ATTR_ORDEM;
 
     const byT={}; (players||[]).forEach(p=>(byT[p.team_id]||=[]).push(p));
     const SETOR_SIGLA={goleiro:'GK',defesa:'DEF',meio:'MEI',ataque:'ATQ'};
@@ -58,6 +61,7 @@ class SupabaseProvider{
           altura:p.height, peso:p.weight, peDominante:p.preferred_foot, peFraco:p.weak_foot,
           foto:p.photo_player,
           attrs,
+          _attrsBase:{...attrs},            // D3: atributos do banco (o save guarda só o que mudou)
           // --- Fase 2B: evolução/potencial ---
           potential:p.potential??null,      // overall-alvo na posição natural
           talento:p.talento??3,             // 1..5 velocidade de evolução
@@ -884,6 +888,67 @@ const Som={
     this._musica=null; },
 };
 
+/* ====================================================================
+   D3 — ERROS AMIGÁVEIS: nenhum erro vira tela branca ou mensagem crua.
+   • erro inesperado (script/promessa) → modal FLK "o jogo tropeçou" com
+     Continuar / Salvar e ir ao menu / Copiar detalhes (1 aviso a cada 15 s);
+   • uma aba que falha ao desenhar mostra um cartão com "Tentar de novo"
+     e as outras abas seguem funcionando;
+   • falha ao carregar do servidor explica em português (sem internet? servidor?)
+     e oferece "Tentar de novo".
+   Os últimos 20 erros ficam em Erros.log (vão no "Copiar detalhes").
+   ==================================================================== */
+const Erros={
+  log:[], _ultimo:0, _ligado:false,
+  registrar(e, onde){
+    const msg=String((e&&e.message)||e||'erro desconhecido');
+    this.log.push({quando:new Date().toISOString(), onde:onde||'', msg:msg.slice(0,300), pilha:String((e&&e.stack)||'').split('\n').slice(0,5).join(' | ').slice(0,700)});
+    if(this.log.length>20) this.log.shift();
+  },
+  texto(){ return `Prancheta FC — ${navigator.userAgent}\n`+this.log.map(l=>`[${l.quando}] ${l.onde}: ${l.msg}\n  ${l.pilha}`).join('\n'); },
+  ehRede(e){ return /Failed to fetch|NetworkError|network|timeout|Load failed|ERR_|fetch/i.test(String((e&&e.message)||e||'')); },
+  // mensagem curta e humana pra falhas de carregamento
+  amigavel(e, oque){
+    return this.ehRede(e)
+      ? `Não conseguimos falar com o servidor pra ${oque}. Confira sua internet e tente de novo.`
+      : `Não deu pra ${oque} agora. Tente de novo em instantes — se continuar, feche e abra o jogo.`;
+  },
+  ligar(){
+    if(this._ligado) return; this._ligado=true;
+    window.addEventListener('error', ev=>{
+      if(!ev.error && !ev.message) return;                        // recurso (imagem/script) que não carregou
+      if(ev.filename && /^(chrome|moz|safari)-extension:/.test(ev.filename)) return;   // extensão do navegador
+      this.tratar(ev.error||ev.message,'script');
+    });
+    window.addEventListener('unhandledrejection', ev=>this.tratar(ev.reason,'promessa'));
+  },
+  tratar(e, onde){
+    if(e && e._mostrado) return;          // já apareceu num cartão de aba
+    this.registrar(e, onde);
+    const agora=Date.now(); if(agora-this._ultimo<15000) return; this._ultimo=agora;
+    this.mostrar();
+  },
+  mostrar(){
+    if(typeof App==='undefined' || !App.modalFLK || !App.cartaoDecisao) return;
+    const ult=this.log[this.log.length-1]||{msg:''}, esc=s=>App.esc?App.esc(s):String(s);
+    try{
+      App.modalFLK({fila:!!document.getElementById('flkModal'), titulo:'😵 Opa, o jogo tropeçou', corpoHTML:App.cartaoDecisao({
+          destaque:{rotulo:'Erro inesperado', titulo:'Sua carreira está segura', tom:'alerta',
+            desc:'O último salvamento continua valendo. Dá pra seguir jogando; se alguma tela ficar estranha, salve e volte ao menu.'},
+          extraHTML:`<details class="erro-det"><summary>Detalhes técnicos</summary><pre>${esc(ult.msg)}</pre></details>`}),
+        botoes:[{txt:'Copiar detalhes', tipo:'sm', onClick:()=>{ try{ navigator.clipboard.writeText(this.texto()); App.toast&&App.toast('Detalhes copiados.'); }catch(err){} return true; }},
+                {txt:'Salvar e ir ao menu', tipo:'sm', onClick:()=>{ App.irMenuPrincipal(); }},
+                {txt:'Continuar', tipo:'primary'}]});
+    }catch(err){}
+  },
+  // cartão no lugar de uma aba que não desenhou
+  cartaoTela(aba){
+    return `<div class="erro-card"><div class="erro-ic">🧯</div><b>Essa tela não abriu</b>
+      <span>Algo deu errado ao montar ${aba?`a aba <i>${aba}</i>`:'esta parte'}. O resto do jogo segue normal e sua carreira está salva.</span>
+      <div class="btn-row"><button class="btn primary sm" data-erro-retry="${aba||''}">Tentar de novo</button><button class="btn sm" data-erro-menu>Salvar e ir ao menu</button></div></div>`;
+  },
+};
+
 const Menu={
   user:null,            // objeto do Supabase auth, ou null
   convidado:false,      // true = jogando sem conta (save em localStorage)
@@ -1085,7 +1150,10 @@ const Menu={
     try{
       if(!App.provider) App.provider=new SupabaseProvider(App.SUP_URL,App.SUP_KEY);
       await App.novaTemporada(['A','B','C','D']);   // carrega todas as divisões (pipeline)
-    }catch(e){ this.el().innerHTML=`<div class="pre-card">${this.msg('Falha ao carregar os times: '+e.message,'err')}</div>`; return; }
+    }catch(e){ Erros.registrar(e,'carregar clubes');
+      this.el().innerHTML=`<div class="pre-card">${this.msg(Erros.amigavel(e,'carregar os clubes'),'err')}
+        <button class="pre-btn" id="btnRetry">Tentar de novo</button><button class="pre-btn ghost" onclick="Menu.telaMenu()">Voltar</button></div>`;
+      document.getElementById('btnRetry').onclick=()=>this.telaNovoJogo(slot); return; }
     // arco de carreira: a primeira carreira começa na Série D (última divisão)
     const elegiveis=App.teams.map((t,i)=>({i,t})).filter(o=>o.t.divisao==='D');
     const pool=elegiveis.length?elegiveis:App.teams.map((t,i)=>({i,t}));
@@ -1270,8 +1338,10 @@ const Menu={
       this.esconder();
       App.renderShell(); App.showTab('escala');
     }catch(e){
-      this.el().innerHTML=`<div class="pre-card">${this.msg('Erro ao carregar: '+e.message,'err')}
-        <button class="pre-btn ghost" onclick="Menu.telaMenu()">Voltar</button></div>`;
+      Erros.registrar(e,'carregar carreira');
+      this.el().innerHTML=`<div class="pre-card">${this.msg(Erros.amigavel(e,'carregar sua carreira'),'err')}
+        <button class="pre-btn" id="btnRetry">Tentar de novo</button><button class="pre-btn ghost" onclick="Menu.telaMenu()">Voltar</button></div>`;
+      document.getElementById('btnRetry').onclick=()=>this.carregarSlot(slot);
     }
   },
 };
@@ -1839,7 +1909,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:11,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados
+  SCHEMA_VERSION:12,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados · v12: save enxuto (só atributos que mudaram)
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -3461,9 +3531,24 @@ const App={
   },
 
   /* ============ RENDER ============ */
+  // D3: cada parte desenha isolada — uma aba que falha vira cartão de erro e as outras seguem
+  ABAS_RENDER:{renderArena:'arena', renderEscala:'escala', renderElenco:'elenco', renderCompeticoes:'competicoes', renderMercado:'mercado', renderFinancas:'financas', renderDados:'dados'},
   renderShell(){
-    this.renderCabecalho();
-    this.renderArena(); this.renderEscala(); this.renderElenco(); this.renderCompeticoes(); this.renderMercado(); this.renderFinancas(); this.renderDados();
+    try{ this.renderCabecalho(); }catch(e){ this.falhaTela(null,e); }
+    for(const k in this.ABAS_RENDER){
+      // Mercado varre ~3 mil jogadores (~300 ms): só desenha quando a aba está aberta
+      if(k==='renderMercado'){ const tm=document.getElementById('tab-mercado'); if(tm && tm.classList.contains('hidden')){ this._mercadoSujo=true; continue; } }
+      try{ this[k](); }catch(e){ this.falhaTela(this.ABAS_RENDER[k],e,k); }
+    }
+  },
+  falhaTela(aba, e, fn){
+    Erros.registrar(e, 'tela '+(aba||'cabeçalho'));
+    const el=aba && document.getElementById('tab-'+aba);
+    if(el){ el.innerHTML=Erros.cartaoTela(aba);
+      const r=el.querySelector('[data-erro-retry]'); if(r) r.onclick=()=>{ try{ this[fn](); }catch(e2){ this.falhaTela(aba,e2,fn); } };
+      const m=el.querySelector('[data-erro-menu]'); if(m) m.onclick=()=>this.irMenuPrincipal(); }
+    if(e && typeof e==='object') e._mostrado=true;
+    setTimeout(()=>{ throw e; });   // continua visível no console (e nos harnesses)
   },
 
   async irMenuPrincipal(){
@@ -3533,6 +3618,7 @@ const App={
     ['arena','escala','elenco','competicoes','mercado','financas','ranking','dados'].forEach(t=>
       document.getElementById('tab-'+t).classList.toggle('hidden', t!==name));
     if(name==='ranking') this.renderRanking();   // C3: carrega a tabela pública sob demanda
+    if(name==='mercado' && this._mercadoSujo){ this._mercadoSujo=false; try{ this.renderMercado(); }catch(e){ this.falhaTela('mercado',e,'renderMercado'); } }
   },
 
   // HTML da tabela de classificação (aceita deltas ao vivo p/ reordenar)
@@ -3606,14 +3692,21 @@ const App={
     : `
       <div class="panel">
         <div class="ptitle">Última rodada <span class="lbl">${this.rodada?'rodada '+this.rodada:'—'}</span></div>
-        <div id="resultados">${this.resultados.length? [...this.resultados].sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; }).map(r=>{
-          const th=this.teams[r.h],ta=this.teams[r.a],me=r.h===this.myTeam||r.a===this.myTeam;
-          const hc=r.gc>r.gf?'w':r.gc<r.gf?'l':'',ac=r.gf>r.gc?'w':r.gf<r.gc?'l':'';
-          return `<div class="match ${me?'me':''}">
-            <span class="home ${hc}">${th.nome} <span class="abrev">${th.abrev}</span></span>
-            <span class="score">${r.gc}-${r.gf}</span>
-            <span class="away ${ac}"><span class="abrev">${ta.abrev}</span> ${ta.nome}</span>
-          </div>`;}).join('') : '<div class="empty">Bora! Clique em JOGAR RODADA.</div>'}</div>
+        ${(()=>{ if(!this.resultados.length) return '<div class="empty">Bora! Clique em JOGAR RODADA.</div>';
+          const meuG=(this.fase==='grupos' && Array.isArray(this.grupos))?this.grupos.find(g=>g.includes(this.myTeam)):null;
+          const doMeu=r=>!meuG || (meuG.includes(r.h)&&meuG.includes(r.a));
+          const todos=!!this._arenaTodos, lista=[...this.resultados].filter(r=>todos||doMeu(r))
+            .sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; });
+          const escondidos=this.resultados.length-this.resultados.filter(doMeu).length;
+          return `<div id="resultados">${lista.map(r=>{
+            const th=this.teams[r.h],ta=this.teams[r.a],me=r.h===this.myTeam||r.a===this.myTeam;
+            const hc=r.gc>r.gf?'w':r.gc<r.gf?'l':'',ac=r.gf>r.gc?'w':r.gf<r.gc?'l':'';
+            return `<div class="match ${me?'me':''}">
+              <span class="home ${hc}">${th.nome} <span class="abrev">${th.abrev}</span></span>
+              <span class="score">${r.gc}-${r.gf}</span>
+              <span class="away ${ac}"><span class="abrev">${ta.abrev}</span> ${ta.nome}</span>
+            </div>`;}).join('')}</div>
+            ${escondidos?`<button class="btn sm arena-todos" id="btnArenaTodos">${todos?'Só o meu grupo':`Ver todos os jogos (+${escondidos})`}</button>`:''}`; })()}
       </div>`;
 
     // ---- seletor de série/grupo do PLACAR GERAL (visualização; não muda o que é jogado) ----
@@ -3647,6 +3740,7 @@ const App={
 
     el.innerHTML=`${topo}
       ${live&&this.meuSim()?'<div class="panel mj" id="meuJogo"></div>':''}
+      ${!live?this.proximoJogoHTML():''}
       <div class="grid-2">
         <div class="panel">
           <div class="ptitle-row">
@@ -3680,7 +3774,23 @@ const App={
       const bsv=document.getElementById('btnSalvarArena'); if(bsv)bsv.onclick=()=>this.salvarSupabase(false);
       const bp=document.getElementById('btnPodio'); if(bp)bp.onclick=()=>this.abrirPodio();
       const bnt=document.getElementById('btnNovaTemp'); if(bnt)bnt.onclick=()=>this.abrirDiagnostico();
+      const bat=document.getElementById('btnArenaTodos'); if(bat) bat.onclick=()=>{ this._arenaTodos=!this._arenaTodos; this.renderArena(); };
     }
+  },
+
+  // Arena fora do jogo: cartão "Próximo jogo" (mando, posição, forma, força) + seu último resultado
+  proximoJogoHTML(){
+    const eu=this.myTeam, par=(this.fixtures[this.rodada]||[]).find(([h,a])=>h===eu||a===eu);
+    const ult=(this.resultados||[]).find(r=>r.h===eu||r.a===eu);
+    const ordem=this.classificacao()||[], pos=i=>{ const k=ordem.findIndex(o=>o.i===i); return k<0?'–':(k+1)+'º'; };
+    const lado=(i,rot)=>{ const t=this.teams[i]; return `<div class="pj-time ${i===eu?'eu':''}">${this.escudoHTML(t,46)}<b>${this.esc(t.nome)}</b>
+      <small>${rot} · ${pos(i)} · força ${Math.round(this.forcaDoTime(i))}</small>${this.formaHTML(t._forma5)}</div>`; };
+    const ultHTML=ult?(()=>{ const meuG=ult.h===eu?ult.gc:ult.gf, advG=ult.h===eu?ult.gf:ult.gc, adv=ult.h===eu?ult.a:ult.h, r=meuG>advG?'v':meuG<advG?'d':'e';
+      return `<div class="pj-ult ${r}"><small>Último jogo</small><b>${({v:'Vitória',e:'Empate',d:'Derrota'})[r]} ${meuG}×${advG}</b><span>vs ${this.esc(this.teams[adv].nome)}</span></div>`; })():'';
+    if(!par) return `<div class="panel pj">${ultHTML}<div class="pj-vazio">${this.rodada>=this.fixtures.length?'Temporada encerrada — veja o pódio e comece a próxima.':'Sem jogo seu nesta rodada.'}</div></div>`;
+    const [h,a]=par;
+    return `<div class="panel pj"><div class="pj-rot">Próximo jogo · rodada ${this.rodada+1}</div>
+      <div class="pj-conf">${lado(h,'Casa')}<div class="pj-x">×</div>${lado(a,'Fora')}</div>${ultHTML}</div>`;
   },
 
   // tabela de QUALQUER série/grupo (estática — sem deltas ao vivo). Destaca meu time.
@@ -4305,10 +4415,10 @@ const App={
         </select>
         <button class="btn sm" id="tpMeu">Meu clube</button>
       </div>
+      <div id="elencoKpis"></div>
       <div class="panel">
         <div class="ptitle" id="squadTitle"></div>
-        <div class="roster-head"><span>#</span><span>Pos</span><span>Jogador</span><span>Força</span><span>Energia</span></div>
-        <div id="roster"></div>
+        <div id="roster" class="el-wrap"></div>
       </div>`;
     document.getElementById('teamPickSel').onchange=(e)=>{ this.squadView=+e.target.value; this.renderElenco(); };
     document.getElementById('tpMeu').onclick=()=>{ this.squadView=this.myTeam; this.renderElenco(); };
@@ -4317,20 +4427,37 @@ const App={
     document.getElementById('squadTitle').innerHTML=
       `${t.nome} <span class="lbl">${t.players.length} atletas • força ${Motor.forcaOnze(Motor.escalarAuto(t,'4-4-2'),null).toFixed(1)}</span>`;
     const ord=[...t.players].sort((a,b)=>Motor.rendimento(b)-Motor.rendimento(a));
-    document.getElementById('roster').innerHTML=ord.map(p=>{
-      const low=p.energia<30, esc=onzeNums.has(p.numero);
-      return `<div class="player ${esc?'escalado':''} ${p.lesionado?'lesionado':''}">
-        <span class="num">${p.numero??''}</span>
-        <span>${(()=>{ const mg=Motor.melhorGeral(p);
-          return `<span class="pos-tag pos-${mg.pos}">${mg.pos}</span>`; })()}</span>
-        <span class="nome">${p.nome}${p.lesionado?` <span style="color:var(--loss);font-size:10px">🩹 ${p.lesionado}d</span>`:''}
-          <span style="color:var(--gray2);font-size:10px;margin-left:6px">rend ${Math.round(Motor.rendimento(p))}</span></span>
-        <span class="forca-num">${p.forca}${Rating.setaTendencia(p)}</span>
-        <span class="barwrap"><span class="n">${p.energia}%</span>
-          <span class="bar"><i class="bar-en ${low?'low':''}" style="width:${p.energia}%"></i></span></span>
-      </div>`;}).join('');
+    const meu=this.squadView===this.myTeam, n=t.players.length||1;
+    const idadeM=t.players.reduce((a,p)=>a+(p.idade||0),0)/n;
+    const venc=t.players.filter(p=>(p.contratoMeses??99)<=12).length, les=t.players.filter(p=>p.lesionado).length, sus=t.players.filter(p=>p.suspenso>0).length;
+    document.getElementById('elencoKpis').innerHTML=this.kpiStripHTML([
+      {rotulo:'Força (melhor 11)', valor:Motor.forcaOnze(Motor.escalarAuto(t,'4-3-3'),null).toFixed(1), cor:'var(--lemon)'},
+      {rotulo:'Idade média', valor:idadeM.toFixed(1).replace('.',','), sub:`${t.players.filter(p=>p.idade<=23).length} com até 23`},
+      {rotulo:'Folha / mês', valor:this.fmtReais(this.folhaDe(this.squadView))},
+      {rotulo:'Desfalques', valor:les+sus, cor:les+sus?'var(--loss)':'', sub:`${les} lesionado${les===1?'':'s'} · ${sus} suspenso${sus===1?'':'s'}`},
+      {rotulo:'Contrato no fim', valor:venc, cor:venc?'#e8c547':'', sub:'12 meses ou menos'}]);
+    const setorCor={GK:'#e8c547',DEF:'#4aa3ff',MEI:'#2ecc71',ATQ:'#ff5470'};
+    document.getElementById('roster').innerHTML=`<table class="el-tab"><thead><tr><th>#</th><th class="l">Jogador</th><th>Pos</th><th>Idade</th><th title="Média das últimas 5 notas">Forma</th><th>Gols</th><th>Contrato</th><th>Força</th><th class="l">Energia</th></tr></thead><tbody>${ord.map(p=>{
+      const low=p.energia<30, esc=onzeNums.has(p.numero), mg=Motor.melhorGeral(p), f=Forma.media(p._notas5);
+      const ct=p.contratoMeses??null, ctCor=ct!=null&&ct<=12?'#e8c547':'var(--gray)';
+      return `<tr class="${esc?'escalado':''} ${p.lesionado?'lesionado':''}" data-ficha="${p.numero}">
+        <td class="num">${p.numero??''}</td>
+        <td class="l el-nome"><span class="el-setor" style="background:${setorCor[p.setorNat]||'var(--gray2)'}"></span>${this.esc(p.nome)}${esc?' <span class="el-tit">titular</span>':''}${p.lesionado?` <span class="el-flag">🩹 ${p.lesionado}d</span>`:''}${p.suspenso>0?' <span class="el-flag">🟥 susp.</span>':''}${p.aVenda?' <span class="el-venda">à venda</span>':''}</td>
+        <td><span class="pos-tag pos-${mg.pos}">${mg.pos}</span></td>
+        <td>${p.idade??'–'}</td>
+        <td class="${f==null?'dim':f>=7?'bom':f<6?'ruim':''}">${f==null?'–':f.toFixed(1).replace('.',',')}</td>
+        <td>${p.golsTemp||0}</td>
+        <td style="color:${ctCor}">${ct==null?'–':ct>=12?Math.round(ct/12)+' a':ct+' m'}</td>
+        <td class="forca-num">${p.forca}${Rating.setaTendencia(p)}</td>
+        <td class="l"><span class="barwrap"><span class="n">${Math.round(p.energia)}%</span><span class="bar"><i class="bar-en ${low?'low':''}" style="width:${p.energia}%"></i></span></span></td>
+      </tr>`;}).join('')}</tbody></table>`;
+    document.querySelectorAll('#roster [data-ficha]').forEach(r=>r.onclick=()=>this.abrirFichaModal(this.squadView,+r.dataset.ficha));
   },
 
+  // faixa de KPIs no padrão FLK (Mercado, Finanças, Elenco)
+  kpiStripHTML(items){
+    return `<div class="kpi-strip">${items.map(k=>`<div class="kpi-c"><small>${k.rotulo}</small><b${k.cor?` style="color:${k.cor}"`:''}>${k.valor}</b>${k.sub?`<span>${k.sub}</span>`:''}</div>`).join('')}</div>`;
+  },
   // formata reais grandes: R$ 80,00 M / R$ 253,5 mil
   fmtReais(v){
     const abs=Math.abs(v); const sinal=v<0?'-':'';
@@ -4357,13 +4484,15 @@ const App={
     const saldoCor = saldo<0?'var(--loss)':saldo<folha?'#e8c547':'var(--lemon)';
 
     el.innerHTML=`
-      <div class="fin-topbar">
-        <div class="esc-teampick">${this.escudoHTML(t,30)}
-          <span style="font-family:'Bungee';font-size:16px;color:var(--white)">${t.nome}</span></div>
-        <div class="fin-saldo">
-          <span class="fin-saldo-lbl">Saldo em caixa</span>
-          <span class="fin-saldo-v" style="color:${saldoCor}">${this.fmtReais(saldo)}</span>
-        </div>
+      <div class="fin-hero">
+        <div class="fin-hero-saldo"><small>Saldo em caixa</small><b style="color:${saldoCor}">${this.fmtReais(saldo)}</b>
+          <span>${isFinite(mesesFolego)?`Paga <b>${mesesFolego.toFixed(1).replace('.',',')}</b> ${mesesFolego>=1&&mesesFolego<2?'mês':'meses'} de folha sem nenhuma receita`:'Sem folha a pagar'}</span>
+          <div class="fin-balanca" title="Por mês: entradas × saídas">
+            ${(()=>{ const ent=patroc+bilheteEstim*2, sai=folha+parcela, tot=Math.max(1,ent+sai);
+              return `<div class="fb-bar"><i class="ent" style="width:${ent/tot*100}%"></i><i class="sai" style="width:${sai/tot*100}%"></i></div>
+                <div class="fb-leg"><span>▲ entra ~${this.fmtReais(ent)}/mês</span><span>▼ sai ${this.fmtReais(sai)}/mês</span></div>`; })()}
+          </div></div>
+        <div class="fin-hero-cont">${this.contadorHTML(this.projecaoCaixa(0,0))}</div>
       </div>
 
       <div class="fin-cards">
@@ -4461,14 +4590,12 @@ const App={
     const opt=(k,v,l)=>`<option value="${v}" ${F[k]===v?'selected':''}>${l}</option>`;
 
     el.innerHTML=`
-      <div class="fin-topbar">
-        <div class="esc-teampick">${this.escudoHTML(t,30)}
-          <span style="font-family:'Bungee';font-size:16px;color:var(--white)">${t.nome}</span></div>
-        <div class="fin-saldo">
-          <span class="fin-saldo-lbl">Saldo em caixa</span>
-          <span class="fin-saldo-v" style="color:${saldo<0?'var(--loss)':'var(--lemon)'}">${this.fmtReais(saldo)}</span>
-        </div>
-      </div>
+      ${this.kpiStripHTML([
+        {rotulo:'Caixa', valor:this.fmtReais(saldo), cor:saldo<0?'var(--loss)':'var(--lemon)'},
+        {rotulo:'Folha / mês', valor:this.fmtReais(this.folhaDe(i)), sub:`${t.players.length} jogadores`},
+        {rotulo:'À venda', valor:t.players.filter(p=>p.aVenda).length, sub:'marcados no seu elenco'},
+        {rotulo:'Propostas', valor:ofertas.length, cor:ofertas.length?'#e8c547':'', sub:'esperando resposta'},
+        {rotulo:'Leilões', valor:(this.leiloes||[]).length, cor:(this.leiloes||[]).length?'var(--lemon)':'', sub:'em andamento'}])}
 
       ${(this.leiloes||[]).length?`
       <div class="panel" style="margin-bottom:16px;border-color:var(--lemon)">
@@ -5071,7 +5198,7 @@ const App={
     const sob=nomes[Math.floor(Math.random()*nomes.length)].nome.split(' ').slice(-1)[0];
     const usados=new Set(t.players.map(p=>p.numero)); let numero=1; while(usados.has(numero)) numero++;
     const pid=this.proximoPidGerado(); this._ultPidGerado=pid;
-    const p=this.jogadorDeGerado({pid, nome:`${pri} ${sob}`, numero, setorNat:setor, idade:17+Math.floor(Math.random()*2), attrs,
+    const p=this.jogadorDeGerado({pid, nome:`${pri} ${sob}`, numero, setorNat:setor, idade:17+Math.floor(Math.random()*2), base:attrs,
       potential:Math.round(ovModelo*(1.0+Math.random()*0.18)), talento:3+Math.floor(Math.random()*3),
       salario:Math.max(5,Math.round((m.salario||20)*0.4)), contratoMeses:36, valor:Math.max(0.1,+((m.valor||1)*0.5).toFixed(1)),
       altura:m.altura, peso:m.peso, peDominante:m.peDominante, peFraco:m.peFraco});
@@ -5080,18 +5207,21 @@ const App={
   },
   // monta o objeto de jogador a partir dos dados salvos de um gerado (dado NÃO confiável: saneia)
   jogadorDeGerado(g){
-    if(!g || !(+g.pid<0) || !g.attrs) return null;
-    const attrs={}; for(const a in g.attrs){ const v=+g.attrs[a]; if(isFinite(v)) attrs[a]=Math.max(0,Math.min(100,v)); }
+    let fonte=g && (g.base||g.attrs);
+    if(Array.isArray(fonte)){ const o={}; ATTR_ORDEM.forEach((a,i)=>{ o[a]=fonte[i]; }); fonte=o; }   // v12: base compacta em lista   // v12: 'base' = atributos de quando subiu (o save guarda só a evolução)
+    if(!g || !(+g.pid<0) || !fonte || typeof fonte!=='object') return null;
+    const attrs={}; for(const a in fonte){ const v=+fonte[a]; if(isFinite(v)) attrs[a]=Math.max(0,Math.min(100,v)); }
     const setor=['GK','DEF','MEI','ATQ'].includes(g.setorNat)?g.setorNat:'MEI';
     const p={nome:String(g.nome||'Garoto da Base').slice(0,40), numero:Math.max(1,Math.min(99,+g.numero||1)), pid:+g.pid, setorNat:setor,
       energia:100, idade:Math.max(15,Math.min(45,+g.idade||18)), valor:+g.valor||0.5, salario:Math.max(1,+g.salario||10),
       contratoMeses:Math.max(0,+g.contratoMeses||36), pais:'BR', jogos:0, gols:0, expulsoes:0, lesoesTemporada:0,
       altura:g.altura, peso:g.peso, peDominante:g.peDominante, peFraco:g.peFraco, foto:null, attrs,
       potential:+g.potential||null, talento:Math.max(1,Math.min(5,+g.talento||3)), aVenda:false, moral:70, _ovBase:null, _gerado:true};
+    if(g.base) p._attrsBase={...attrs};   // saves v11 (attrs já evoluídos) seguem no formato completo
     p.forca=Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm({attrs},pos)));
     return p;
   },
-  dadosGerado(p){ return {pid:p.pid, nome:p.nome, numero:p.numero, setorNat:p.setorNat, idade:p.idade, attrs:p.attrs, potential:p.potential,
+  dadosGerado(p){ return {pid:p.pid, nome:p.nome, numero:p.numero, setorNat:p.setorNat, idade:p.idade, ...(p._attrsBase?{base:ATTR_ORDEM.map(a=>p._attrsBase[a]??0)}:{attrs:p.attrs}), potential:p.potential,
     talento:p.talento, salario:p.salario, contratoMeses:p.contratoMeses, valor:p.valor, altura:p.altura, peso:p.peso, peDominante:p.peDominante, peFraco:p.peFraco}; },
   // aplica na virada: tira os aposentados, sobe um garoto da base no lugar de cada um
   aplicarAposentadorias(){
@@ -5987,6 +6117,23 @@ const App={
     const el=document.getElementById('tab-dados');
     const conectado=this.teams.length>0;
     el.innerHTML=`
+      <div class="panel dados-save">
+        <div class="ptitle">💾 Sua carreira <span class="lbl">${this.convidado?'neste aparelho':'na sua conta'}</span></div>
+        <div class="dados-info">
+          <div><small>Slot</small><b>${this.slotAtual||'–'}</b></div>
+          <div><small>Clube</small><b>${conectado&&this.teams[this.myTeam]?this.esc(this.teams[this.myTeam].nome):'–'}</b></div>
+          <div><small>Temporada</small><b>${this.temporada||1} · ${this.rodada||0} rodada${this.rodada===1?'':'s'} jogada${this.rodada===1?'':'s'}</b></div>
+          <div><small>Onde fica salvo</small><b>${this.convidado?'Navegador (convidado)':'Servidor (conta)'}</b></div>
+        </div>
+        <p class="hint">O jogo salva sozinho depois das rodadas (frequência nas Configurações). Faça um backup de vez em quando — principalmente no modo convidado, que vive só neste navegador.</p>
+        <div class="btn-row">
+          <button class="btn primary sm" id="btnSalvarAgora" ${conectado?'':'disabled'}>💾 Salvar agora</button>
+          <button class="btn sm" id="btnExportTop" ${conectado?'':'disabled'}>⬇ Baixar backup</button>
+          <button class="btn sm" id="btnImportTop">⬆ Restaurar backup</button>
+        </div>
+        <div id="saveStatus" class="status info">Nenhum save carregado nesta sessão.</div>
+      </div>
+      <details class="dados-avancado"><summary>⚙️ Avançado (desenvolvimento)</summary>
       <div class="grid-2">
         <div class="panel">
           <div class="ptitle">Fonte de dados <span class="lbl">Supabase</span></div>
@@ -6012,9 +6159,11 @@ const App={
           ${conectado?`<div class="ctrl-group" style="margin-top:16px"><div class="h">Seu time</div>
             <div class="opt-row" id="pickMy">${this.teams.map((t,i)=>
               `<button class="opt ${i===this.myTeam?'active':''}" data-my="${i}">${t.abrev}</button>`).join('')}</div></div>`:''}
-          <div id="saveStatus" class="status info">Nenhum save carregado.</div>
         </div>
-      </div>`;
+      </div></details>`;
+    const bsa=document.getElementById('btnSalvarAgora'); if(bsa) bsa.onclick=()=>this.salvarSupabase(false);
+    const bet=document.getElementById('btnExportTop'); if(bet) bet.onclick=()=>this.exportSave();
+    document.getElementById('btnImportTop').onclick=()=>document.getElementById('fileImport').click();
     const bss=document.getElementById('btnSaveSup'); if(bss)bss.onclick=()=>this.salvarSupabase(false);
     const bls=document.getElementById('btnLoadSup'); if(bls)bls.onclick=()=>this.carregarSupabase();
     document.getElementById('btnExport').onclick=()=>this.exportSave();
@@ -6616,23 +6765,7 @@ const App={
     // v6: identidade por pid (id do banco) → sobrevive a transferências.
     // 'composicao' = pids em cada time; 'jogadoresById' = estado por pid.
     const jogadoresById={};
-    this.teams.forEach(t=>t.players.forEach(p=>{
-      jogadoresById[p.pid]={
-        numero:p.numero, energia:Math.round(p.energia), gols:p.gols||0,
-        jogos:p.jogos||0, lesionado:p.lesionado||0,
-        golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
-        assist:p.assist||0, assistTemp:p.assistTemp||0,             // v10
-        idade:p.idade,                                               // v11: idade avança por temporada
-        amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
-        somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
-        moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
-        notas5:p._notas5||[],                                      // v9: forma recente
-        ovBase:p._ovBase!=null?p._ovBase:null,   // item 4
-        attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
-        ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
-        valor:p.valor, aVenda:p.aVenda||false, contratoMeses:p.contratoMeses
-      };
-    }));
+    this.teams.forEach(t=>t.players.forEach(p=>{ jogadoresById[p.pid]=this.jogadorParaSave(p); }));
     const snap={
       versao:7, temporada:this.temporada||1,
       // --- Fase 1: metadados de SaveSchema (validados no load) ---
@@ -6669,6 +6802,68 @@ const App={
     };
     snap.checksum=this._checksum(snap);
     return snap;
+  },
+  // D3 (v12): estado de UM jogador no save, enxuto. Campos no valor padrão são
+  // omitidos. Atributos: jogador do banco guarda só `ev` (atributos que evoluíram,
+  // valor decimal truncado em 4 casas) + `an` (já ancorado); teto/overall inicial/
+  // growth são recalculados no load a partir dos atributos do banco (determinístico).
+  // Garoto da base (sem base no banco) segue no formato completo.
+  jogadorParaSave(p){
+    const o={numero:p.numero, idade:p.idade, contratoMeses:p.contratoMeses, valor:p.valor};
+    const put=(k,v,def)=>{ if(v==null || v===def || (Array.isArray(v)&&!v.length)) return; o[k]=v; };
+    put('energia',Math.round(p.energia),100); put('gols',p.gols,0); put('jogos',p.jogos,0); put('lesionado',p.lesionado,0);
+    put('golsTemp',p.golsTemp,0); put('jogosTemp',p.jogosTemp,0); put('assist',p.assist,0); put('assistTemp',p.assistTemp,0);
+    put('amarelos',p.amarelos,0); put('expulsoes',p.expulsoes,0); put('suspenso',p.suspenso,0); put('motivoSusp',p._motivoSusp,'');
+    put('somaNotas',p._somaNotas,0); put('qtdNotas',p._qtdNotas,0); put('melhorNota',p._melhorNota,0); put('notaRodada',p._notaRodada,0);
+    put('moral',p.moral,65); put('semJogar',p._semJogar,0); put('notas5',p._notas5,null); put('ovBase',p._ovBase,null); put('aVenda',p.aVenda,false);
+    if(!p._attrsBase){
+      Object.assign(o,{attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor, ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr});
+      return o;
+    }
+    if(p._ancora && p.attrsDec){
+      o.an=1; const ev={}, b=p._attrsBase;
+      for(const a in p.attrsDec){ const v=p.attrsDec[a]; if(v!==b[a]){ const k=ATTR_ORDEM.indexOf(a); ev[k>=0?k:a]=Math.floor(v*1e3)/1e3; } }
+      if(Object.keys(ev).length) o.ev=ev;
+    }
+    if(p._mktFactor!=null && p._mktFactor!==1) o.mkt=Math.round(p._mktFactor*1e4)/1e4;
+    return o;
+  },
+  // aplica o estado salvo de UM jogador (v12 enxuto ou formato antigo completo)
+  aplicarJogadorSave(p, sp){
+    p.numero=sp.numero; p.energia=sp.energia!=null?sp.energia:100; p.gols=sp.gols||0; p.jogos=sp.jogos||0;
+    p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
+    p.assist=Math.max(0,+sp.assist||0); p.assistTemp=Math.max(0,+sp.assistTemp||0);   // v10 (v9 → 0)
+    if(sp.idade!=null && isFinite(+sp.idade)) p.idade=Math.max(15,Math.min(45,+sp.idade));   // v11
+    p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
+    p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
+    p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
+    p._ovBase=(sp.ovBase!=null)?sp.ovBase:null;   // item 4
+    p._notas5=Forma.sanearNotas(sp.notas5);       // v9 (save v8 → lista vazia)
+    if(sp.melhorNota) p._melhorNota=sp.melhorNota; else delete p._melhorNota;
+    if(sp.notaRodada) p._notaRodada=sp.notaRodada; else delete p._notaRodada;
+    if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
+    if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
+    if(sp.contratoMeses!=null) p.contratoMeses=sp.contratoMeses;
+    if(sp.valor!=null) p.valor=sp.valor;
+    p.aVenda=sp.aVenda||false;
+    if(sp.attrs){   // formato completo (saves ≤ v11 e garotos da base)
+      p.attrs=sp.attrs;
+      p.attrsDec=sp.attrsDec||Object.assign({},sp.attrs);
+      p._ovInicialNat=sp.ovIni; p._growth=sp.growth; p._capAttr=sp.capAttr;
+      p._mktFactor=sp.mkt!=null?sp.mkt:1.0;
+      p._ancora=(sp.ovIni!=null && sp.capAttr!=null);
+    } else {        // v12 enxuto: parte dos atributos do banco
+      const base=p._attrsBase||p.attrs;
+      p.attrs={...base}; p._ancora=false; p._growth=null; p._ovInicialNat=null; p._capAttr=null; p.attrsDec=null;
+      if(sp.an){
+        Evolucao.inicializar(p);   // teto/overall inicial/growth: mesma conta, mesmos atributos do banco
+        const ev=(sp.ev&&typeof sp.ev==='object')?sp.ev:{};
+        for(const k in ev){ const v=+ev[k], a=/^\d+$/.test(k)?ATTR_ORDEM[+k]:k; if(!a || !(a in base) || !isFinite(v)) continue;
+          const c=Math.max(1,Math.min(100,v)); p.attrsDec[a]=c; p.attrs[a]=Math.floor(c); }
+      }
+      p._mktFactor=(sp.mkt!=null && isFinite(+sp.mkt))?+sp.mkt:1.0;
+    }
+    Evolucao.recalcForca(p);
   },
   // checksum leve e determinístico (djb2) sobre o corpo do save, ignorando o
   // próprio campo checksum. Serve para detectar corrupção/adulteração acidental —
@@ -6759,7 +6954,8 @@ const App={
       for(const pid in s.jogadoresById){
         const sp=s.jogadoresById[pid];
         if(sp.energia!=null && (sp.energia<0 || sp.energia>100)) return {ok:false, motivo:`energia inválida no pid ${pid}`};
-        if(sp.attrs){ for(const k in sp.attrs){ const v=sp.attrs[k]; if(typeof v==='number' && (v<0||v>100)) return {ok:false, motivo:`atributo ${k} fora de 0..100 no pid ${pid}`}; } }
+        if(!sp || typeof sp!=='object') return {ok:false, motivo:`jogador malformado no pid ${pid}`};
+        for(const campo of ['attrs','ev']) if(sp[campo]){ for(const k in sp[campo]){ const v=sp[campo][k]; if(typeof v==='number' && (v<0||v>100)) return {ok:false, motivo:`atributo ${k} fora de 0..100 no pid ${pid}`}; } }
       }
     }
     // checksum: se presente, confere. Divergência = corrupção (aviso, não bloqueio fatal).
@@ -6838,30 +7034,8 @@ const App={
       (Array.isArray(s.gerados)?s.gerados:[]).forEach(g=>{ const p=this.jogadorDeGerado(g); if(p) pool[p.pid]=p; });
       // reaplica estado por pid
       for(const pid in s.jogadoresById){
-        const p=pool[pid], sp=s.jogadoresById[pid]; if(!p) continue;
-        p.numero=sp.numero; p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
-        p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
-        p.assist=Math.max(0,+sp.assist||0); p.assistTemp=Math.max(0,+sp.assistTemp||0);   // v10 (v9 → 0)
-        if(sp.idade!=null && isFinite(+sp.idade)) p.idade=Math.max(15,Math.min(45,+sp.idade));   // v11
-        p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
-        p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
-        p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
-        p._ovBase=(sp.ovBase!=null)?sp.ovBase:null;   // item 4
-        p._notas5=Forma.sanearNotas(sp.notas5);       // v9 (save v8 → lista vazia)
-        if(sp.melhorNota) p._melhorNota=sp.melhorNota; if(sp.notaRodada) p._notaRodada=sp.notaRodada;
-        if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
-        if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
-        if(sp.contratoMeses!=null) p.contratoMeses=sp.contratoMeses;
-        p.aVenda=sp.aVenda||false;
-        if(sp.attrs){
-          p.attrs=sp.attrs;
-          p.attrsDec=sp.attrsDec||Object.assign({},sp.attrs);
-          p._ovInicialNat=sp.ovIni; p._growth=sp.growth; p._capAttr=sp.capAttr;
-          p._mktFactor=sp.mkt!=null?sp.mkt:1.0;
-          p._ancora=(sp.ovIni!=null && sp.capAttr!=null);
-          if(sp.valor!=null) p.valor=sp.valor;
-          Evolucao.recalcForca(p);
-        }
+        const p=pool[pid], sp=s.jogadoresById[pid]; if(!p || !sp) continue;
+        this.aplicarJogadorSave(p, sp);
       }
       // reconstrói cada elenco na ordem salva
       s.composicao.forEach((pids,ti)=>{
@@ -7018,4 +7192,5 @@ const App={
   if(r) r.onclick=()=>{ const on=grid.classList.toggle('side-min'); try{ localStorage.setItem(K,on?'1':'0'); }catch(e){} };
 })();
 
+try{ Erros.ligar(); }catch(e){}   // ambientes sem window de verdade (testes em VM)
 App.boot();
