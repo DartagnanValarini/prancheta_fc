@@ -38,6 +38,8 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   t(/Meta da diretoria/i.test(txt),'mostra se a meta da diretoria foi cumprida');
   if(SHOTS) await page.screenshot({path:path.join(SHOTS,'diagnostico.png')});
   await page.click('#flkModal .flkm-foot .btn:has-text("Começar temporada")');
+  // contratos no último ano passam pela janela de renovações antes de virar
+  if(/renovações/.test(await titulo(page)||'')){ await page.click('#flkModal .flkm-foot .btn:has-text("Renovar todos")'); await page.click('#flkModal .flkm-foot .btn:has-text("Confirmar")'); }
   t((await page.evaluate(()=>App.temporada))===temp0+1 && !(await page.evaluate(()=>App.tempEncerrada)),'"Começar temporada" vira o ano');
 
   console.log('\n[2] lições reagem aos números (cenários forçados)');

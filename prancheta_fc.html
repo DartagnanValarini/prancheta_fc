@@ -476,6 +476,16 @@
   .contador-folha{font-size:11px; color:var(--gray)} .contador-folha b{color:#e8c547}
   .contador .mf-kpis{grid-template-columns:repeat(3,1fr)}
   @media(max-width:520px){ .contador .mf-kpis{grid-template-columns:1fr 1fr} .neg-dir b{font-size:13px} }
+  /* renovações */
+  .ren-lista{display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto}
+  .ren-row{display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; background:var(--panel); border:2px solid var(--line); border-radius:10px; padding:9px 11px}
+  .ren-row.ok{border-color:var(--gray2)}
+  .ren-id{display:flex; flex-direction:column; gap:2px; min-width:0; flex:1 1 220px}
+  .ren-id b{color:var(--white)} .ren-id small{font-size:11px; color:var(--gray)} .ren-id small b{color:#e8c547}
+  .ren-id .tr-badge{width:16px; height:16px; font-size:8px; display:inline-flex}
+  .ren-st{font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:6px; border:1px solid; align-self:flex-start}
+  .ren-st.b{color:var(--lemon); border-color:var(--lemon)} .ren-st.r{color:var(--loss); border-color:var(--loss)}
+  .ren-acoes{display:flex; gap:5px; flex-wrap:wrap}
   /* coletiva pós-jogo */
   .col-mic{width:44px; height:44px; border-radius:12px; background:var(--lemon); display:flex; align-items:center; justify-content:center; font-size:22px; flex:none}
   .mf-destaque b.col-q{font-family:'Space Mono'; font-weight:700; font-size:14px; color:var(--white); line-height:1.5}
@@ -5638,7 +5648,138 @@ const App={
           <div class="diag-h">O que muda agora</div>
           <div class="mf-lista">${d.muda.map(m=>`<div><b>${m.a}</b><span>${m.b}</span></div>`).join('')}</div>`,
       }),
-      botoes:[{txt:`Começar temporada ${(this.temporada||1)+1} ▸`, tipo:'primary', onClick:()=>{ this.novaTemporadaCompleta(); }}]});
+      botoes:[{txt:`Começar temporada ${(this.temporada||1)+1} ▸`, tipo:'primary', onClick:()=>{
+        // contratos no último ano passam pela janela de renovações antes de virar
+        this.abrirRenovacoes(()=>this.novaTemporadaCompleta()); return !!this.vencendo(this.myTeam).length; }}]});
+  },
+
+  /* ====================================================================
+     RENOVAÇÃO DE CONTRATO (§6.1 item 8) — na virada da temporada, quem está
+     no ÚLTIMO ANO (contratoMeses ≤ 12) pede salário + prazo conforme a
+     temporada que fez (nota), a idade e a moral. Renovar pelo pedido,
+     contrapropor ou dispensar (sai de graça pra outro clube). O contador
+     mostra a folha nova e quantos meses o caixa aguenta.
+     A cada virada todos os contratos perdem 12 meses; a IA renova os dela.
+     ==================================================================== */
+  vencendo(ti){ return this.teams[ti].players.filter(p=>p.contratoMeses!=null && p.contratoMeses<=12); },
+  pedidoRenovacao(p){
+    const nota=p._qtdNotas>0 ? p._somaNotas/p._qtdNotas : null;
+    let f = nota==null?1.0 : nota>=7?1.35 : nota>=6.5?1.2 : nota>=6?1.1 : 1.0;
+    if((p.idade||0)>=32) f*=0.9;                          // veterano aceita menos
+    const m=Rating.moralDe(p);
+    if(m<40) f*=1.15;                                     // insatisfeito só fica ganhando mais
+    const sal=Math.max(5, Math.round((p.salario||20)*f));
+    const anos=(p.idade||25)<=25?3:(p.idade||25)<=30?2:1;
+    return {sal, anos, nota, exigente:m<65};
+  },
+  // aceita contraproposta? quem está contente topa até −10%, o resto só −3%
+  aceitaContraRenovacao(p, sal){
+    const ped=this.pedidoRenovacao(p);
+    return sal>=Math.round(ped.sal*(ped.exigente?0.97:0.9));
+  },
+  // folha mensal líquida (patrocínio + bilheteria de ~2 jogos em casa − folha − parcela)
+  saldoMensal(deltaFolhaMensal){
+    const i=this.myTeam;
+    const rec=this.patrocinioMensal(i)+this.rendaBilheteria(i,null)*2;
+    const parcela=(this.emprestimo&&this.emprestimo.parcela)||0;
+    return Math.round(rec-(this.folhaDe(i)+(deltaFolhaMensal||0))-parcela);
+  },
+  contadorMesesHTML(deltaFolhaMensal){
+    const caixa=this.teams[this.myTeam].saldo||0, liq=this.saldoMensal(deltaFolhaMensal), R=v=>this.fmtReais(v);
+    const folha=this.folhaDe(this.myTeam)+(deltaFolhaMensal||0);
+    const meses = liq>=0 ? null : Math.max(0,Math.floor(caixa/(-liq)));
+    const fala = liq>=0 ? `As receitas cobrem essa folha (sobra ${R(liq)} por mês).`
+      : meses<=3 ? `Perigo: com essa folha o caixa dura só ~${meses} ${meses===1?'mês':'meses'}.`
+      : `Com essa folha o caixa dura ~${meses} meses (perde ${R(-liq)} por mês).`;
+    return `<div class="contador ${liq<0&&meses<=3?'alerta':''}">
+      <div class="contador-top"><span class="col-mic">🧮</span><div><div class="contador-nome">Seu contador</div><div class="contador-fala">“${fala}”</div></div></div>
+      <div class="mf-kpis"><div class="mf-kpi"><small>Folha nova</small><b>${R(folha)}/mês</b></div>
+        <div class="mf-kpi"><small>Saldo por mês</small><b style="color:${liq<0?'var(--loss)':'var(--lemon)'}">${liq>=0?'+':''}${R(liq)}</b></div>
+        <div class="mf-kpi"><small>Caixa dura</small><b style="color:${meses!=null&&meses<=3?'var(--loss)':'var(--lemon)'}">${meses==null?'∞':'~'+meses+' meses'}</b></div></div>
+    </div>`;
+  },
+  // janela de renovações: decisões = {pid: {acao:'renovar'|'dispensar', sal, anos}}
+  abrirRenovacoes(aoConcluir, decisoes){
+    const t=this.teams[this.myTeam], lista=this.vencendo(this.myTeam);
+    if(!lista.length) return aoConcluir();
+    const dec=decisoes||{};
+    // efeito na folha: renovado troca o salário; dispensado sai da folha
+    const deltaFolha=lista.reduce((a,p)=>{ const d=dec[p.pid]; if(!d) return a;
+      return a + (d.acao==='dispensar' ? -(p.salario||0) : (d.sal-(p.salario||0)))*1000; },0);
+    const faltam=lista.filter(p=>!dec[p.pid]).length;
+    const onze=new Set(this.onzeDe(this.myTeam).map(p=>p.numero));
+    const linhas=lista.map(p=>{ const ped=this.pedidoRenovacao(p), d=dec[p.pid];
+      const status=!d?'':d.acao==='dispensar'?'<span class="ren-st r">dispensado</span>':`<span class="ren-st b">renovado · ${this.fmtReais(d.sal*1000)} · ${d.anos}a</span>`;
+      return `<div class="ren-row ${d?'ok':''}">
+        <div class="ren-id"><b>${this.esc(p.nome)}</b>${onze.has(p.numero)?' <span class="tr-badge t">T</span>':''}
+          <small>${Motor.melhorGeral(p).pos} · ${p.idade} anos · força ${p.forca}${ped.nota!=null?` · nota ${ped.nota.toFixed(1)}`:''}</small>
+          <small>Hoje ${this.fmtReais((p.salario||0)*1000)}/mês → pede <b>${this.fmtReais(ped.sal*1000)}/mês</b> por ${ped.anos} ano${ped.anos>1?'s':''}${ped.exigente?' · <i>exigente</i>':''}</small>
+          ${status}</div>
+        <div class="ren-acoes">
+          <button class="mini-btn" data-ren="ok" data-pid="${p.pid}" title="Renovar pelo pedido">✓ Renovar</button>
+          <button class="mini-btn ghost" data-ren="contra" data-pid="${p.pid}" title="Contrapropor salário">↺ Contrapropor</button>
+          <button class="mini-btn ghost" data-ren="fora" data-pid="${p.pid}" title="Deixar sair de graça">✕ Dispensar</button></div>
+      </div>`; }).join('');
+    this.modalFLK({titulo:'📝 Janela de renovações', fechavel:false,
+      corpoHTML:`<div class="mf">
+        <div class="mf-destaque"><small>Fim de contrato</small><b>${lista.length} jogador${lista.length>1?'es':''} no último ano</b>
+          <span>Quem não for renovado sai de graça na virada da temporada.</span></div>
+        ${this.contadorMesesHTML(deltaFolha)}
+        <div class="ren-lista">${linhas}</div></div>`,
+      botoes:[{txt:'Renovar todos pelo pedido', tipo:'sm', onClick:()=>{
+          lista.forEach(p=>{ if(!dec[p.pid]){ const ped=this.pedidoRenovacao(p); dec[p.pid]={acao:'renovar', sal:ped.sal, anos:ped.anos}; } });
+          this.abrirRenovacoes(aoConcluir, dec); return true; }},
+        {txt:faltam?`Decida ${faltam} contrato${faltam>1?'s':''}`:'Confirmar e virar a temporada ▸', tipo:faltam?'sm':'primary', onClick:()=>{
+          if(faltam) return true;
+          this.aplicarRenovacoes(dec); aoConcluir(); }}],
+      aoAbrir:(el)=>el.querySelectorAll('[data-ren]').forEach(b=>b.onclick=()=>{
+        const p=t.players.find(x=>x.pid===+b.dataset.pid); if(!p) return;
+        const ped=this.pedidoRenovacao(p);
+        if(b.dataset.ren==='ok'){ dec[p.pid]={acao:'renovar', sal:ped.sal, anos:ped.anos}; return this.abrirRenovacoes(aoConcluir, dec); }
+        if(b.dataset.ren==='fora'){ dec[p.pid]={acao:'dispensar'}; return this.abrirRenovacoes(aoConcluir, dec); }
+        this.modalFLK({titulo:`↺ Contraproposta a ${this.esc(p.nome)}`, fechavel:false,
+          corpoHTML:this.cartaoDecisao({destaque:{rotulo:'Pedido do jogador', titulo:`${this.fmtReais(ped.sal*1000)}/mês por ${ped.anos} ano${ped.anos>1?'s':''}`,
+              desc:ped.exigente?'Ele está exigente (moral baixa): não deve aceitar muito menos.':'Ele está contente no clube: pode aceitar um pouco menos.'}}),
+          campos:[{id:'sal', label:'Sua oferta (em mil por mês)', tipo:'number', valor:String(Math.round(ped.sal*0.92))}],
+          botoes:[{txt:'Voltar', tipo:'sm', onClick:()=>{ this.abrirRenovacoes(aoConcluir, dec); return true; }},
+            {txt:'Enviar', tipo:'primary', onClick:(v)=>{
+              const sal=Math.round(+String(v.sal).replace(',','.'))||0;
+              if(this.aceitaContraRenovacao(p, sal)){ dec[p.pid]={acao:'renovar', sal, anos:ped.anos}; this.abrirRenovacoes(aoConcluir, dec); }
+              else this.avisoFLK('❌ Não aceitou', `${this.esc(p.nome)} quer ${this.fmtReais(ped.sal*1000)}/mês. Renove pelo pedido ou dispense.`, 'var(--loss)', {onClose:()=>this.abrirRenovacoes(aoConcluir, dec)});
+              return true; }}]});
+      })});
+  },
+  // aplica as decisões: renovado ganha salário/prazo; dispensado sai de graça pra um clube da IA
+  aplicarRenovacoes(dec){
+    const t=this.teams[this.myTeam];
+    Object.keys(dec).forEach(pid=>{ const d=dec[pid], p=t.players.find(x=>x.pid===+pid); if(!p) return;
+      if(d.acao==='renovar'){ p.salario=d.sal; p.contratoMeses=(p.contratoMeses||0)+d.anos*12;
+        p.moral=Math.min(100,Rating.moralDe(p)+5); }
+      else this.liberarJogador(p);
+    });
+    this.escalarSeIncompleto();
+  },
+  // jogador sai de graça: vai pra um clube da IA da mesma série com o menor elenco
+  liberarJogador(p){
+    const div=this.teams[this.myTeam].divisao;
+    const cand=this.teams.map((t,i)=>({t,i})).filter(o=>o.i!==this.myTeam && o.t.divisao===div).sort((a,b)=>a.t.players.length-b.t.players.length);
+    const dest=cand[0]?cand[0].i:this.teams.findIndex((t,i)=>i!==this.myTeam);
+    const saldoDest=this.teams[dest].saldo;
+    const r=this.executarTransferencia(p.pid, dest, 0);
+    this.teams[dest].saldo=saldoDest;
+    if(r.ok){ r.jogador.contratoMeses=24; this.addExtrato('Saída sem custo: '+p.nome+' → '+this.teams[dest].abrev, 0); }
+    return r;
+  },
+  escalarSeIncompleto(){ if(this.onzeDe(this.myTeam).length<11) this.escalarMelhor(); },
+  // virada: todos perdem 12 meses; a IA renova o que venceu (+24)
+  envelhecerContratos(){
+    this.teams.forEach((t,ti)=>t.players.forEach(p=>{
+      if(p.contratoMeses==null) p.contratoMeses=24;
+      p.contratoMeses=Math.max(0,p.contratoMeses-12);
+      if(p.contratoMeses<=0 && ti!==this.myTeam) p.contratoMeses=24;
+    }));
+    // no meu time, contrato zerado sem decisão (não deveria acontecer) ganha 1 ano automático
+    this.teams[this.myTeam].players.forEach(p=>{ if(p.contratoMeses<=0) p.contratoMeses=12; });
   },
 
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
@@ -6686,6 +6827,7 @@ const App={
     this.temporada=(this.temporada||1)+1;
     // 1) aplica acesso/rebaixamento de TODAS as divisões (times trocam de série)
     const mudancas=this.aplicarAcessoRebaixamento();
+    this.envelhecerContratos();          // contratos perdem 12 meses; a IA renova os que venceram
     const meuMov=mudancas.find(m=>m.ti===this.myTeam);
     if(meuMov && meuMov.para<meuMov.de) car.acessos++;   // C3: subi de divisão = acesso
     // 2) gols/jogos de CARREIRA acumulam; os da TEMPORADA zeram; disciplina/energia idem
