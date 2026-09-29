@@ -2697,7 +2697,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:10,  // v9: forma recente · v10: assistências (assist/assistTemp)
+  SCHEMA_VERSION:11,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -5648,9 +5648,11 @@ const App={
           <div class="diag-h">O que muda agora</div>
           <div class="mf-lista">${d.muda.map(m=>`<div><b>${m.a}</b><span>${m.b}</span></div>`).join('')}</div>`,
       }),
-      botoes:[{txt:`Começar temporada ${(this.temporada||1)+1} ▸`, tipo:'primary', onClick:()=>{
-        // contratos no último ano passam pela janela de renovações antes de virar
-        this.abrirRenovacoes(()=>this.novaTemporadaCompleta()); return !!this.vencendo(this.myTeam).length; }}]});
+      botoes:[{txt:`Começar temporada ${(this.temporada||1)+1} ▸`, tipo:'primary', onClick:()=>this.seguirNoModal(()=>{
+        // quem vai se aposentar é anunciado antes; depois, janela de renovações; depois vira
+        this.decidirAposentadorias();
+        this.mostrarAposentadorias(()=>this.abrirRenovacoes(()=>this.novaTemporadaCompleta()));
+      })}]});
   },
 
   /* ====================================================================
@@ -5661,7 +5663,7 @@ const App={
      mostra a folha nova e quantos meses o caixa aguenta.
      A cada virada todos os contratos perdem 12 meses; a IA renova os dela.
      ==================================================================== */
-  vencendo(ti){ return this.teams[ti].players.filter(p=>p.contratoMeses!=null && p.contratoMeses<=12); },
+  vencendo(ti){ return this.teams[ti].players.filter(p=>p.contratoMeses!=null && p.contratoMeses<=12 && !this.vaiSeAposentar(p)); },
   pedidoRenovacao(p){
     const nota=p._qtdNotas>0 ? p._somaNotas/p._qtdNotas : null;
     let f = nota==null?1.0 : nota>=7?1.35 : nota>=6.5?1.2 : nota>=6?1.1 : 1.0;
@@ -5731,7 +5733,7 @@ const App={
           this.abrirRenovacoes(aoConcluir, dec); return true; }},
         {txt:faltam?`Decida ${faltam} contrato${faltam>1?'s':''}`:'Confirmar e virar a temporada ▸', tipo:faltam?'sm':'primary', onClick:()=>{
           if(faltam) return true;
-          this.aplicarRenovacoes(dec); aoConcluir(); }}],
+          this.aplicarRenovacoes(dec); return this.seguirNoModal(aoConcluir); }}],
       aoAbrir:(el)=>el.querySelectorAll('[data-ren]').forEach(b=>b.onclick=()=>{
         const p=t.players.find(x=>x.pid===+b.dataset.pid); if(!p) return;
         const ped=this.pedidoRenovacao(p);
@@ -5781,6 +5783,97 @@ const App={
     // no meu time, contrato zerado sem decisão (não deveria acontecer) ganha 1 ano automático
     this.teams[this.myTeam].players.forEach(p=>{ if(p.contratoMeses<=0) p.contratoMeses=12; });
   },
+
+  /* ====================================================================
+     APOSENTADORIA DE VETERANOS (§6.1 item 9) + IDADE QUE AVANÇA
+     Na virada, cada jogador de 33+ pode parar (chanceAposentadoria: 10% aos
+     33 → 85% aos 37+). Quem vai parar é anunciado ANTES da janela de
+     renovações. Cada aposentado abre vaga pra um GAROTO DA BASE do clube
+     (17–18 anos, mesmo setor, mais fraco hoje e com potencial), gerado pelo
+     jogo e salvo por inteiro no save (v11). Depois todo mundo faz +1 ano.
+     ==================================================================== */
+  decidirAposentadorias(){
+    const set=new Set();
+    this.teams.forEach(t=>t.players.forEach(p=>{ const c=this.chanceAposentadoria(p); if(c>0 && Math.random()<c) set.add(p.pid); }));
+    this._aposentando=set; return set;
+  },
+  vaiSeAposentar(p){ return !!(this._aposentando && this._aposentando.has(p.pid)); },
+  // modal (padrão FLK) com os meus que vão parar + os nomes fortes da liga
+  mostrarAposentadorias(seguir){
+    const set=this._aposentando||new Set(), meus=this.teams[this.myTeam].players.filter(p=>set.has(p.pid));
+    const liga=[]; this.teams.forEach((t,ti)=>{ if(ti!==this.myTeam) t.players.forEach(p=>{ if(set.has(p.pid)) liga.push({p,t}); }); });
+    liga.sort((a,b)=>b.p.forca-a.p.forca);
+    if(!meus.length) return seguir();
+    this.modalFLK({titulo:'👴 Fim de carreira', fechavel:false,
+      corpoHTML:this.cartaoDecisao({
+        destaque:{rotulo:'Seu elenco', titulo:`${meus.length} jogador${meus.length>1?'es vão':' vai'} pendurar as chuteiras`,
+          desc:`No lugar de cada um, sobe um garoto da base. Veteranos que param não entram na janela de renovações.`},
+        lista:meus.map(p=>({a:this.esc(p.nome), b:`${p.idade} anos · ${Motor.melhorGeral(p).pos} · força ${p.forca} · ${p.gols||0} gols na carreira`})),
+        extraHTML:liga.length?`<div class="diag-h">Na liga também param</div><div class="mf-lista">${liga.slice(0,3).map(o=>`<div><b>${this.esc(o.p.nome)}</b><span>${this.esc(o.t.nome)} · ${o.p.idade} anos</span></div>`).join('')}</div>`:'',
+      }),
+      botoes:[{txt:'Seguir ▸', tipo:'primary', onClick:()=>this.seguirNoModal(seguir)}]});
+  },
+  proximoPidGerado(){
+    let min=0; this.teams.forEach(t=>t.players.forEach(p=>{ if(p.pid<min) min=p.pid; }));
+    return Math.min(min, this._ultPidGerado||0)-1;
+  },
+  // garoto da base: modelo = um jogador do mesmo setor na mesma série, 18% mais fraco + ruído
+  gerarJovem(ti, setor){
+    const t=this.teams[ti];
+    const pool=[]; this.teams.forEach(x=>{ if(x.divisao===t.divisao) x.players.forEach(p=>{ if(p.setorNat===setor && p.attrs && (p.idade||25)>=20) pool.push(p); }); });
+    if(!pool.length) this.teams.forEach(x=>x.players.forEach(p=>{ if(p.attrs) pool.push(p); }));
+    const m=pool[Math.floor(Math.random()*pool.length)], r=(a,b)=>a+Math.random()*(b-a);
+    const attrs={}; for(const a in m.attrs) attrs[a]=Math.max(1,Math.min(99,Math.round(m.attrs[a]*0.82+r(-4,4))));
+    const ovModelo=Motor.melhorGeral(m).ov;
+    const nomes=this.teams.flatMap(x=>x.players).filter(p=>p.nome && p.nome.includes(' '));
+    const pri=nomes[Math.floor(Math.random()*nomes.length)].nome.split(' ')[0];
+    const sob=nomes[Math.floor(Math.random()*nomes.length)].nome.split(' ').slice(-1)[0];
+    const usados=new Set(t.players.map(p=>p.numero)); let numero=1; while(usados.has(numero)) numero++;
+    const pid=this.proximoPidGerado(); this._ultPidGerado=pid;
+    const p=this.jogadorDeGerado({pid, nome:`${pri} ${sob}`, numero, setorNat:setor, idade:17+Math.floor(Math.random()*2), attrs,
+      potential:Math.round(ovModelo*(1.0+Math.random()*0.18)), talento:3+Math.floor(Math.random()*3),
+      salario:Math.max(5,Math.round((m.salario||20)*0.4)), contratoMeses:36, valor:Math.max(0.1,+((m.valor||1)*0.5).toFixed(1)),
+      altura:m.altura, peso:m.peso, peDominante:m.peDominante, peFraco:m.peFraco});
+    Evolucao.inicializar(p);
+    return p;
+  },
+  // monta o objeto de jogador a partir dos dados salvos de um gerado (dado NÃO confiável: saneia)
+  jogadorDeGerado(g){
+    if(!g || !(+g.pid<0) || !g.attrs) return null;
+    const attrs={}; for(const a in g.attrs){ const v=+g.attrs[a]; if(isFinite(v)) attrs[a]=Math.max(0,Math.min(100,v)); }
+    const setor=['GK','DEF','MEI','ATQ'].includes(g.setorNat)?g.setorNat:'MEI';
+    const p={nome:String(g.nome||'Garoto da Base').slice(0,40), numero:Math.max(1,Math.min(99,+g.numero||1)), pid:+g.pid, setorNat:setor,
+      energia:100, idade:Math.max(15,Math.min(45,+g.idade||18)), valor:+g.valor||0.5, salario:Math.max(1,+g.salario||10),
+      contratoMeses:Math.max(0,+g.contratoMeses||36), pais:'BR', jogos:0, gols:0, expulsoes:0, lesoesTemporada:0,
+      altura:g.altura, peso:g.peso, peDominante:g.peDominante, peFraco:g.peFraco, foto:null, attrs,
+      potential:+g.potential||null, talento:Math.max(1,Math.min(5,+g.talento||3)), aVenda:false, moral:70, _ovBase:null, _gerado:true};
+    p.forca=Math.max(...Object.keys(PESOS_POS).map(pos=>Motor.overallEm({attrs},pos)));
+    return p;
+  },
+  dadosGerado(p){ return {pid:p.pid, nome:p.nome, numero:p.numero, setorNat:p.setorNat, idade:p.idade, attrs:p.attrs, potential:p.potential,
+    talento:p.talento, salario:p.salario, contratoMeses:p.contratoMeses, valor:p.valor, altura:p.altura, peso:p.peso, peDominante:p.peDominante, peFraco:p.peFraco}; },
+  // aplica na virada: tira os aposentados, sobe um garoto da base no lugar de cada um
+  aplicarAposentadorias(){
+    const set=this._aposentando||this.decidirAposentadorias();
+    const rel={meus:[], base:[], total:0};
+    this.teams.forEach((t,ti)=>{
+      const sai=t.players.filter(p=>set.has(p.pid)); if(!sai.length) return;
+      sai.forEach(p=>{
+        t.players.splice(t.players.indexOf(p),1); rel.total++;
+        if(this.cfg[ti]){ delete this.cfg[ti].posEscala[p.numero]; delete this.cfg[ti].roleEscala[p.numero]; }
+        const j=this.gerarJovem(ti, p.setorNat); t.players.push(j);
+        if(ti===this.myTeam){ rel.meus.push(p); rel.base.push(j); if(this.cfg[ti]) this.cfg[ti].posEscala[j.numero]='BANCO'; }
+      });
+      if(ti!==this.myTeam) this.cfg[ti]=this.cfgInicial(t);
+    });
+    this._aposentando=null;
+    this.escalarSeIncompleto();
+    return rel;
+  },
+  envelhecerJogadores(){ this.teams.forEach(t=>t.players.forEach(p=>{ p.idade=(p.idade||25)+1; })); },
+
+  // roda fn a partir de um botão de modal: mantém aberto só se fn abriu OUTRO modal
+  seguirNoModal(fn){ const m0=document.getElementById('flkModal'), a=m0&&m0.dataset.tok; fn(); const m1=document.getElementById('flkModal'); return !!(m1 && m1.dataset.tok!==a); },
 
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
@@ -6828,6 +6921,8 @@ const App={
     // 1) aplica acesso/rebaixamento de TODAS as divisões (times trocam de série)
     const mudancas=this.aplicarAcessoRebaixamento();
     this.envelhecerContratos();          // contratos perdem 12 meses; a IA renova os que venceram
+    this._relAposentadoria=this.aplicarAposentadorias();   // veteranos param; sobe um garoto da base
+    this.envelhecerJogadores();          // todo mundo +1 ano
     const meuMov=mudancas.find(m=>m.ti===this.myTeam);
     if(meuMov && meuMov.para<meuMov.de) car.acessos++;   // C3: subi de divisão = acesso
     // 2) gols/jogos de CARREIRA acumulam; os da TEMPORADA zeram; disciplina/energia idem
@@ -6854,7 +6949,12 @@ const App={
     // prêmio em dinheiro por acesso (sobe = divisão de letra menor)
     if(meuMov && meuMov.para<meuMov.de){ this.premiarAcesso(meuMov.para); }
     this.setStatus('saveStatus','ok',msg);
-    if(meuMov) setTimeout(()=>this.avisoFLK(meuMov.para<meuMov.de?'⬆️ Acesso!':'🔻 Rebaixamento', msg, meuMov.para<meuMov.de?'var(--lemon)':'var(--loss)'),50);
+    if(meuMov) setTimeout(()=>this.avisoFLK(meuMov.para<meuMov.de?'⬆️ Acesso!':'🔻 Rebaixamento', msg, meuMov.para<meuMov.de?'var(--lemon)':'var(--loss)',{fila:true}),50);
+    const rel=this._relAposentadoria;
+    if(rel && rel.base.length) setTimeout(()=>this.modalFLK({fila:true, titulo:'🌱 Sobe da base', corpoHTML:this.cartaoDecisao({
+        destaque:{rotulo:'No lugar dos aposentados', titulo:`${rel.base.length} garoto${rel.base.length>1?'s':''} no profissional`, desc:'Começam no banco. Dê minutos pra eles evoluírem.'},
+        lista:rel.base.map(j=>({a:this.esc(j.nome), b:`${j.idade} anos · ${Motor.melhorGeral(j).pos} · força ${j.forca}`}))}),
+      botoes:[{txt:'Bora',tipo:'primary'}]}),60);
     // C3: manda o score pro ranking (servidor roda plausibilidade e carimba suspeito).
     this.submeterRanking().catch(()=>{});
   },
@@ -6891,6 +6991,7 @@ const App={
         jogos:p.jogos||0, lesionado:p.lesionado||0,
         golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
         assist:p.assist||0, assistTemp:p.assistTemp||0,             // v10
+        idade:p.idade,                                               // v11: idade avança por temporada
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
         somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
         moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
@@ -6914,6 +7015,7 @@ const App={
       carreira:this.garantirCarreira(),// C3: contadores de carreira (títulos/acessos) p/ o ranking
       opcoes:this.garantirOpcoes(),    // Bloco B: preferências do jogador
       composicao:this.teams.map(t=>t.players.map(p=>p.pid)),  // quem está em cada time
+      gerados:this.teams.flatMap(t=>t.players.filter(p=>p._gerado).map(p=>this.dadosGerado(p))),   // v11: garotos da base
       grupos:this.grupos||null, fase:this.fase||'pontos', divisao:this.divisao||null,
       mataMata:this.mataMata||null,
       jogadoresById,
@@ -7006,6 +7108,7 @@ const App={
     if(s.composicao){
       if(!Array.isArray(s.composicao)) return {ok:false, motivo:'composição malformada'};
       const pidsBanco=new Set(); this.teams.forEach(t=>t.players.forEach(p=>pidsBanco.add(p.pid)));
+      (Array.isArray(s.gerados)?s.gerados:[]).forEach(g=>{ if(g && +g.pid<0) pidsBanco.add(+g.pid); });   // v11
       let vazios=0, desconhecidos=0;
       s.composicao.forEach(pids=>{
         if(!Array.isArray(pids) || pids.length===0){ vazios++; return; }
@@ -7092,12 +7195,15 @@ const App={
       // pool = todos os jogadores carregados do banco, indexados por pid
       const pool={};
       this.teams.forEach(t=>t.players.forEach(p=>{ pool[p.pid]=p; }));
+      // v11: garotos da base gerados pelo jogo (não existem no banco)
+      (Array.isArray(s.gerados)?s.gerados:[]).forEach(g=>{ const p=this.jogadorDeGerado(g); if(p) pool[p.pid]=p; });
       // reaplica estado por pid
       for(const pid in s.jogadoresById){
         const p=pool[pid], sp=s.jogadoresById[pid]; if(!p) continue;
         p.numero=sp.numero; p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
         p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
         p.assist=Math.max(0,+sp.assist||0); p.assistTemp=Math.max(0,+sp.assistTemp||0);   // v10 (v9 → 0)
+        if(sp.idade!=null && isFinite(+sp.idade)) p.idade=Math.max(15,Math.min(45,+sp.idade));   // v11
         p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
         p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
         p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4

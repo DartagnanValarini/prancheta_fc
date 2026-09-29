@@ -58,7 +58,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     const ok9=App.validateSnapshot(v9).ok; App.aplicarSnapshot(v9);
     return {v:snap.schemaVersion, igual:antes===depois, ok9, zero:App.teams[App.myTeam].players.every(p=>p.assist===0&&p.assistTemp===0)};
   });
-  t(sv.v===10 && sv.igual,'snapshot v10 preserva assistências');
+  t(sv.v>=10 && sv.igual,'snapshot (v'+sv.v+') preserva assistências');
   t(sv.ok9 && sv.zero,'save v9 carrega com assistências zeradas');
   t(erros.filter(e=>!/ERR_FAILED/.test(e)).length===0,'sem erros de JS');
   await browser.close();

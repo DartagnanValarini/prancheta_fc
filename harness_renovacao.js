@@ -32,6 +32,7 @@ const clicar=(page,txt)=>page.click(`#flkModal .flkm-foot .btn:has-text("${txt}"
 
   console.log('\n[2] janela de renovações');
   const setup=await page.evaluate(()=>{ const t=App.teams[App.myTeam]; t.saldo=10e6;
+    t.players.forEach(p=>{ p.idade=Math.min(p.idade,30); });   // ninguém se aposenta neste teste
     const ps=t.players.slice(0,4); ps.forEach(p=>{ p.contratoMeses=6; p.moral=70; });
     ps[2].moral=30;   // exigente
     t.players.slice(4).forEach(p=>{ if(p.contratoMeses<=12) p.contratoMeses=30; });

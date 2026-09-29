@@ -39,6 +39,7 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   if(SHOTS) await page.screenshot({path:path.join(SHOTS,'diagnostico.png')});
   await page.click('#flkModal .flkm-foot .btn:has-text("Começar temporada")');
   // contratos no último ano passam pela janela de renovações antes de virar
+  if(/Fim de carreira/.test(await titulo(page)||'')) await page.click('#flkModal .flkm-foot .btn:has-text("Seguir")');
   if(/renovações/.test(await titulo(page)||'')){ await page.click('#flkModal .flkm-foot .btn:has-text("Renovar todos")'); await page.click('#flkModal .flkm-foot .btn:has-text("Confirmar")'); }
   t((await page.evaluate(()=>App.temporada))===temp0+1 && !(await page.evaluate(()=>App.tempEncerrada)),'"Começar temporada" vira o ano');
 
