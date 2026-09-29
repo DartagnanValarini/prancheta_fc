@@ -1346,6 +1346,62 @@ const Objetivos={
 };
 
 /* ====================================================================
+   ESCALAÇÃO AUTOMÁTICA — atribuição ÓTIMA jogador × vaga (algoritmo húngaro)
+   Antes: preenchia vaga por vaga na ordem da formação (GK → defesa → meio →
+   ataque), pegando o melhor disponível pra CADA vaga. Resultado: um meia forte
+   (MC 78, DC 72) ia pra zaga só porque a zaga era preenchida primeiro.
+   Agora: escolhe os 11 de uma vez, maximizando a soma de
+     nota(p,vaga) = overall na vaga − penalidade por jogar fora da posição natural
+   (natural 0 · mesmo setor −2 · outro setor −10: improvisar só quando compensa muito).
+   Usa Motor.overallEm (então o "Descansados", que pesa energia, continua valendo).
+   ==================================================================== */
+const Escalacao={
+  PEN_TREINADA:2,
+  PEN_IMPROVISADA:10,
+  posNatural(p){ return p._posNat || Motor.melhorGeral(p).pos; },
+  nota(p, pos, nat){
+    const ov=Motor.overallEm(p,pos);
+    if(pos===nat) return ov;
+    const mesmoSetor=POS_SETOR[pos] && POS_SETOR[pos]===POS_SETOR[nat];
+    return ov-(mesmoSetor?this.PEN_TREINADA:this.PEN_IMPROVISADA);
+  },
+  // jogadores[], slots[] → array alinhado com slots: {pos, p|null}
+  // bonus(p) opcional soma à nota (ex.: preferir manter quem já é titular)
+  atribuir(jogadores, slots, bonus){
+    const n=slots.length; if(!n) return [];
+    const nat=new Map(jogadores.map(p=>[p,this.posNatural(p)]));
+    const m=Math.max(jogadores.length, n);          // colunas extras = vaga vazia
+    const custo=slots.map(pos=>{ const row=new Array(m);
+      for(let j=0;j<m;j++) row[j] = j<jogadores.length ? -(this.nota(jogadores[j],pos,nat.get(jogadores[j]))+(bonus?bonus(jogadores[j]):0)) : 1000;
+      return row; });
+    const col=this.hungaro(custo);
+    return slots.map((pos,i)=>({pos, p: col[i]>=0 && col[i]<jogadores.length ? jogadores[col[i]] : null}));
+  },
+  // húngaro (min custo), matriz n×m com n ≤ m. Retorna, pra cada linha, a coluna atribuída.
+  hungaro(a){
+    const n=a.length, m=a[0].length, INF=1e18;
+    const u=new Array(n+1).fill(0), v=new Array(m+1).fill(0), p=new Array(m+1).fill(0), way=new Array(m+1).fill(0);
+    for(let i=1;i<=n;i++){
+      p[0]=i; let j0=0; const minv=new Array(m+1).fill(INF), used=new Array(m+1).fill(false);
+      do{
+        used[j0]=true; const i0=p[j0]; let delta=INF, j1=0;
+        for(let j=1;j<=m;j++) if(!used[j]){
+          const cur=a[i0-1][j-1]-u[i0]-v[j];
+          if(cur<minv[j]){ minv[j]=cur; way[j]=j0; }
+          if(minv[j]<delta){ delta=minv[j]; j1=j; }
+        }
+        for(let j=0;j<=m;j++){ if(used[j]){ u[p[j]]+=delta; v[j]-=delta; } else minv[j]-=delta; }
+        j0=j1;
+      } while(p[j0]!==0);
+      do{ const j1=way[j0]; p[j0]=p[j1]; j0=j1; } while(j0);
+    }
+    const res=new Array(n).fill(-1);
+    for(let j=1;j<=m;j++) if(p[j]) res[p[j]-1]=j-1;
+    return res;
+  },
+};
+
+/* ====================================================================
    FORMA RECENTE (§6.1 item 5) — janelas deslizantes de 5 (FIFO), no save v9.
    - jogador: p._notas5  = 5 últimas notas (Match Rating) de partidas em que atuou
    - time:    t._notas5  = 5 últimas notas do time; nota do time na partida =
@@ -1748,18 +1804,10 @@ const App={
     const formacao='4-3-3';
     const posEscala={}, roleEscala={};
     const slots=LINHAS_FM[formacao].flat();
-    const disp=[...t.players];
     const usados=new Set();
-    // titulares: melhor jogador pra cada slot da formação
-    for(const pos of slots){
-      let melhor=null, bo=-1;
-      for(const p of disp){
-        if(usados.has(p.numero)) continue;
-        const o=Motor.overallEm(p,pos);
-        if(o>bo){ bo=o; melhor=p; }
-      }
-      if(melhor){ posEscala[melhor.numero]=pos; roleEscala[melhor.numero]=ROLES_POS[pos][0]; usados.add(melhor.numero); }
-    }
+    // titulares: atribuição ótima jogador × vaga (ver Escalacao)
+    Escalacao.atribuir([...t.players], slots).forEach(({pos,p})=>{
+      if(p){ posEscala[p.numero]=pos; roleEscala[p.numero]=ROLES_POS[pos][0]; usados.add(p.numero); } });
     // banco: próximos 12 melhores (por força), o resto fica FORA
     const resto=t.players.filter(p=>!usados.has(p.numero)).sort((a,b)=>b.forca-a.forca);
     resto.forEach((p,idx)=>{ posEscala[p.numero]= idx<12 ? 'BANCO' : 'FORA'; });
@@ -1809,33 +1857,22 @@ const App={
   roleDe(i, num){ return this.cfg[i].roleEscala[num]||''; },
 
   // aplica uma formação: mantém titulares que encaixam, realoca por melhor overall
+  // aplica uma formação: remaneja o time na formação nova PREFERINDO manter quem
+  // já é titular (bônus), mas pode puxar do banco quem é da posição (ex.: um ala
+  // de verdade no 3-5-2) em vez de improvisar um meia de ala. Atribuição ótima.
+  BONUS_TITULAR:2,
   aplicarFormacao(i, formacao){
-    const c=this.cfg[i], t=this.teams[i];
+    const c=this.cfg[i];
     const slots=LINHAS_FM[formacao].flat();
-    // pega os titulares atuais (quem não está em BANCO/FORA)
-    const titAtuais=this.onzeDe(i);
-    const disp=[...titAtuais];
-    // se faltam titulares (formação nova pede 11), completa com melhores do banco
-    if(disp.length<slots.length){
-      const banco=this.bancoDe(i).sort((a,b)=>b.forca-a.forca);
-      for(const p of banco){ if(disp.length>=slots.length) break; disp.push(p); }
-    }
+    const titAtuais=this.onzeDe(i), eraTitular=new Set(titAtuais.map(p=>p.numero));
+    const cand=[...titAtuais, ...this.bancoDe(i)];
     const usados=new Set();
-    // limpa posições dos titulares (vão ser reatribuídas)
     const novo={...c.posEscala};
-    // realoca cada slot com o melhor disponível entre os titulares
-    for(const pos of slots){
-      let melhor=null, bo=-1;
-      for(const p of disp){
-        if(usados.has(p.numero)) continue;
-        const o=Motor.overallEm(p,pos);
-        if(o>bo){ bo=o; melhor=p; }
-      }
-      if(melhor){ novo[melhor.numero]=pos;
-        if(!ROLES_POS[pos].includes(c.roleEscala[melhor.numero])) c.roleEscala[melhor.numero]=ROLES_POS[pos][0];
-        usados.add(melhor.numero); }
-    }
-    // quem era titular e sobrou (formação menor) vai pro banco
+    Escalacao.atribuir(cand, slots, p=>eraTitular.has(p.numero)?this.BONUS_TITULAR:0).forEach(({pos,p})=>{ if(!p) return;
+      novo[p.numero]=pos;
+      if(!ROLES_POS[pos].includes(c.roleEscala[p.numero])) c.roleEscala[p.numero]=ROLES_POS[pos][0];
+      usados.add(p.numero); });
+    // quem era titular e sobrou vai pro banco
     titAtuais.forEach(p=>{ if(!usados.has(p.numero)) novo[p.numero]='BANCO'; });
     c.posEscala=novo; c.formacao=formacao;
     // reforça limite de 12 no banco
@@ -1884,15 +1921,9 @@ const App={
     const disp=t.players.filter(p=>!this.indisponivel(p));
     t.players.forEach(p=>{ c.posEscala[p.numero]='FORA'; delete c.roleEscala[p.numero]; });
     const usados=new Set();
-    // goleiro primeiro (posição mais específica), depois o resto
-    const ordemSlots=[...slots].sort((a,b)=>(a==='GK'?0:1)-(b==='GK'?0:1));
-    ordemSlots.forEach(pos=>{
-      let melhor=null, melhorOv=-1;
-      disp.forEach(p=>{
-        if(usados.has(p.numero)) return;
-        const ov=Motor.overallEm(p,pos);
-        if(ov>melhorOv){ melhorOv=ov; melhor=p; }
-      });
+    // atribuição ótima jogador × vaga: cada um na posição em que mais rende,
+    // pensando no time inteiro (não vaga por vaga) — ver Escalacao
+    Escalacao.atribuir(disp, slots).forEach(({pos,p:melhor})=>{
       if(melhor){
         usados.add(melhor.numero);
         c.posEscala[melhor.numero]=pos;
