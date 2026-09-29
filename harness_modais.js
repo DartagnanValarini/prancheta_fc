@@ -33,6 +33,7 @@ const shot=async(page,n)=>{ if(SHOTS){ await page.waitForTimeout(150); await pag
 
   console.log('\n[1] mecânica do modal');
   const {page,erros,...ctx}=await carreira(browser,{w:1280,h:860});
+  await page.evaluate(()=>{ App.garantirOpcoes().recado=false; App.garantirOpcoes().coletiva=false; });
   await page.evaluate(()=>{ window.__log=[];
     App.modalFLK({titulo:'A', fila:true, botoes:[{txt:'ok',tipo:'primary'}], onClose:()=>__log.push('A')});
     App.modalFLK({titulo:'B', fila:true, botoes:[{txt:'ok',tipo:'primary'}], onClose:()=>__log.push('B')});

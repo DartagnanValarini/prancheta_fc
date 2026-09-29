@@ -15,7 +15,7 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   await page.evaluate(()=>{ localStorage.setItem('prancheta_tutorial_v1','feito'); });
   await page.click('#btnJogarAgora'); await page.waitForSelector('.clube-lin',{timeout:15000});
   await page.click('.clube-lin'); await page.waitForSelector('.fm-campo');
-  await page.evaluate(()=>{ App.garantirOpcoes().coletiva=false; });
+  await page.evaluate(()=>{ App.garantirOpcoes().coletiva=false; App.garantirOpcoes().recado=false; });
   // fecha a rodada "de mentira" (sem jogar) pra disparar a fila pós-rodada
   const fechar=()=>page.evaluate(()=>{ App.liveState={done:true}; App.fecharRodada(); });
 

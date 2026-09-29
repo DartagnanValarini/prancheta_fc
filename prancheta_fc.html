@@ -454,6 +454,7 @@
   .conf-exp-sub{font-size:11.5px; color:var(--gray); line-height:1.5} .conf-exp-sub b{color:var(--white)}
   .fm-info-btn{background:none; border:1px solid var(--line); color:var(--gray); border-radius:6px; font-family:'Space Mono'; font-size:10px; padding:2px 7px; cursor:pointer; text-transform:none}
   .fm-info-btn:hover{color:var(--white); border-color:var(--white)}
+  .fm-cargo-acoes{margin-top:10px; display:flex; justify-content:flex-end}
   .fm-ultimato{font-size:11px; color:#e8c547; margin:-4px 0 6px}
   /* diagnóstico de fim de temporada */
   .diag-h{font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:.8px; margin-top:2px}
@@ -2707,7 +2708,7 @@ const App={
   // preferências do jogador, persistidas no save. adFree é CACHE de UI — a
   // verdade vem do servidor (Bloco C). Nunca confiar nele para liberar nada
   // sensível; serve só para esconder os anúncios rápido no cliente.
-  OPCOES_PADRAO:{ velocidade:1, autoSaveRodadas:3, adFree:false, coletiva:true },
+  OPCOES_PADRAO:{ velocidade:1, autoSaveRodadas:3, adFree:false, coletiva:true, recado:true },
   VELOCIDADES:[0.5, 1, 2, 3],
   garantirOpcoes(){
     if(!this.opcoes || typeof this.opcoes!=='object') this.opcoes={...this.OPCOES_PADRAO};
@@ -4044,6 +4045,8 @@ const App={
       this.avisoFLK('✅ Prazo cumprido','A diretoria viu a reação do time e renovou a confiança no seu trabalho.','var(--lemon)',{fila:true}); }
     this.avisarPropostasNovas();
     this.avisarLeiloes();
+    // recado do presidente fecha a fila e leva pra Formação (não no 1º jogo do tutorial)
+    if(!this.tempEncerrada && !this.demitido && !this._demissaoPendente && this.garantirOpcoes().recado && Tutorial.estado()!=='jogo1') this.abrirRecadoPresidente();
     // tutorial só depois que o jogador respondeu tudo
     this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
   },
@@ -4816,6 +4819,7 @@ const App={
               <div class="pres-bar-corte" style="left:${Math.max(0,Math.min(100,corte))}%" title="Demissão se cair até ${corte}"></div></div>
             <div class="fm-card-sub">${humor.txt} · demissão se cair até <b>${corte}</b></div>
             <div class="fm-pres">🤵 “${esc(this.falaPresidenteAtual())}”</div>
+            <div class="fm-cargo-acoes"><button class="fm-info-btn" id="btnPedirDemissao">🚪 Pedir demissão</button></div>
           </div>
         </div>
       </div>
@@ -4924,6 +4928,7 @@ const App={
         if(err) this.avisoFLK('Troca não feita',err); re(); });
     });
     const bci=document.getElementById('btnConfInfo'); if(bci) bci.onclick=()=>this.abrirExplicacaoConfianca();
+    const bpd=document.getElementById('btnPedirDemissao'); if(bpd) bpd.onclick=()=>this.pedirDemissaoUI();
     const bc=document.getElementById('btnCancelaTroca'); if(bc) bc.onclick=()=>{ this._trocaSel=null; re(); };
     const sr=document.getElementById('selRole'); if(sr) sr.onchange=()=>{ c.roleEscala[sel]=sr.value; re(); };
     el.querySelectorAll('[data-bset]').forEach(b=>b.onclick=()=>{ this.bancoSetor=b.dataset.bset; re(); });
@@ -6014,6 +6019,44 @@ const App={
     })).filter(l=>l.lances.length);
   },
 
+  /* ---------- RECADO DO PRESIDENTE (a cada rodada) ----------
+     Mesmo cartão das boas-vindas: frase sobre o próximo jogo, meta da
+     diretoria, caixa e confiança. Último da fila pós-rodada → Formação. */
+  abrirRecadoPresidente(){
+    const t=this.teams[this.myTeam]; if(!t) return;
+    const adv=this.proximoAdversario(), obj=this.garantirObjetivos(), P=obj&&obj.principal;
+    const conf=Math.round(this.confianca??this.CONF_INICIAL), humor=this.humorDiretoria();
+    const stP=obj&&obj.principalStatus, cls=this.classificacao(), pos=cls.findIndex(s=>s.i===this.myTeam)+1;
+    this.modalFLK({fila:true, titulo:'🤵 Recado do presidente', corpoHTML:this.cartaoDecisao({classe:'tut-bv',
+        topo:{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome),
+          sub:adv?`Rodada ${this.rodada+1} · próximo: ${this.esc(this.teams[adv.ti].nome)} (${adv.casa?'em casa':'fora'})`:`Rodada ${this.rodada+1} · sem jogo nesta rodada`},
+        fala:`🤵 “${this.esc(this.falaPresidenteAtual())}”`,
+        destaque:P?{rotulo:'Meta da diretoria', titulo:this.esc(P.titulo), desc:`${this.esc(P.desc)}${pos>0?` · hoje: ${pos}º na tabela`:''}${stP&&stP!=='aberto'?` · ${stP==='cumprido'?'✅ cumprida':'❌ falhou'}`:''}`}:null,
+        kpis:[{rotulo:'Caixa', valor:this.fmtReais(t.saldo||0), cor:(t.saldo||0)<0?'var(--loss)':null},
+              {rotulo:'Confiança', valor:`${conf}/100 · ${humor.txt}`, cor:humor.cor}],
+      }),
+      botoes:[{txt:'Ir para a formação ▸', tipo:'primary', onClick:()=>{ this.showTab('escala'); window.scrollTo(0,0); }}]});
+  },
+
+  /* ---------- PEDIR DEMISSÃO ---------- */
+  pedirDemissaoUI(){
+    const t=this.teams[this.myTeam]; if(!t) return;
+    if(this.liveState && this.liveState.playing) return this.avisoFLK('Partida em andamento','Termine a rodada antes de pedir demissão.');
+    const car=this.garantirCarreira();
+    this.modalFLK({titulo:'🚪 Pedir demissão?', corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome), sub:`Série ${this.divisao} · Temporada ${this.temporada} · rodada ${this.rodada}`},
+        fala:'🤵 “Tem certeza, professor? A porta fica aberta, mas não vou te segurar.”',
+        destaque:{rotulo:'O que acontece', titulo:'Você fica livre no mercado', desc:'Recomeça num clube das séries de baixo, no mesmo save. Títulos, acessos e temporadas da carreira continuam contando.', tom:'alerta'},
+        kpis:[{rotulo:'Confiança hoje', valor:`${Math.round(this.confianca??this.CONF_INICIAL)}/100`},{rotulo:'Carreira', valor:`${car.titulos} título${car.titulos===1?'':'s'} · ${car.acessos} acesso${car.acessos===1?'':'s'}`}],
+      }),
+      botoes:[{txt:'Ficar no clube', tipo:'sm'},
+        {txt:'Pedir demissão', tipo:'danger', onClick:()=>{
+          this.demitido=true; this.ultimato=null;
+          this.addExtrato('Treinador pediu demissão', 0);
+          this.salvarSupabase(true);
+          setTimeout(()=>this.procurarNovoClube(),0); }}]});
+  },
+
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
     const j=this._ultimoJogo; if(!j) return null;
@@ -6804,10 +6847,19 @@ const App={
         <div class="cfg-hint">3 perguntas depois de cada jogo; as respostas mexem na moral e na diretoria.</div>
       </div>
       <div class="cfg-sec">
+        <div class="cfg-h">🤵 Recado do presidente</div>
+        <div class="cfg-row"><button class="cfg-opt ${o.recado?'on':''}" data-cfg-rec="1">A cada rodada</button><button class="cfg-opt ${!o.recado?'on':''}" data-cfg-rec="0">Desligado</button></div>
+        <div class="cfg-hint">Frase sobre o próximo jogo, meta, caixa e confiança antes de voltar pra formação.</div>
+      </div>
+      <div class="cfg-sec">
         <div class="cfg-h">🎓 Tutorial</div>
         <div class="cfg-row"><button class="cfg-opt" data-cfg-tut>Rever tutorial</button></div>
         <div class="cfg-hint">Mostra de novo as boas-vindas e o passo a passo da primeira rodada.</div>
-      </div>`;
+      </div>
+      ${this.teams.length&&!this.demitido?`<div class="cfg-sec">
+        <div class="cfg-h">🚪 Carreira</div>
+        <div class="cfg-row"><button class="cfg-opt" data-cfg-dem>Pedir demissão do clube</button></div>
+      </div>`:''}`;
     this.modalFLK({ titulo:'⚙️ Configurações', corpoHTML:corpo,
       botoes:[{txt:'Fechar', tipo:'primary'}] });
     // liga os controles (modalFLK não tem hook pós-render)
@@ -6817,6 +6869,8 @@ const App={
     wrap.querySelectorAll('[data-cfg-save]').forEach(b=>b.onclick=()=>{
       o.autoSaveRodadas=parseInt(b.dataset.cfgSave,10); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const tut=wrap.querySelector('[data-cfg-tut]'); if(tut) tut.onclick=()=>Tutorial.rever();
+    wrap.querySelectorAll('[data-cfg-rec]').forEach(b=>b.onclick=()=>{ o.recado=b.dataset.cfgRec==='1'; this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
+    const dem=wrap.querySelector('[data-cfg-dem]'); if(dem) dem.onclick=()=>this.pedirDemissaoUI();
     wrap.querySelectorAll('[data-cfg-col]').forEach(b=>b.onclick=()=>{ o.coletiva=b.dataset.cfgCol==='1'; this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const buy=wrap.querySelector('[data-cfg-buyad]');
     if(buy) buy.onclick=()=>this.comprarRemoverAnuncios();
