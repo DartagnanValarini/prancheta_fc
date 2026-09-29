@@ -2951,16 +2951,19 @@ const App={
   // Guarda em this.ofertasRecebidas pra UI mostrar.
   gerarOfertasIA(){
     if(!this.ofertasRecebidas) this.ofertasRecebidas=[];
+    this.tickLeiloes();   // leilões abertos: uma rodada de lances
     const meu=this.teams[this.myTeam];
     meu.players.filter(p=>p.aVenda).forEach(p=>{
-      // já tem oferta pendente pra esse jogador?
-      if(this.ofertasRecebidas.some(o=>o.pid===p.pid)) return;
+      // já tem oferta ou leilão pendente pra esse jogador?
+      if(this.ofertasRecebidas.some(o=>o.pid===p.pid) || this.leilaoDe(p.pid) || (this.leiloes||[]).some(l=>l.pid===p.pid)) return;
       // 35% de chance por rodada de alguém se interessar
       if(Math.random()>0.35) return;
       // escolhe um comprador com caixa suficiente
       const vm=this.valorMercadoReais(p);
       const candidatos=this.teams.map((t,i)=>({t,i})).filter(o=>o.i!==this.myTeam && (o.t.saldo||0)>vm*0.8);
       if(!candidatos.length) return;
+      // vários clubes interessados → leilão
+      if(candidatos.length>=2 && Math.random()<this.CHANCE_LEILAO){ this.abrirLeilao(p, candidatos, vm); return; }
       const c=candidatos[Math.floor(Math.random()*candidatos.length)];
       // oferta entre 75% e 115% do valor
       const oferta=Math.round(vm*(0.75+Math.random()*0.4)/1e5)*1e5;
@@ -3017,6 +3020,7 @@ const App={
     if(this._ultimatoCumprido){ this._ultimatoCumprido=false;
       this.avisoFLK('✅ Prazo cumprido','A diretoria viu a reação do time e renovou a confiança no seu trabalho.','var(--lemon)',{fila:true}); }
     this.avisarPropostasNovas();
+    this.avisarLeiloes();
     // tutorial só depois que o jogador respondeu tudo
     this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
   },
@@ -4219,6 +4223,15 @@ const App={
         </div>
       </div>
 
+      ${(this.leiloes||[]).length?`
+      <div class="panel" style="margin-bottom:16px;border-color:var(--lemon)">
+        <div class="ptitle">🔨 Leilões <span class="lbl">${this.leiloes.length}</span></div>
+        ${this.leiloes.map(l=>{ const top=this.maiorLance(l), n=l.lances.filter(x=>!x.fora).length; return `
+          <div class="fin-ext-row" style="align-items:center">
+            <span class="fin-ext-desc"><b>${this.esc(l.nome)}</b> — ${n} clube${n===1?'':'s'} · maior lance <b style="color:var(--lemon)">${this.fmtReais(top.valor)}</b> (${this.esc(top.nome)}) · ${l.status==='decidir'?'<b style="color:#e8c547">encerrado: decida</b>':`${l.rodadas} rodada${l.rodadas===1?'':'s'}`}</span>
+            <span style="display:flex;gap:6px"><button class="mini-btn" data-leilao="${l.pid}">Ver lances</button></span>
+          </div>`; }).join('')}
+      </div>`:''}
       ${ofertas.length?`
       <div class="panel" style="margin-bottom:16px;border-color:var(--lemon)">
         <div class="ptitle">📩 Propostas recebidas <span class="lbl">${ofertas.length}</span></div>
@@ -4290,6 +4303,7 @@ const App={
     el.querySelectorAll('[data-oferta-nao]').forEach(b=>b.onclick=()=>this.aceitarOfertaUI(+b.dataset.ofertaNao,false));
     // handlers: negociar compra
     el.querySelectorAll('[data-negociar]').forEach(b=>b.onclick=()=>this.negociarCompraUI(+b.dataset.negociar));
+    el.querySelectorAll('[data-leilao]').forEach(b=>b.onclick=()=>this.verLeilaoUI(+b.dataset.leilao));
     // handlers: filtros do mercado
     el.querySelectorAll('[data-mf]').forEach(sel=>sel.onchange=()=>{ this.mercadoFiltro[sel.dataset.mf]=sel.value; this.renderMercado(); });
   },
@@ -4854,6 +4868,101 @@ const App={
 
   // roda fn a partir de um botão de modal: mantém aberto só se fn abriu OUTRO modal
   seguirNoModal(fn){ const m0=document.getElementById('flkModal'), a=m0&&m0.dataset.tok; fn(); const m1=document.getElementById('flkModal'); return !!(m1 && m1.dataset.tok!==a); },
+
+  /* ====================================================================
+     LEILÃO (§6.1 item 11) — quando 2+ clubes querem o MESMO jogador meu à
+     venda, abre um leilão de 3 rodadas: a cada rodada os clubes podem cobrir
+     (+5–12%, até 140% do valor e dentro do caixa deles) ou desistir. Você
+     aceita o maior lance quando quiser, espera ou recusa todos; no fim do
+     prazo, decide. Leilões e propostas vão pro save.
+     ==================================================================== */
+  CHANCE_LEILAO:0.4, RODADAS_LEILAO:3,
+  leilaoDe(pid){ return (this.leiloes||[]).find(l=>l.pid===pid && l.status==='aberto'); },
+  maiorLance(l){ return [...l.lances].sort((a,b)=>b.valor-a.valor)[0]; },
+  abrirLeilao(p, cands, vm){
+    if(!this.leiloes) this.leiloes=[];
+    const n=Math.min(cands.length, 2+Math.floor(Math.random()*3));   // 2 a 4 clubes
+    const esc=[...cands].sort(()=>Math.random()-0.5).slice(0,n);
+    const lances=esc.map(c=>({ti:c.i, nome:c.t.nome, valor:Math.round(vm*(0.75+Math.random()*0.35)/1e5)*1e5, fora:false}));
+    const l={pid:p.pid, nome:p.nome, lances, rodadas:this.RODADAS_LEILAO, status:'aberto', vm};
+    this.leiloes.push(l); return l;
+  },
+  // uma rodada de lances: cada clube cobre, mantém ou desiste
+  rodadaLeilao(l){
+    const ativos=l.lances.filter(x=>!x.fora);
+    ativos.forEach(x=>{
+      const top=this.maiorLance(l);
+      if(x===top) return;
+      const r=Math.random();
+      if(r<0.2 && ativos.filter(y=>!y.fora).length>1){ x.fora=true; return; }
+      if(r<0.75){
+        const novo=Math.round(top.valor*(1.05+Math.random()*0.07)/1e5)*1e5;
+        const teto=Math.min(l.vm*1.4, (this.teams[x.ti].saldo||0));
+        if(novo<=teto) x.valor=novo; else x.fora=true;
+      }
+    });
+    l.rodadas=Math.max(0,l.rodadas-1);
+    if(l.rodadas===0) l.status='decidir';
+  },
+  tickLeiloes(){
+    (this.leiloes||[]).forEach(l=>{
+      const p=this.teams[this.myTeam].players.find(x=>x.pid===l.pid);
+      if(!p){ l.status='cancelado'; return; }
+      if(l.status==='aberto') this.rodadaLeilao(l);   // roda ANTES de abrir leilões novos (gerarOfertasIA)
+    });
+    this.leiloes=(this.leiloes||[]).filter(l=>l.status==='aberto'||l.status==='decidir');
+  },
+  fecharLeilao(pid, aceitar){
+    const l=(this.leiloes||[]).find(x=>x.pid===pid && (x.status==='aberto'||x.status==='decidir')); if(!l) return {ok:false,msg:'Leilão não encontrado.'};
+    l.status=aceitar?'vendido':'recusado';
+    this.leiloes=this.leiloes.filter(x=>x!==l);
+    if(!aceitar) return {ok:true, msg:'Você recusou todos os lances.'};
+    const top=this.maiorLance(l);
+    return this.executarTransferencia(pid, top.ti, top.valor);
+  },
+  // modal de decisão do leilão (padrão FLK)
+  verLeilaoUI(pid, op){
+    op=op||{};
+    const l=(this.leiloes||[]).find(x=>x.pid===pid); if(!l) return;
+    const t=this.teams[this.myTeam], p=t.players.find(x=>x.pid===pid); if(!p) return;
+    const top=this.maiorLance(l), caixa=t.saldo||0, pct=Math.round(top.valor/l.vm*100);
+    const pos=this.posDe(this.myTeam,p.numero), titular=pos!=='BANCO'&&pos!=='FORA';
+    const ordem=[...l.lances].sort((a,b)=>b.valor-a.valor);
+    const fim=()=>{ this.salvarSupabase(true); this.renderShell(); if(!op.fila) this.showTab('mercado'); };
+    this.modalFLK({fila:!!op.fila, titulo:l.status==='decidir'?'🔨 Leilão encerrado':`🔨 Leilão por ${this.esc(p.nome)}`,
+      corpoHTML:this.cartaoDecisao({
+        destaque:{rotulo:l.status==='decidir'?'Prazo acabou — decida':`${l.rodadas} rodada${l.rodadas===1?'':'s'} de lances pela frente`,
+          titulo:`Maior lance: ${this.fmtReais(top.valor)}`, desc:`${this.esc(top.nome)} · ${ordem.filter(x=>!x.fora).length} clube${ordem.filter(x=>!x.fora).length===1?'':'s'} na disputa`},
+        lista:ordem.map(x=>({a:`${x===top?'🥇 ':''}${this.esc(x.nome)}`, b:x.fora?'desistiu':this.fmtReais(x.valor)})),
+        kpis:[{rotulo:'Maior lance', valor:this.fmtReais(top.valor), cor:pct>=100?'var(--lemon)':'#e8c547'},
+              {rotulo:'Valor de mercado', valor:this.fmtReais(l.vm)},
+              {rotulo:'Caixa depois', valor:this.fmtReais(caixa+top.valor), cor:'var(--lemon)'},
+              {rotulo:'Lance × valor', valor:pct+'%'}],
+        aviso:titular?`⚠️ ${this.esc(p.nome.split(' ')[0])} é titular e sai da escalação se você vender.`:'',
+      }),
+      botoes:[
+        {txt:'Recusar todos', tipo:'sm', onClick:()=>{ this.fecharLeilao(pid,false); p.aVenda=false; fim(); }},
+        ...(l.status==='aberto'?[{txt:'Esperar mais lances', tipo:'sm'}]:[]),
+        {txt:`Vender por ${this.fmtReais(top.valor)}`, tipo:'primary', onClick:()=>{
+          const r=this.fecharLeilao(pid,true); fim();
+          this.avisoFLK(r.ok?'✅ Vendido no leilão':'❌ Não deu', r.msg, r.ok?'var(--lemon)':'var(--loss)'); }},
+      ]});
+  },
+  // avisos pós-rodada: leilão novo (disputa começou) e leilão encerrado (decidir)
+  avisarLeiloes(){
+    (this.leiloes||[]).forEach(l=>{
+      if(l.status==='decidir' && !l.avisadoFim){ l.avisadoFim=true; this.verLeilaoUI(l.pid,{fila:true}); }
+      else if(l.status==='aberto' && !l.avisadoInicio){ l.avisadoInicio=true; this.verLeilaoUI(l.pid,{fila:true}); }
+    });
+  },
+  sanearLeiloes(v){
+    if(!Array.isArray(v)) return [];
+    return v.filter(l=>l && isFinite(+l.pid) && Array.isArray(l.lances) && l.lances.length && (l.status==='aberto'||l.status==='decidir')).map(l=>({
+      pid:+l.pid, nome:String(l.nome||'').slice(0,40), rodadas:Math.max(0,Math.min(5,+l.rodadas||0)), status:l.status, vm:Math.max(0,+l.vm||0),
+      avisadoInicio:!!l.avisadoInicio, avisadoFim:!!l.avisadoFim,
+      lances:l.lances.filter(x=>x && isFinite(+x.ti) && this.teams[+x.ti]).map(x=>({ti:+x.ti, nome:String(x.nome||'').slice(0,40), valor:Math.max(0,+x.valor||0), fora:!!x.fora}))
+    })).filter(l=>l.lances.length);
+  },
 
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
@@ -6010,6 +6119,7 @@ const App={
       demitido:!!this.demitido,
       histConf:this.histConf||[], ultimato:this.ultimato||null, reuniaoFeita:!!this._reuniaoFeita,   // reunião com a diretoria
       emprestimo:this.emprestimo||null,
+      leiloes:this.leiloes||[], ofertasRecebidas:this.ofertasRecebidas||[],   // mercado: leilões e propostas pendentes
       // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
       formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
     };
@@ -6163,6 +6273,9 @@ const App={
     this.ultimato = (s.ultimato && isFinite(+s.ultimato.rodadaLimite)) ? {rodadaLimite:+s.ultimato.rodadaLimite, limiar:Math.max(0,Math.min(100,+s.ultimato.limiar||0)), temporada:+s.ultimato.temporada||1} : null;
     this._reuniaoFeita = !!s.reuniaoFeita;
     this.emprestimo = s.emprestimo||null;
+    this.leiloes = this.sanearLeiloes(s.leiloes);
+    this.ofertasRecebidas = Array.isArray(s.ofertasRecebidas) ? s.ofertasRecebidas.filter(o=>o && isFinite(+o.pid) && this.teams[+o.de] && +o.valor>0)
+      .map(o=>({pid:+o.pid, nome:String(o.nome||'').slice(0,40), de:+o.de, deNome:String(o.deNome||'').slice(0,40), valor:+o.valor, rodada:+o.rodada||0, avisada:true})) : [];
     // finanças
     if(s.saldos) s.saldos.forEach((v,ti)=>{ if(this.teams[ti]) this.teams[ti].saldo=v; });
     this.extrato=s.extrato||[]; this.ultimoMesPago=s.ultimoMesPago||0;
