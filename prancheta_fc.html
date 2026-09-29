@@ -438,6 +438,17 @@
   .mf-lista>div:last-child{border-bottom:none}
   .mf-lista b{color:var(--white)} .mf-lista span{color:var(--gray); text-align:right}
   .mf-aviso{font-size:12px; color:#e8c547; line-height:1.5}
+  /* confiança explicada + reunião */
+  .conf-exp{display:flex; flex-direction:column; gap:8px}
+  .conf-exp-h{font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:.8px}
+  .conf-mat{width:100%; border-collapse:collapse; font-size:12px; background:var(--panel); border-radius:8px; overflow:hidden}
+  .conf-mat th{font-size:10px; color:var(--gray); font-weight:700; padding:5px 6px}
+  .conf-mat td{text-align:center; padding:5px 6px; border-top:1px solid var(--line); font-weight:700}
+  .conf-mat .l{text-align:left} .conf-mat td.b{color:var(--lemon)} .conf-mat td.r{color:var(--loss)}
+  .conf-exp-sub{font-size:11.5px; color:var(--gray); line-height:1.5} .conf-exp-sub b{color:var(--white)}
+  .fm-info-btn{background:none; border:1px solid var(--line); color:var(--gray); border-radius:6px; font-family:'Space Mono'; font-size:10px; padding:2px 7px; cursor:pointer; text-transform:none}
+  .fm-info-btn:hover{color:var(--white); border-color:var(--white)}
+  .fm-ultimato{font-size:11px; color:#e8c547; margin:-4px 0 6px}
   /* coletiva pós-jogo */
   .col-mic{width:44px; height:44px; border-radius:12px; background:var(--lemon); display:flex; align-items:center; justify-content:center; font-size:22px; flex:none}
   .mf-destaque b.col-q{font-family:'Space Mono'; font-weight:700; font-size:14px; color:var(--white); line-height:1.5}
@@ -3296,7 +3307,7 @@ const App={
         const golsAdv = souCasa ? gf : gc;
         const resultado = meusGols>golsAdv ? 'v' : (meusGols<golsAdv ? 'd' : 'e');
         const exp = this.expectativaJogo(this.myTeam, advTi, souCasa);
-        this.aplicarConfianca(exp, resultado);
+        this.aplicarConfianca(exp, resultado, `${({v:'Vitória',e:'Empate',d:'Derrota'})[resultado]} vs ${this.teams[advTi]?.abrev||'?'} ${this.ROTULO_EXP[exp]||''}`);
         // guarda um "recibo" da partida para o aviso pós-rodada
         this._ultimoJogoConf={exp, resultado, adv:this.teams[advTi]?.nome||'', delta:this._ultimoDeltaConf, conf:this.confianca};
         this._ultimoJogo={meus:meusGols, deles:golsAdv, resultado, adv:this.teams[advTi]?.nome||'', advTi, rodada:this.rodada};
@@ -3454,6 +3465,12 @@ const App={
     if(this.confianca!=null && !this.demitido && this.confianca<=this.corteDemissao()){
       this._demissaoPendente=true;   // exibida no "Fechar" (o usuário vê o resultado antes)
     }
+    // ULTIMATO (reunião com a diretoria): no fim do prazo, confiança tem que estar acima do limiar
+    if(this.ultimato && !this.demitido && this.rodada>=this.ultimato.rodadaLimite){
+      if((this.confianca??0)<=this.ultimato.limiar){ this._demissaoPendente=true; this._motivoDemissao='ultimato'; }
+      else this._ultimatoCumprido=true;
+      this.ultimato=null;
+    }
     this.renderShell();
     // auto-save no Supabase (silencioso)
     this.salvarSupabase(true);
@@ -3604,10 +3621,9 @@ const App={
     return arr[Math.floor(Math.random()*arr.length)];
   },
   // aplica o delta de confiança após a MINHA partida encerrar
-  aplicarConfianca(exp, resultado){
-    if(this.confianca==null) this.confianca=this.CONF_INICIAL;
+  aplicarConfianca(exp, resultado, motivo){
     const d=(this.MATRIZ_CONF[exp]||this.MATRIZ_CONF.equilibrado)[resultado]||0;
-    this.confianca=Math.max(0,Math.min(100,this.confianca+d));
+    this.mudarConfianca(d, motivo||'Resultado');
     this._ultimoDeltaConf=d;
     return d;
   },
@@ -3978,6 +3994,9 @@ const App={
         botoes:[{txt:'Ver escalação', tipo:'primary', onClick:()=>{ this.showTab('escala'); }}]});
     }
     if(this._coletivaPendente){ this._coletivaPendente=false; this.abrirColetiva(); }
+    this.checarReuniao();
+    if(this._ultimatoCumprido){ this._ultimatoCumprido=false;
+      this.avisoFLK('✅ Prazo cumprido','A diretoria viu a reação do time e renovou a confiança no seu trabalho.','var(--lemon)',{fila:true}); }
     this.avisarPropostasNovas();
     // tutorial só depois que o jogador respondeu tudo
     this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
@@ -4744,7 +4763,8 @@ const App={
             <div class="fm-card-sub">${moralTxt}${insat?` · ${insat} insatisfeito${insat>1?'s':''}`:''}</div>
           </div>
           <div class="fm-card fm-cargo">
-            <div class="fm-card-h"><span>Segurança no cargo</span></div>
+            <div class="fm-card-h"><span>Segurança no cargo</span><button class="fm-info-btn" id="btnConfInfo" title="O que mexe na confiança">ⓘ Entenda</button></div>
+            ${this.ultimato?`<div class="fm-ultimato">⏳ Prazo da diretoria: até a rodada <b>${this.ultimato.rodadaLimite}</b>, acima de <b>${this.ultimato.limiar}</b></div>`:''}
             <div class="fm-big" style="color:${humor.cor}">${conf}<small>/100</small></div>
             <div class="pres-bar"><div class="pres-bar-fill" style="width:${Math.max(0,Math.min(100,conf))}%;background:${humor.cor}"></div>
               <div class="pres-bar-corte" style="left:${Math.max(0,Math.min(100,corte))}%" title="Demissão se cair até ${corte}"></div></div>
@@ -4857,6 +4877,7 @@ const App={
         const err=this.trocarJogadores(i,de,para); this._trocaSel=null;
         if(err) this.avisoFLK('Troca não feita',err); re(); });
     });
+    const bci=document.getElementById('btnConfInfo'); if(bci) bci.onclick=()=>this.abrirExplicacaoConfianca();
     const bc=document.getElementById('btnCancelaTroca'); if(bc) bc.onclick=()=>{ this._trocaSel=null; re(); };
     const sr=document.getElementById('selRole'); if(sr) sr.onchange=()=>{ c.roleEscala[sel]=sr.value; re(); };
     el.querySelectorAll('[data-bset]').forEach(b=>b.onclick=()=>{ this.bancoSetor=b.dataset.bset; re(); });
@@ -5302,6 +5323,117 @@ const App={
     this.responderOferta(pid, false);
     this.salvarSupabase(true); this.renderShell(); this.showTab('mercado');
   },
+  /* ---------- CONFIANÇA: histórico + explicação (fórmula visível) ---------- */
+  // toda mudança de confiança passa por aqui, pra o jogador ver o PORQUÊ
+  mudarConfianca(d, motivo){
+    if(this.confianca==null) this.confianca=this.CONF_INICIAL;
+    const antes=this.confianca;
+    this.confianca=Math.max(0,Math.min(100,this.confianca+d));
+    const real=Math.round((this.confianca-antes)*10)/10;
+    if(real){ if(!Array.isArray(this.histConf)) this.histConf=[];
+      this.histConf.push({t:this.temporada||1, r:this.rodada, d:real, m:String(motivo||'')});
+      if(this.histConf.length>12) this.histConf=this.histConf.slice(-12); }
+    return real;
+  },
+  ROTULO_EXP:{favorito:'como favorito', ligeiro:'como ligeiro favorito', equilibrado:'em jogo equilibrado', azarao:'como azarão', impossivel:'como zebra'},
+  limiarReuniao(){ return Math.min(90, this.corteDemissao()+15); },
+  explicarConfiancaHTML(){
+    const M=this.MATRIZ_CONF, f=v=>(v>0?'+':'')+v;
+    const hist=(this.histConf||[]).slice(-5).reverse();
+    return `<div class="conf-exp">
+      <div class="conf-exp-h">O que mexe na confiança</div>
+      <table class="conf-mat"><thead><tr><th class="l">Você era…</th><th>Vitória</th><th>Empate</th><th>Derrota</th></tr></thead><tbody>
+        ${[['favorito','Favorito'],['equilibrado','Equilibrado'],['azarao','Azarão']].map(([k,l])=>`<tr><td class="l">${l}</td>${['v','e','d'].map(r=>`<td class="${M[k][r]>0?'b':M[k][r]<0?'r':''}">${f(M[k][r])}</td>`).join('')}</tr>`).join('')}
+      </tbody></table>
+      <div class="conf-exp-sub">Também contam a <b>meta da diretoria</b> no fim da temporada e as respostas na <b>coletiva</b>. Demissão se cair até <b>${this.corteDemissao()}</b>.</div>
+      ${hist.length?`<div class="mf-lista">${hist.map(h=>`<div><b>${this.esc(h.m)}</b><span style="color:${h.d>0?'var(--lemon)':'var(--loss)'}">${f(h.d)}</span></div>`).join('')}</div>`:''}
+    </div>`;
+  },
+  abrirExplicacaoConfianca(){
+    this.modalFLK({titulo:'Segurança no cargo', corpoHTML:`<div class="mf">
+        <div class="mf-kpis n2"><div class="mf-kpi"><small>Confiança</small><b>${Math.round(this.confianca??this.CONF_INICIAL)}/100</b></div>
+          <div class="mf-kpi"><small>Demissão em</small><b style="color:var(--loss)">${this.corteDemissao()}</b></div></div>
+        ${this.explicarConfiancaHTML()}</div>`,
+      botoes:[{txt:'Entendido',tipo:'primary'}]});
+  },
+
+  /* ---------- REUNIÃO COM A DIRETORIA (§6.1 item 2) ----------
+     Quando a confiança cai até a zona de alerta (corte + 15), o presidente chama
+     uma reunião ANTES da demissão: 2 perguntas. Na 1ª a diretoria CONFERE a
+     desculpa contra os fatos (força do elenco na série, nota recente do time) —
+     honestidade vale. Na 2ª o treinador escolhe o plano (pedir prazo = ultimato). */
+  checarReuniao(){
+    if(this.demitido) return;
+    const conf=this.confianca??this.CONF_INICIAL, lim=this.limiarReuniao();
+    if(conf>lim+10) this._reuniaoFeita=false;              // saiu da crise: próxima crise tem reunião de novo
+    if(conf<=lim && !this._reuniaoFeita && !this.ultimato){ this._reuniaoFeita=true; this.abrirReuniao(); }
+  },
+  fatosReuniao(){
+    // compara com quem disputa a mesma tabela (grupo na Série D, a série inteira nas outras)
+    const idxs=this.grupoDe(this.myTeam)||this.indicesDaDivisao(this.divisao);
+    const ranking=[...idxs].sort((a,b)=>this.forcaDoTime(b)-this.forcaDoTime(a));
+    const rank=ranking.indexOf(this.myTeam)+1, n=ranking.length;
+    const notas=this.teams[this.myTeam]._notas5||[], media=Forma.media(notas);
+    return {rank, n, elencoFraco:rank>Math.ceil(n/2), notaMedia:media, faseBoa:media!=null && media>=6.0};
+  },
+  VERBA_REUNIAO:{A:8e6,B:4e6,C:2e6,D:1e6},
+  abrirReuniao(){
+    const t=this.teams[this.myTeam], fatos=this.fatosReuniao(), lim=this.limiarReuniao();
+    const verba=this.VERBA_REUNIAO[this.divisao]||1e6, f=v=>(v>0?'+':'')+v;
+    const P1=[
+      {perfil:'Elenco', txt:'O elenco não tem nível pra essa meta.', ok:fatos.elencoFraco, dOk:+4, dNao:-3,
+        fato:`seu elenco é o ${fatos.rank}º mais forte de ${fatos.n} na ${this.grupoDe(this.myTeam)?'chave':'série'}`},
+      {perfil:'Fase', txt:'É fase ruim. O time joga melhor do que os resultados mostram.', ok:fatos.faseBoa, dOk:+3, dNao:-3,
+        fato:fatos.notaMedia!=null?`nota média recente do time: ${fatos.notaMedia.toFixed(1)} (precisa ≥ 6,0)`:'o time ainda não tem notas recentes'},
+      {perfil:'Culpa', txt:'A responsabilidade é minha. Eu vou corrigir.', ok:true, dOk:+1, dNao:+1, fato:'a diretoria valoriza a franqueza'},
+    ];
+    const P2=[
+      {perfil:'Prazo', txt:'Me deem 3 rodadas. Se não melhorar, eu mesmo saio.', ultimato:true, d:+6,
+        selos:[{t:'cargo +6 agora',b:1},{t:`⚠️ em 3 rodadas precisa estar acima de ${lim}, senão demissão`,r:1}]},
+      {perfil:'Reforços', txt:'Preciso de reforços. Libere verba pro mercado.', verba, d:-2,
+        selos:[{t:`+${this.fmtReais(verba)} de verba`,b:1},{t:'cargo −2',r:1}]},
+      {perfil:'Continuidade', txt:'O trabalho está certo. Vamos manter o caminho.', d:0, selos:[{t:'sem efeito',n:1}]},
+    ];
+    const tot={d:0};
+    const topo=()=>`<div class="mf-top"><span class="col-mic">🤵</span><div><div class="mf-nome">Presidente do ${this.esc(t.nome)}</div>
+        <div class="mf-sub">Reunião de emergência · Série ${this.divisao} · Rodada ${this.rodada}</div></div></div>
+      <div class="mf-kpis n2"><div class="mf-kpi"><small>Confiança</small><b style="color:var(--loss)">${Math.round(this.confianca??this.CONF_INICIAL)}/100</b></div>
+        <div class="mf-kpi"><small>Demissão em</small><b>${this.corteDemissao()}</b></div></div>`;
+    const passo2=()=>({titulo:'🏛️ Reunião com a diretoria', fechavel:false,
+      corpoHTML:`<div class="mf">${topo()}
+        <div class="mf-destaque alerta"><small>Pergunta 2 de 2</small><b class="col-q">“E qual é o plano daqui pra frente?”</b></div>
+        <div class="col-resps">${P2.map((r,i)=>`<button class="col-resp" data-resp="${i}"><small>${r.perfil}</small><span>“${this.esc(r.txt)}”</span>
+          <em>${r.selos.map(x=>`<i class="${x.n?'n':x.b?'b':'r'}">${x.t}</i>`).join('')}</em></button>`).join('')}</div></div>`,
+      botoes:[],
+      aoAbrir:(el)=>el.querySelectorAll('[data-resp]').forEach(b=>b.onclick=()=>{
+        const r=P2[+b.dataset.resp];
+        if(r.d) tot.d+=this.mudarConfianca(r.d,'Reunião: '+r.perfil.toLowerCase());
+        if(r.ultimato) this.ultimato={rodadaLimite:this.rodada+3, limiar:lim, temporada:this.temporada};
+        if(r.verba){ t.saldo=(t.saldo||0)+r.verba; this.addExtrato('Verba da diretoria (reunião)', +r.verba); }
+        this.salvarSupabase&&this.salvarSupabase(true); this.renderShell(); if(!this.liveState) this.showTab('escala');
+        const msg=r.ultimato?`Você tem até a rodada ${this.ultimato.rodadaLimite} pra deixar a confiança acima de ${lim}.`
+          : r.verba?`A diretoria liberou ${this.fmtReais(r.verba)} pro mercado. Use bem.`
+          : 'A diretoria vai acompanhar de perto.';
+        this.modalFLK({titulo:'Fim da reunião', corpoHTML:this.cartaoDecisao({
+            destaque:{rotulo:'Resultado da reunião', titulo:`Confiança ${f(Math.round(tot.d))}`, desc:msg, tom:tot.d<0?'alerta':''},
+            kpis:[{rotulo:'Confiança agora', valor:`${Math.round(this.confianca)}/100`},{rotulo:'Demissão em', valor:String(this.corteDemissao())}]}),
+          botoes:[{txt:'Voltar ao trabalho',tipo:'primary'}]});
+      })});
+    this.modalFLK({titulo:'🏛️ Reunião com a diretoria', fechavel:false, fila:true,
+      corpoHTML:`<div class="mf">${topo()}
+        <p class="mf-fala">🤵 “Professor, os resultados preocupam. A diretoria quer entender o que está acontecendo.”</p>
+        ${this.explicarConfiancaHTML()}
+        <div class="mf-destaque alerta"><small>Pergunta 1 de 2</small><b class="col-q">“Por que os resultados pioraram?”</b></div>
+        <div class="col-resps">${P1.map((r,i)=>`<button class="col-resp" data-resp="${i}"><small>${r.perfil}</small><span>“${this.esc(r.txt)}”</span>
+          <em><i class="n">a diretoria confere: ${r.fato}</i>${r.dOk===r.dNao?`<i class="b">cargo ${f(r.dOk)}</i>`:`<i class="b">${f(r.dOk)} se for verdade</i><i class="r">${f(r.dNao)} se não for</i>`}</em></button>`).join('')}</div></div>`,
+      botoes:[],
+      aoAbrir:(el)=>el.querySelectorAll('[data-resp]').forEach(b=>b.onclick=()=>{
+        const r=P1[+b.dataset.resp]; const d=r.ok?r.dOk:r.dNao;
+        tot.d+=this.mudarConfianca(d,'Reunião: '+(r.ok?'argumento aceito':'desculpa não colou'));
+        this.modalFLK(passo2());
+      })});
+  },
+
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
     const j=this._ultimoJogo; if(!j) return null;
@@ -5319,7 +5451,7 @@ const App={
     const t=this.teams[this.myTeam], cl=v=>Math.max(0,Math.min(100,Math.round(v*10)/10));
     if(r.moral) t.players.forEach(p=>{ p.moral=cl(Rating.moralDe(p)+r.moral); });
     if(r.moralAlvo && alvoNum!=null){ const p=t.players.find(x=>x.numero===alvoNum); if(p) p.moral=cl(Rating.moralDe(p)+r.moralAlvo); }
-    if(r.cargo){ if(this.confianca==null) this.confianca=this.CONF_INICIAL; this.confianca=Math.max(0,Math.min(100,this.confianca+r.cargo)); }
+    if(r.cargo) this.mudarConfianca(r.cargo,'Coletiva: '+(r.perfil||'resposta').toLowerCase());
   },
   abrirColetiva(){
     if(!this.garantirOpcoes().coletiva) return;
@@ -5529,7 +5661,7 @@ const App={
     else if(P.id==='subir_d')  ok = subi;
     else                       ok = subi;
     o.principalStatus = ok?'cumprido':'falhou';
-    if(this.confianca!=null) this.confianca=Math.max(0,Math.min(100,this.confianca+(ok?P.confOk:P.confFail)));
+    this.mudarConfianca(ok?P.confOk:P.confFail, ok?'Meta da diretoria cumprida':'Meta da diretoria não cumprida');
     if(ok){ const t=this.teams[eu]; if(t){ t.saldo=(t.saldo||0)+P.premio; this.addExtrato('Meta da diretoria: '+P.titulo, +P.premio); } }
     return {ok, premio:ok?P.premio:0, titulo:P.titulo};
   },
@@ -6265,10 +6397,13 @@ const App={
   abrirDemissao(){
     this.demitido=true;
     const t=this.teams[this.myTeam];
+    const porUltimato=this._motivoDemissao==='ultimato'; this._motivoDemissao=null; this.ultimato=null;
     this.modalFLK({titulo:'🚪 Você foi demitido', fechavel:false,
       corpoHTML:this.cartaoDecisao({
         topo:t?{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome), sub:`Série ${this.divisao||'D'} · Temporada ${this.temporada}`}:null,
-        fala:'🤵 “Agradecemos o trabalho, professor, mas a diretoria decidiu encerrar o seu ciclo no clube.”',
+        fala:porUltimato
+          ? '🤵 “Combinamos 3 rodadas, professor. O prazo acabou e a situação não mudou. Vamos seguir outro caminho.”'
+          : '🤵 “Agradecemos o trabalho, professor, mas a diretoria decidiu encerrar o seu ciclo no clube.”',
         destaque:{rotulo:'Livre no mercado', titulo:'Recomece por baixo', desc:'Um bom treinador sempre recebe novas propostas. Assuma outro clube e prove seu valor de novo.', tom:'alerta'},
         kpis:[{rotulo:'Confiança final', valor:`${Math.round(this.confianca)}/100`, cor:'var(--loss)'},
               {rotulo:'Corte do clube', valor:String(this.corteDemissao())}],
@@ -6359,6 +6494,7 @@ const App={
     // 3) remonta a temporada inteira (todas as ligas) com as divisões já atualizadas
     this.montarTemporada();
     this.objetivos=Objetivos.novaTemporada(this.divisao);   // A3: novos objetivos p/ a divisão atual
+    this.ultimato=null; this._reuniaoFeita=false;            // temporada nova, crise nova
     this._objetivosConcluidos=[];
     this.renderShell(); this.showTab('arena');
     this.salvarSupabase(true);
@@ -6385,6 +6521,7 @@ const App={
     }));
     this.tempEncerrada=false;
     this.objetivos=Objetivos.novaTemporada(this.divisao);   // A3
+    this.ultimato=null; this._reuniaoFeita=false; this.histConf=[];
     this._objetivosConcluidos=[];
     this.montarTemporada();
   },
@@ -6440,6 +6577,7 @@ const App={
       ligas:this.serializarLigas(),
       confianca:this.confianca!=null?this.confianca:this.CONF_INICIAL,
       demitido:!!this.demitido,
+      histConf:this.histConf||[], ultimato:this.ultimato||null, reuniaoFeita:!!this._reuniaoFeita,   // reunião com a diretoria
       emprestimo:this.emprestimo||null,
       // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
       formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
@@ -6589,6 +6727,9 @@ const App={
     // v7: confiança da diretoria + empréstimo
     this.confianca = (s.confianca!=null)? s.confianca : this.CONF_INICIAL;
     this.demitido = !!s.demitido;
+    this.histConf = Array.isArray(s.histConf) ? s.histConf.filter(h=>h&&isFinite(+h.d)).slice(-12).map(h=>({t:+h.t||1,r:+h.r||0,d:+h.d,m:String(h.m||'').slice(0,80)})) : [];
+    this.ultimato = (s.ultimato && isFinite(+s.ultimato.rodadaLimite)) ? {rodadaLimite:+s.ultimato.rodadaLimite, limiar:Math.max(0,Math.min(100,+s.ultimato.limiar||0)), temporada:+s.ultimato.temporada||1} : null;
+    this._reuniaoFeita = !!s.reuniaoFeita;
     this.emprestimo = s.emprestimo||null;
     // finanças
     if(s.saldos) s.saldos.forEach((v,ti)=>{ if(this.teams[ti]) this.teams[ti].saldo=v; });
