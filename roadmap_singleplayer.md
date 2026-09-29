@@ -39,7 +39,7 @@ O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 
 - ✅ **Assistências (29/09/2026)** — `Motor.assistente()`: ~78% dos gols têm passe, ponderado por posição (meias/pontas criam mais) e passe+visão+cruzamento; +0,8 na nota da partida; painel 🅰️ na aba Estatísticas, J/G/A na ficha, "🅰️" no lance ao vivo. Save **v10** (`assist`/`assistTemp`; v9 carrega zerado). Gate: `harness_assistencias`.
 - ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
-- ❌ **Carreira longa como gate** (D3) e **áudio** (D4).
+- ❌ **Carreira longa como gate** (D3). ✅ **Áudio** (D4) feito em 29/09/2026.
 - 🟡 **Layout das outras abas** (Elenco, Mercado, Campeonatos, Finanças) — cabem no celular sem rolagem horizontal, mas ainda não foram redesenhadas no padrão da página do clube.
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E).
 
@@ -177,6 +177,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 **D4. Áudio e identidade (alto impacto percebido, baixo custo).**
 - SFX mínimos (gol, apito), música de menu. Eleva muito a percepção de acabamento.
+- **✅ FEITO (29/09/2026)**: módulo `Som`, tudo **sintetizado em WebAudio** (nenhum arquivo de áudio, zero peso no HTML): apito de início / intervalo (2) / fim (3), **gol** (torcida explodindo + arpejo), **gol sofrido** (lamento grave), **cartão** do meu time, **caixa** (venda, premiação por fase), **fanfarra** (título estadual, título da Série D, acesso), murmúrio de torcida em loop durante a partida e **música de menu** (loop Am–F–C–G, 96 bpm). Só o **meu jogo** faz som; "pular" não dispara rajada de gols. O contexto de áudio nasce no 1º toque (regra de autoplay). **Configurações → 🔊 Som**: efeitos e música em Mudo/Baixo/Médio/Alto, salvos **no aparelho** (não no save). Gate: `harness_som`.
 
 ---
 

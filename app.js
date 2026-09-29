@@ -757,6 +757,133 @@ function gerarFixtures(n){
 /* ====================================================================
    MENU / PRÉ-JOGO (Fase 3): login, slots de save, novo jogo
    ==================================================================== */
+/* ====================================================================
+   ÁUDIO (D4) — tudo sintetizado em WebAudio (zero arquivo de som):
+   apitos, gol (torcida explodindo), gol sofrido, cartão, caixa (dinheiro),
+   fanfarra de título, clique de UI, murmúrio de torcida durante a partida
+   e uma música de menu em loop. Volume de EFEITOS e de MÚSICA ficam no
+   aparelho (localStorage), não no save. O contexto só nasce depois do
+   primeiro toque/tecla (regra de autoplay dos navegadores).
+   ==================================================================== */
+const Som={
+  CHAVE:'prancheta_audio_v1',
+  PADRAO:{efeitos:0.7, musica:0.4},
+  ctx:null, _cfg:null, _log:[], _musica:null, _querMusica:false, _amb:null, _querAmb:false,
+  cfg(){
+    if(!this._cfg){ let c={}; try{ c=JSON.parse(localStorage.getItem(this.CHAVE)||'{}')||{}; }catch(e){}
+      const n=(v,d)=>{ v=+v; return isFinite(v)?Math.max(0,Math.min(1,v)):d; };
+      this._cfg={efeitos:n(c.efeitos,this.PADRAO.efeitos), musica:n(c.musica,this.PADRAO.musica)}; }
+    return this._cfg;
+  },
+  definir(k,v){
+    const c=this.cfg(); c[k]=Math.max(0,Math.min(1,+v||0));
+    try{ localStorage.setItem(this.CHAVE, JSON.stringify(c)); }catch(e){}
+    if(k==='musica'){ if(this._musica) this._musica.g.gain.value=this.volMusica(); if(c.musica>0 && this._querMusica) this.musica(true); if(!c.musica) this._pararMusica(); }
+    if(k==='efeitos' && this._amb) this._amb.g.gain.value=0.05*c.efeitos;
+  },
+  volMusica(){ return 0.16*this.cfg().musica; },
+  // cria/retoma o AudioContext no primeiro gesto do usuário
+  destravar(){
+    try{
+      if(!this.ctx){ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return false; this.ctx=new AC(); }
+      if(this.ctx.state==='suspended') this.ctx.resume();
+    }catch(e){ return false; }
+    if(this._querMusica && !this._musica) this.musica(true);
+    if(this._querAmb && !this._amb) this.ambiente(true);
+    return true;
+  },
+  ligarGestos(){
+    if(this._ligado) return; this._ligado=true;
+    const f=()=>this.destravar();
+    ['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,f,{capture:true, passive:true}));
+  },
+  // ---- blocos de síntese ----
+  _saida(vol){ const g=this.ctx.createGain(); g.gain.value=vol; g.connect(this.ctx.destination); return g; },
+  _tom(dest, tipo, freq, t0, dur, vol, ataque){
+    const c=this.ctx, o=c.createOscillator(), g=c.createGain();
+    o.type=tipo; o.frequency.setValueAtTime(freq,t0);
+    g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(vol,t0+(ataque||0.01));
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    o.connect(g); g.connect(dest); o.start(t0); o.stop(t0+dur+0.05); return o;
+  },
+  _ruido(seg){
+    const c=this.ctx, n=Math.floor(c.sampleRate*seg), b=c.createBuffer(1,n,c.sampleRate), d=b.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    return b;
+  },
+  _multidao(dest, t0, dur, vol, freq){
+    const c=this.ctx, s=c.createBufferSource(), f=c.createBiquadFilter(), g=c.createGain();
+    s.buffer=this._ruido(dur+0.1); f.type='bandpass'; f.frequency.value=freq||900; f.Q.value=0.7;
+    g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(vol,t0+0.25);
+    g.gain.setValueAtTime(vol,t0+dur*0.55); g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    s.connect(f); f.connect(g); g.connect(dest); s.start(t0); s.stop(t0+dur+0.1);
+  },
+  _apito(dest, t0, dur){
+    const o=this._tom(dest,'sine',2900,t0,dur,0.5,0.02);
+    const lfo=this.ctx.createOscillator(), lg=this.ctx.createGain();
+    lfo.frequency.value=38; lg.gain.value=90; lfo.connect(lg); lg.connect(o.frequency); lfo.start(t0); lfo.stop(t0+dur+0.05);
+  },
+  // ---- catálogo ----
+  SONS:{
+    apito(t){ this._apito(this._saida(0.35*t.v), t.t0, 0.35); },
+    apitoIntervalo(t){ const d=this._saida(0.35*t.v); this._apito(d,t.t0,0.25); this._apito(d,t.t0+0.35,0.45); },
+    apitoFinal(t){ const d=this._saida(0.35*t.v); this._apito(d,t.t0,0.25); this._apito(d,t.t0+0.35,0.25); this._apito(d,t.t0+0.7,0.7); },
+    gol(t){ const d=this._saida(t.v);
+      this._multidao(d,t.t0,2.6,0.55,800); this._multidao(d,t.t0+0.05,2.4,0.3,1800);
+      [523,659,784,1047].forEach((f,i)=>this._tom(d,'square',f,t.t0+0.08*i,0.28,0.05)); },
+    golContra(t){ const d=this._saida(t.v); const c=this.ctx, s=c.createBufferSource(), f=c.createBiquadFilter(), g=c.createGain();
+      s.buffer=this._ruido(1.4); f.type='lowpass'; f.frequency.setValueAtTime(900,t.t0); f.frequency.exponentialRampToValueAtTime(250,t.t0+1.2);
+      g.gain.setValueAtTime(0.0001,t.t0); g.gain.exponentialRampToValueAtTime(0.35,t.t0+0.15); g.gain.exponentialRampToValueAtTime(0.0001,t.t0+1.3);
+      s.connect(f); f.connect(g); g.connect(d); s.start(t.t0); s.stop(t.t0+1.4);
+      this._tom(d,'triangle',220,t.t0,0.5,0.08); this._tom(d,'triangle',165,t.t0+0.25,0.7,0.08); },
+    cartao(t){ const d=this._saida(t.v); this._apito(this._saida(0.25*t.v),t.t0,0.3); this._tom(d,'square',880,t.t0+0.32,0.08,0.05); },
+    moeda(t){ const d=this._saida(t.v); this._tom(d,'square',988,t.t0,0.09,0.14); this._tom(d,'square',1319,t.t0+0.08,0.3,0.14); },
+    titulo(t){ const d=this._saida(t.v); this._multidao(d,t.t0,3,0.35,900);
+      [[523,0],[659,0.15],[784,0.3],[1047,0.45],[784,0.7],[1047,0.85]].forEach(([f,o],i)=>this._tom(d,'square',f,t.t0+o,i===5?0.9:0.2,0.07)); },
+    clique(t){ this._tom(this._saida(t.v),'triangle',1400,t.t0,0.04,0.06,0.002); },
+  },
+  // toca um efeito; retorna false se mudo/sem áudio. _log guarda os últimos (debug/harness).
+  tocar(nome){
+    const v=this.cfg().efeitos; if(!v || !this.SONS[nome]) return false;
+    this._log.push(nome); if(this._log.length>60) this._log.shift();
+    if(!this.ctx || this.ctx.state!=='running') return false;
+    try{ this.SONS[nome].call(this,{v, t0:this.ctx.currentTime+0.01}); }catch(e){ return false; }
+    return true;
+  },
+  // murmúrio de torcida contínuo durante a partida
+  ambiente(on){
+    this._querAmb=!!on;
+    if(!on){ if(this._amb){ try{ this._amb.s.stop(); }catch(e){} this._amb=null; } return; }
+    if(this._amb || !this.ctx || this.ctx.state!=='running') return;
+    const c=this.ctx, s=c.createBufferSource(), f=c.createBiquadFilter(), g=c.createGain();
+    s.buffer=this._ruido(3); s.loop=true; f.type='bandpass'; f.frequency.value=600; f.Q.value=0.5; g.gain.value=0.05*this.cfg().efeitos;
+    s.connect(f); f.connect(g); g.connect(c.destination); s.start(); this._amb={s,g};
+  },
+  // música de menu: loop Am–F–C–G a 96 bpm (baixo triangular + arpejo quadrado leve)
+  musica(on){
+    this._querMusica=!!on;
+    if(!on){ this._pararMusica(); return; }
+    if(this._musica || !this.cfg().musica || !this.ctx || this.ctx.state!=='running') return;
+    const c=this.ctx, g=c.createGain(); g.gain.value=this.volMusica(); g.connect(c.destination);
+    const ACORDES=[[220,261.6,329.6],[174.6,220,261.6],[261.6,329.6,392],[196,246.9,293.7]];
+    const passo=60/96/2;   // colcheia
+    const M={g, prox:c.currentTime+0.1, i:0, timer:null};
+    const agendar=()=>{
+      while(M.prox < c.currentTime+0.4){
+        const comp=Math.floor(M.i/8)%4, k=M.i%8, ac=ACORDES[comp];
+        this._tom(g,'triangle',ac[0]/2,M.prox,passo*0.9,0.5);
+        if(k%2===0 || Math.random()<0.35) this._tom(g,'square',ac[[0,1,2,1,2,1,0,2][k]]*2,M.prox,passo*0.8,0.12);
+        if(k===0) this._tom(g,'sine',ac[2]*2,M.prox,passo*7,0.08,0.3);
+        M.prox+=passo; M.i++;
+      }
+    };
+    agendar(); M.timer=setInterval(agendar,150); this._musica=M;
+  },
+  _pararMusica(){ const M=this._musica; if(!M) return; clearInterval(M.timer);
+    try{ M.g.gain.setTargetAtTime(0.0001,this.ctx.currentTime,0.15); setTimeout(()=>{ try{ M.g.disconnect(); }catch(e){} },600); }catch(e){}
+    this._musica=null; },
+};
+
 const Menu={
   user:null,            // objeto do Supabase auth, ou null
   convidado:false,      // true = jogando sem conta (save em localStorage)
@@ -769,9 +896,9 @@ const Menu={
   msg(txt,tipo){ return `<div class="pre-msg ${tipo||'info'}">${txt}</div>`; },
 
   mostrar(){ document.getElementById('preGame').classList.remove('hidden');
-             document.getElementById('gameWrap').classList.add('hidden'); },
+             document.getElementById('gameWrap').classList.add('hidden'); Som.ligarGestos(); Som.musica(true); },
   esconder(){ document.getElementById('preGame').classList.add('hidden');
-              document.getElementById('gameWrap').classList.remove('hidden'); },
+              document.getElementById('gameWrap').classList.remove('hidden'); Som.musica(false); },
 
   // ---------- entrada ----------
   async iniciar(){
@@ -2117,6 +2244,7 @@ const App={
                     fase:'1T', // 1T -> intervalo -> 2T -> fim
                     paused:false, subOpen:false};
     Tutorial.aoIniciarPartida();   // D1: dica da 1ª partida
+    Som.tocar('apito'); Som.ambiente(true);
     this.showTab('arena');
     this.renderArena();
     this.rodarRelogio();
@@ -2135,10 +2263,12 @@ const App={
       // intervalo ao fim do 1º tempo
       if(L.min===45 && L.fase==='1T'){
         clearInterval(L.timer); L.fase='intervalo'; L.paused=true;
+        Som.tocar('apitoIntervalo'); Som.ambiente(false);
         this.abrirIntervalo();
         return;
       }
       if(L.min>=90){ clearInterval(L.timer); L.playing=false; L.done=true; L.fase='fim';
+        Som.tocar('apitoFinal'); Som.ambiente(false);
         this.encerrarRodada(); }
     };
     L.timer=setInterval(tick, this.msPorMinuto()); // velocidade configurável (Configurações)
@@ -2150,6 +2280,7 @@ const App={
     // cartões por minuto por time. Calibrado: leve ~2,0 amarelos/jogo, pesada ~3,2, muito pesada ~4,5
     const cart={leve:0.023,pesada:0.037,muito_pesada:0.052};
     L.sims.forEach(s=>{
+      const n0=s.evs.length;
       const cfgH=this.cfg[s.h], cfgA=this.cfg[s.a];
       const fH=Motor.forcaCampo(s.campoH);
       const fA=Motor.forcaCampo(s.campoA);
@@ -2170,6 +2301,14 @@ const App={
       Motor.desgastarMinuto(s.campoH); Motor.desgastarMinuto(s.campoA);
       // CPU faz substituições inteligentes (não no jogo do usuário)
       this.cpuSubstituir(s);
+      // D4: som só pro MEU jogo (e não no "pular")
+      if(!L._rapido && (s.h===this.myTeam||s.a===this.myTeam)){
+        const meuLado=s.h===this.myTeam?'casa':'fora';
+        s.evs.slice(n0).forEach(e=>{
+          if(e.tipo==='gol') Som.tocar(e.time===meuLado?'gol':'golContra');
+          else if((e.tipo==='amarelo'||e.tipo==='vermelho') && e.time===meuLado) Som.tocar('cartao');
+        });
+      }
     });
   },
 
@@ -2291,6 +2430,7 @@ const App={
   pularRodada(){
     const L=this.liveState; if(!L) return;
     clearInterval(L.timer); L.paused=false; L.subOpen=false;
+    L._rapido=true;   // sem som de gol em rajada
     // simula o restante instantaneamente
     while(L.min<90){
       L.min++;
@@ -2298,6 +2438,7 @@ const App={
       if(L.min===45) L.fase='2T'; // pula intervalo
     }
     L.playing=false; L.done=true; L.fase='fim';
+    Som.ambiente(false); Som.tocar('apitoFinal');
     this.atualizarPlacaresAoVivo();
     this.encerrarRodada();
   },
@@ -2989,7 +3130,7 @@ const App={
     if(tiDestino!==this.myTeam) this.cfg[tiDestino]=this.cfgInicial(dest);
     // extrato do meu time se envolvido
     if(tiDestino===this.myTeam) this.addExtrato('Compra: '+p.nome, -preco);
-    if(tiOrigem===this.myTeam) this.addExtrato('Venda: '+p.nome, +preco);
+    if(tiOrigem===this.myTeam){ this.addExtrato('Venda: '+p.nome, +preco); Som.tocar('moeda'); }
     return {ok:true,msg:`${p.nome} → ${dest.nome} por ${this.fmtReais(preco)}`, jogador:p, tiOrigem, tiDestino};
   },
 
@@ -3305,7 +3446,7 @@ const App={
     const L=this.liveState; if(!L) return;
     document.getElementById('subsOverlay')?.remove();
     L.paused=false; L.subOpen=false;
-    if(L.fase==='intervalo') L.fase='2T';
+    if(L.fase==='intervalo'){ L.fase='2T'; Som.tocar('apito'); Som.ambiente(true); }
     this.renderArena();
     if(!L.done && L.min<90) this.rodarRelogio();
   },
@@ -5165,7 +5306,7 @@ const App={
     const ev={fase:nomeFase, jogos, vivo:vivo&&estava, premio:0, campeao:false};
     if(E.fase===2){
       E.campeao=venc[0]; E.status='fim';
-      if(E.campeao===eu){ ev.premio=this.pagarEstadual('titulo','campeão'); ev.campeao=true;
+      if(E.campeao===eu){ ev.premio=this.pagarEstadual('titulo','campeão'); ev.campeao=true; Som.tocar('titulo');
         this.torcida=Math.min(100,this.humorTorcida()+8); this.mudarConfianca(4,`Título do ${E.nome}`);
         const car=this.garantirCarreira(); car.estaduais=(car.estaduais||0)+1; }
     } else {
@@ -5230,7 +5371,7 @@ const App={
   PREMIO_FASE_D:{classificou:1.5e5, 32:2e5, 16:3e5, 8:4e5, 4:6e5, 2:1e6, 1:2e6},
   premiarFaseMataMata(chave, txt){
     const v=this.PREMIO_FASE_D[chave]; if(!v) return 0;
-    const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+v; this.addExtrato('Premiação Série D: '+txt, +v);
+    const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+v; this.addExtrato('Premiação Série D: '+txt, +v); Som.tocar(chave===1?'titulo':'moeda');
     (this._premiosFase||(this._premiosFase=[])).push({txt, v});
     return v;
   },
@@ -6006,6 +6147,11 @@ const App={
         <div class="cfg-hint">Controla o ritmo do relógio durante os jogos.</div>
       </div>
       <div class="cfg-sec">
+        <div class="cfg-h">🔊 Som</div>
+        ${[['efeitos','Efeitos','apito, gol, torcida'],['musica','Música','toca no menu']].map(([k,rot,dica])=>`<div class="cfg-som"><span>${rot} <small>${dica}</small></span><div class="cfg-row">${[[0,'Mudo'],[0.35,'Baixo'],[0.7,'Médio'],[1,'Alto']].map(([v,l])=>`<button class="cfg-opt ${Math.abs(Som.cfg()[k]-v)<0.01?'on':''}" data-cfg-som="${k}" data-v="${v}">${l}</button>`).join('')}</div></div>`).join('')}
+        <div class="cfg-hint">Fica salvo neste aparelho.</div>
+      </div>
+      <div class="cfg-sec">
         <div class="cfg-h">💾 Salvamento automático</div>
         <div class="cfg-row">${saveBtns}</div>
         <div class="cfg-hint">Com que frequência o jogo salva sozinho após as rodadas.</div>
@@ -6047,6 +6193,8 @@ const App={
     wrap.querySelectorAll('[data-cfg-save]').forEach(b=>b.onclick=()=>{
       o.autoSaveRodadas=parseInt(b.dataset.cfgSave,10); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const tut=wrap.querySelector('[data-cfg-tut]'); if(tut) tut.onclick=()=>Tutorial.rever();
+    wrap.querySelectorAll('[data-cfg-som]').forEach(b=>b.onclick=()=>{ Som.destravar(); Som.definir(b.dataset.cfgSom, +b.dataset.v);
+      if(b.dataset.cfgSom==='efeitos') Som.tocar('apito'); this.abrirConfig(); });
     wrap.querySelectorAll('[data-cfg-rec]').forEach(b=>b.onclick=()=>{ o.recado=b.dataset.cfgRec==='1'; this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     const dem=wrap.querySelector('[data-cfg-dem]'); if(dem) dem.onclick=()=>this.pedirDemissaoUI();
     wrap.querySelectorAll('[data-cfg-col]').forEach(b=>b.onclick=()=>{ o.coletiva=b.dataset.cfgCol==='1'; this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
@@ -6319,7 +6467,7 @@ const App={
                                : `🔻 Rebaixado para a Série ${meuMov.para}.`)
       : `Temporada ${this.temporada} iniciada!`;
     // prêmio em dinheiro por acesso (sobe = divisão de letra menor)
-    if(meuMov && meuMov.para<meuMov.de){ this.premiarAcesso(meuMov.para); }
+    if(meuMov && meuMov.para<meuMov.de){ this.premiarAcesso(meuMov.para); Som.tocar('titulo'); }
     this.setStatus('saveStatus','ok',msg);
     if(meuMov) setTimeout(()=>this.avisoFLK(meuMov.para<meuMov.de?'⬆️ Acesso!':'🔻 Rebaixamento', msg, meuMov.para<meuMov.de?'var(--lemon)':'var(--loss)',{fila:true}),50);
     const rel=this._relAposentadoria;
