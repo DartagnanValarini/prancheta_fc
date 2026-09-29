@@ -3720,10 +3720,21 @@ const App={
     // jogador jovem com potencial (idade baixa) o clube segura mais
     const apego = p.idade<=21 ? 1.25 : p.idade<=26 ? 1.1 : 0.95;
     const alvo=vm*apego;                       // preço que o clube realmente quer
-    if(oferta>=alvo*1.05) return {decisao:'aceita', fala:'Fechado! Ele é seu.'};
+    // regra monotônica: oferecer MAIS nunca pode dar resultado PIOR.
+    // (antes aceitava só com alvo+5%; entre alvo e alvo+5% a contraproposta —
+    //  média entre oferta e alvo — saía ABAIXO do que o jogador ofereceu)
+    // o clube LEMBRA a contraproposta que já fez nesta rodada: oferecer esse valor
+    // (ou mais) fecha, e subir a oferta nunca faz o clube pedir mais do que já pediu
+    const memo=(this._contras||(this._contras={}))[pid];
+    const pedido=(memo && memo.rodada===this.rodada && memo.temporada===this.temporada) ? memo.valor : null;
+    if(oferta>=alvo || (pedido!=null && oferta>=pedido)) return {decisao:'aceita', fala:'Fechado! Ele é seu.'};
     if(oferta<alvo*0.6)   return {decisao:'recusa', fala:'Proposta muito baixa. Nem vamos considerar.'};
-    // contrapropõe num ponto entre a oferta e o alvo
-    const contra=Math.round((oferta+alvo)/2/1e5)*1e5;
+    // contrapropõe no meio do caminho, arredondado PRA CIMA em R$ 100 mil,
+    // sempre ACIMA da oferta e nunca acima do alvo (arredondado) nem do que já pediu
+    const passo=1e5, teto=Math.ceil(alvo/passo)*passo;
+    let contra=Math.min(teto, Math.max(Math.ceil((oferta+alvo)/2/passo)*passo, Math.floor(oferta/passo)*passo+passo));
+    if(pedido!=null) contra=Math.min(contra, pedido);
+    this._contras[pid]={valor:contra, rodada:this.rodada, temporada:this.temporada};
     return {decisao:'contra', contra, fala:`Nesse valor não sai. Aceitamos por ${this.fmtReais(contra)}.`};
   },
 
