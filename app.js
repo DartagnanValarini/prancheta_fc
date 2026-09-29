@@ -1068,6 +1068,7 @@ const Menu={
       App.sincronizarDivisaoAtiva();
     }
     App.escalarMelhor(ti);             // já entra com o melhor 11 montado (evita time incompleto)
+    App.criarEstadual();               // pré-temporada: estadual opcional
     this.esconder();
     App.renderShell(); App.showTab('escala');
     App.salvarSupabase(true);
@@ -1530,6 +1531,39 @@ const Coletiva={
     if(!s.length) s.push({t:'sem efeito', neutro:true});
     return s;
   },
+};
+
+/* ====================================================================
+   ESTADUAL (§6.1 item 12) — pré-temporada opcional, mata-mata de 8 em jogo
+   único (quartas → semi → final; empate = pênaltis). Participantes: clubes
+   do MEU estado (4 mais fortes + os de força parecida com a minha); se faltar,
+   completa com a região. Não gasta energia nem conta pra artilharia.
+   PREMIAÇÃO POR FASE (§6.1 item 15): participação + cada fase avançada + título.
+   ==================================================================== */
+const Estadual={
+  UF:{'Águia Branca':'ES','Alagoinhas':'BA','Altos':'PI','Anápolis':'GO','Aparecida de Goiânia':'GO','Aracaju':'SE','Araguaína':'TO','Arapiraca':'AL',
+    'Araraquara':'SP','Bagé':'RS','Balneário Camboriú':'SC','Bauru':'SP','Belém':'PA','Belo Horizonte':'MG','Betim':'MG','Blumenau':'SC','Boa Vista':'RR',
+    'Bragança Paulista':'SP','Brasília':'DF','Brusque':'SC','Camaragibe':'PE','Campina Grande':'PB','Campinas':'SP','Campo Grande':'MS','Cariacica':'ES',
+    'Caruaru':'PE','Cascavel':'PR','Catalão':'GO','Caxias do Sul':'RS','Ceilândia':'DF','Chapecó':'SC','Cianorte':'PR','Criciúma':'SC','Cuiabá':'MT',
+    'Curitiba':'PR','Diadema':'SP','Erechim':'RS','Florianópolis':'SC','Fortaleza':'CE','Gama':'DF','Goiânia':'GO','Goiatuba':'GO','Governador Valadares':'MG',
+    'Humaitá':'AM','Iguatu':'CE','Ijuí':'RS','Imperatriz':'MA','Inhumas':'GO','Itabaiana':'SE','Itajaí':'SC','Itu':'SP','Ivinhema':'MS','João Pessoa':'PB',
+    'Joinville':'SC','Juazeiro':'BA','Lagarto':'SE','Limeira':'SP','Lucas do Rio Verde':'MT','Macapá':'AP','Maceió':'AL','Manaus':'AM','Marabá':'PA',
+    'Maracanaú':'CE','Maricá':'RJ','Maringá':'PR','Mirassol':'SP','Natal':'RN','Nova Iguaçu':'RJ','Novo Horizonte':'SP','Palmeira dos Índios':'AL',
+    'Parnaíba':'PI','Pato Branco':'PR','Pelotas':'RS','Piracicaba':'SP','Ponta Grossa':'PR','Porto Alegre':'RS','Porto Seguro':'BA','Porto Velho':'RO',
+    'Pouso Alegre':'MG','Primavera do Leste':'MT','Recife':'PE','Riachão do Jacuípe':'BA','Ribeirão Preto':'SP','Rio Branco':'AC','Rio Claro':'SP',
+    'Rio de Janeiro':'RJ','Rondonópolis':'MT','Salvador':'BA','Santos':'SP','São Bernardo':'SP','São João del-Rei':'MG','São José':'RS',
+    'São José dos Pinhais':'PR','São Luís':'MA','São Paulo':'SP','Saquarema':'RJ','Serra Branca':'PB','Sorocaba':'SP','Sousa':'PB','Taguatinga':'DF',
+    'Teresina':'PI','Tocantinópolis':'TO','Tombos':'MG','Uberlândia':'MG','Várzea Grande':'MT','Vila Velha':'ES','Vitória':'ES','Volta Redonda':'RJ'},
+  NOME:{SP:'Paulista',RJ:'Carioca',MG:'Mineiro',RS:'Gaúcho',PR:'Paranaense',SC:'Catarinense',BA:'Baiano',PE:'Pernambucano',CE:'Cearense',GO:'Goiano',
+    PA:'Paraense',AM:'Amazonense',ES:'Capixaba',DF:'Brasiliense',MT:'Mato-Grossense',MS:'Sul-Mato-Grossense',PB:'Paraibano',RN:'Potiguar',AL:'Alagoano',
+    SE:'Sergipano',PI:'Piauiense',MA:'Maranhense',TO:'Tocantinense',RO:'Rondoniense',AC:'Acreano',AP:'Amapaense',RR:'Roraimense'},
+  REGIAO:{AM:'N',PA:'N',RR:'N',AP:'N',RO:'N',AC:'N',TO:'N',MA:'NE',PI:'NE',CE:'NE',RN:'NE',PB:'NE',PE:'NE',AL:'NE',SE:'NE',BA:'NE',
+    GO:'CO',DF:'CO',MT:'CO',MS:'CO',SP:'SE',RJ:'SE',MG:'SE',ES:'SE',PR:'S',SC:'S',RS:'S'},
+  // prêmio base por divisão do MEU clube; fase avançada paga múltiplos disso
+  BASE:{A:1e6,B:5e5,C:3e5,D:2e5},
+  PREMIO:{participacao:1, semi:1, final:2, titulo:4},
+  FASES:['Quartas de final','Semifinal','Final'],
+  ufDe(t){ return (t&&this.UF[t.cidade])||null; },
 };
 
 /* ====================================================================
@@ -2047,6 +2081,11 @@ const App={
 
   jogarRodada(){
     if(this.rodada>=this.fixtures.length || (this.liveState&&this.liveState.playing)) return;
+    // começou o Brasileiro: estadual pendente é pulado; em andamento é simulado até o fim
+    if(this.estadual && ['pendente','andamento'].includes(this.estadual.status)){
+      const st=this.estadual.status; this.resolverEstadualRestante();
+      if(st==='andamento' && this.estadual.campeao!=null) this.setStatus('saveStatus','ok',`${this.estadual.nome}: campeão ${this.teams[this.estadual.campeao].nome}`);
+    }
     // não deixa entrar em campo desfalcado
     const onze=this.onzeDe(this.myTeam);
     if(onze.length<11){
@@ -2512,6 +2551,7 @@ const App={
     // 1) acabou a fase de grupos → monta a 2ª fase com os 64 classificados
     if(this.fase==='grupos'){
       const pares=Competicao.montarMataMata(this.grupos,this.stats,i=>this.teams[i].nome,f.avancamPorGrupo);
+      if(pares.some(c=>c.includes(this.myTeam))) this.premiarFaseMataMata('classificou','classificou pra 2ª fase');
       this.iniciarFaseKO(pares);
       return;
     }
@@ -2527,6 +2567,7 @@ const App={
       });
       mm.historico=mm.historico||[];
       mm.historico.push({fase:Competicao.nomeFase(mm.confrontos.length*2), confrontos:mm.confrontos, vencedores, perdedores});
+      if(vencedores.includes(this.myTeam)) this.premiarFaseMataMata(vencedores.length, vencedores.length===1?'campeão da Série D':'passou: '+Competicao.nomeFase(mm.confrontos.length*2));
       // guarda os eliminados das quartas (para a repescagem de acesso)
       if(mm.confrontos.length===4) mm.eliminadosQuartas=perdedores;
       // semifinalistas = os 4 que venceram as quartas → esses SOBEM
@@ -3053,6 +3094,13 @@ const App={
     this.checarReuniao();
     if(this._ultimatoCumprido){ this._ultimatoCumprido=false;
       this.avisoFLK('✅ Prazo cumprido','A diretoria viu a reação do time e renovou a confiança no seu trabalho.','var(--lemon)',{fila:true}); }
+    if(this._premiosFase && this._premiosFase.length){
+      const pr=this._premiosFase; this._premiosFase=[];
+      this.modalFLK({fila:true, titulo:'💰 Premiação por fase', corpoHTML:this.cartaoDecisao({
+          destaque:{rotulo:'Caiu no caixa', titulo:'+'+this.fmtReais(pr.reduce((a,x)=>a+x.v,0)), desc:'A CBF paga por cada fase que você avança no mata-mata.'},
+          lista:pr.map(x=>({a:this.esc(x.txt), b:'+'+this.fmtReais(x.v)}))}),
+        botoes:[{txt:'Boa!', tipo:'primary'}]});
+    }
     this.avisarPropostasNovas();
     this.avisarLeiloes();
     // recado do presidente fecha a fila e leva pra Formação (não no 1º jogo do tutorial)
@@ -3790,7 +3838,10 @@ const App={
     const selPos=selP?this.posDe(i,selP.numero):null;
     const selTit=selP && selPos!=='BANCO' && selPos!=='FORA';
 
-    el.innerHTML=`
+    const E=this.estadual, bannerEst=(E && this.rodada===0 && ['pendente','andamento'].includes(E.status)) ? `
+    <div class="est-banner"><span class="est-ico">🏆</span><div class="est-txt"><b>${esc(E.nome)}</b><small>Pré-temporada · ${E.status==='pendente'?`até ${this.fmtReais(this.premioMaxEstadual())} em prêmios`:`${Estadual.FASES[E.fase]} · ${this.fmtReais(E.ganhos)} ganhos`}</small></div>
+      <button class="btn sm" id="estPular">Pular</button><button class="btn primary" id="estAbrir">${E.status==='pendente'?'Disputar':'Continuar'}</button></div>` : '';
+    el.innerHTML=`${bannerEst}
     <div class="fm-grid">
       <div class="fm-col fm-left">
         <div class="fm-card fm-elenco">
@@ -3948,6 +3999,8 @@ const App={
       const col=th.dataset.sort;
       if(srt.col===col) srt.dir*=-1; else this.elencoSort={col, dir:(col==='nome'||col==='setor')?1:-1};
       re(); });
+    const eA=document.getElementById('estAbrir'); if(eA) eA.onclick=()=>this.abrirEstadualUI();
+    const eP=document.getElementById('estPular'); if(eP) eP.onclick=()=>{ this.resolverEstadualRestante(); this.renderShell(); this.showTab('escala'); };
     const fs=document.getElementById('filSetor'); if(fs) fs.onchange=()=>{ this.elencoFiltro.setor=fs.value; re(); };
     const full=document.getElementById('btnCampoFull'), card=document.getElementById('fmCampoCard');
     if(this._campoFull) card.classList.add('fm-full');
@@ -5068,6 +5121,120 @@ const App={
           setTimeout(()=>this.procurarNovoClube(),0); }}]});
   },
 
+  /* ---------- ESTADUAL (pré-temporada) + PREMIAÇÃO POR FASE ---------- */
+  criarEstadual(){
+    const eu=this.myTeam, me=this.teams[eu]; if(!me) return null;
+    const uf=Estadual.ufDe(me), reg=uf&&Estadual.REGIAO[uf];
+    const f=i=>this.forcaBaseTime(i), fMe=f(eu);
+    const idx=this.teams.map((t,i)=>i).filter(i=>i!==eu);
+    const doUF=idx.filter(i=>Estadual.ufDe(this.teams[i])===uf);
+    const daReg=idx.filter(i=>!doUF.includes(i) && reg && Estadual.REGIAO[Estadual.ufDe(this.teams[i])]===reg);
+    const escolher=(pool,n)=>{ const fortes=[...pool].sort((a,b)=>f(b)-f(a)).slice(0,Math.min(4,n));
+      const resto=pool.filter(i=>!fortes.includes(i)).sort((a,b)=>Math.abs(f(a)-fMe)-Math.abs(f(b)-fMe)).slice(0,n-fortes.length);
+      return [...fortes,...resto]; };
+    let part=escolher(doUF,7);
+    if(part.length<7) part=[...part, ...escolher(daReg,7-part.length)];
+    if(part.length<7) part=[...part, ...idx.filter(i=>!part.includes(i)).sort((a,b)=>Math.abs(f(a)-fMe)-Math.abs(f(b)-fMe)).slice(0,7-part.length)];
+    const seed=[eu,...part].sort((a,b)=>f(b)-f(a));
+    const ordem=[0,7,3,4,1,6,2,5].map(k=>seed[k]);
+    const confrontos=[]; for(let k=0;k<8;k+=2) confrontos.push([ordem[k],ordem[k+1]]);
+    this.estadual={temporada:this.temporada||1, uf, nome:uf?`Campeonato ${Estadual.NOME[uf]}`:'Torneio de Pré-Temporada',
+      fase:0, confrontos, historico:[], status:'pendente', campeao:null, ganhos:0, div:me.divisao};
+    return this.estadual;
+  },
+  premioEstadual(chave){ return Math.round((Estadual.BASE[(this.estadual&&this.estadual.div)||this.divisao]||2e5)*Estadual.PREMIO[chave]); },
+  premioMaxEstadual(){ return ['participacao','semi','final','titulo'].reduce((a,k)=>a+this.premioEstadual(k),0); },
+  pagarEstadual(chave, txt){
+    const v=this.premioEstadual(chave), t=this.teams[this.myTeam];
+    t.saldo=(t.saldo||0)+v; this.addExtrato(`${this.estadual.nome}: ${txt}`, +v); this.estadual.ganhos+=v; return v;
+  },
+  // simula UMA fase inteira (jogo único; empate = pênaltis com leve peso da força)
+  jogarFaseEstadual(){
+    const E=this.estadual; if(!E || E.status==='fim' || E.status==='pulado') return null;
+    if(E.status==='pendente'){ E.status='andamento'; this.pagarEstadual('participacao','participação'); }
+    const eu=this.myTeam, fz=i=>i===eu?this.forcaDoTime(i):this.forcaBaseTime(i);
+    const jogos=E.confrontos.map(([h,a])=>{
+      const fh=fz(h)*(1+Motor.MANDO_PCT), fa=fz(a), tot=Math.max(1,fh+fa);
+      const gh=this.poisson((fh/tot)*2.6), ga=this.poisson((fa/tot)*2.6);
+      let venc = gh>ga?h : ga>gh?a : (Math.random()<fh/tot?h:a);
+      return {h,a,gh,ga,pen:gh===ga,venc};
+    });
+    const nomeFase=Estadual.FASES[E.fase];
+    E.historico.push({fase:nomeFase, jogos});
+    const venc=jogos.map(j=>j.venc), vivo=venc.includes(eu), estava=E.confrontos.some(c=>c.includes(eu));
+    const ev={fase:nomeFase, jogos, vivo:vivo&&estava, premio:0, campeao:false};
+    if(E.fase===2){
+      E.campeao=venc[0]; E.status='fim';
+      if(E.campeao===eu){ ev.premio=this.pagarEstadual('titulo','campeão'); ev.campeao=true;
+        this.torcida=Math.min(100,this.humorTorcida()+8); this.mudarConfianca(4,`Título do ${E.nome}`);
+        const car=this.garantirCarreira(); car.estaduais=(car.estaduais||0)+1; }
+    } else {
+      if(vivo && estava) ev.premio=this.pagarEstadual(E.fase===0?'semi':'final', E.fase===0?'chegou à semifinal':'chegou à final');
+      else if(estava) this.torcida=Math.max(0,this.humorTorcida()-3);
+      const pares=[]; for(let k=0;k<venc.length;k+=2) pares.push([venc[k],venc[k+1]]);
+      E.confrontos=pares; E.fase++;
+      if(!E.confrontos.some(c=>c.includes(eu)) && estava && !vivo){ /* eliminado: o resto é simulado quando ele quiser ou ao começar o Brasileiro */ }
+    }
+    return ev;
+  },
+  // termina o estadual sem o jogador (ao começar o Brasileiro com ele em andamento)
+  resolverEstadualRestante(){
+    const E=this.estadual; if(!E) return;
+    if(E.status==='pendente'){ E.status='pulado'; return; }
+    let n=0; while(E.status==='andamento' && n++<4) this.jogarFaseEstadual();
+  },
+  abrirEstadualUI(ultimo){
+    const E=this.estadual; if(!E) return;
+    const eu=this.myTeam, nm=i=>this.esc(this.teams[i].nome), linhaJogo=j=>{
+      const meu=j.h===eu||j.a===eu;
+      return {a:`${meu?'➤ ':''}${nm(j.h)} ${j.gh}×${j.ga} ${nm(j.a)}`, b:`${j.pen?'pênaltis: ':''}${nm(j.venc)}`}; };
+    const eliminado = E.status!=='pendente' && !E.confrontos.some(c=>c.includes(eu)) && E.status!=='fim';
+    let destaque, botoes;
+    if(E.status==='pendente'){
+      destaque={rotulo:'Pré-temporada · opcional', titulo:`${E.nome} · 8 clubes`, desc:`Mata-mata em jogo único. Até ${this.fmtReais(this.premioMaxEstadual())} em prêmios. Não gasta energia nem conta pra artilharia.`};
+      botoes=[{txt:'Pular', tipo:'sm', onClick:()=>{ E.status='pulado'; this.renderShell(); this.showTab('escala'); }},
+              {txt:`Disputar ▸`, tipo:'primary', onClick:()=>{ const ev=this.jogarFaseEstadual(); this.abrirEstadualUI(ev); this.renderShell(); return true; }}];
+    } else if(E.status==='fim'){
+      const camp=E.campeao===eu;
+      destaque={rotulo:camp?'🏆 Campeão!':'Estadual encerrado', titulo:camp?`Você é campeão do ${E.nome}!`:`Campeão: ${nm(E.campeao)}`, desc:`Prêmios do seu clube: ${this.fmtReais(E.ganhos)}.${camp?' A torcida está em festa.':''}`, tom:camp?'':'alerta'};
+      botoes=[{txt:'Fechar', tipo:'primary', onClick:()=>{ this.renderShell(); this.showTab('escala'); }}];
+    } else {
+      const fase=Estadual.FASES[E.fase];
+      destaque = eliminado
+        ? {rotulo:'Eliminado', titulo:`Fim da linha no ${E.nome}`, desc:`Prêmios do seu clube: ${this.fmtReais(E.ganhos)}. O estadual segue sem você.`, tom:'alerta'}
+        : {rotulo:ultimo&&ultimo.premio?`+${this.fmtReais(ultimo.premio)} de premiação`:'Próxima fase', titulo:`${fase}`, desc:`${E.confrontos.map(c=>`${nm(c[0])} × ${nm(c[1])}`).join(' · ')}`};
+      botoes = eliminado
+        ? [{txt:'Ver o resto do torneio', tipo:'sm', onClick:()=>{ this.resolverEstadualRestante(); this.abrirEstadualUI(); return true; }},
+           {txt:'Fechar', tipo:'primary', onClick:()=>{ this.renderShell(); this.showTab('escala'); }}]
+        : [{txt:'Depois', tipo:'sm', onClick:()=>{ this.renderShell(); }},
+           {txt:`Jogar ${fase} ▸`, tipo:'primary', onClick:()=>{ const ev=this.jogarFaseEstadual(); this.abrirEstadualUI(ev); this.renderShell(); return true; }}];
+    }
+    const hist=E.historico.slice(-1)[0];
+    this.modalFLK({titulo:`🏆 ${this.esc(E.nome)}`, corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(this.teams[eu],40), nome:this.esc(this.teams[eu].nome), sub:`Pré-temporada ${E.temporada}${E.uf?` · ${E.uf}`:''}`},
+        destaque,
+        extraHTML: hist?`<div class="diag-h">${hist.fase}</div><div class="mf-lista">${hist.jogos.map(j=>{ const l=linhaJogo(j); return `<div><b>${l.a}</b><span>${l.b}</span></div>`; }).join('')}</div>`
+          : `<div class="diag-h">Quartas de final</div><div class="mf-lista">${E.confrontos.map(c=>`<div><b>${c.includes(eu)?'➤ ':''}${nm(c[0])} × ${nm(c[1])}</b><span></span></div>`).join('')}</div>`,
+        kpis:[{rotulo:'Semifinal', valor:'+'+this.fmtReais(this.premioEstadual('semi'))},{rotulo:'Final', valor:'+'+this.fmtReais(this.premioEstadual('final'))},{rotulo:'Título', valor:'+'+this.fmtReais(this.premioEstadual('titulo')), cor:'var(--lemon)'}],
+      }), botoes});
+  },
+  sanearEstadual(e){
+    if(!e || !Array.isArray(e.confrontos)) return null;
+    const ok=i=>Number.isInteger(+i) && this.teams[+i];
+    const conf=e.confrontos.filter(c=>Array.isArray(c)&&c.length===2&&ok(c[0])&&ok(c[1])).map(c=>[+c[0],+c[1]]);
+    return {temporada:+e.temporada||1, uf:e.uf||null, nome:String(e.nome||'Estadual').slice(0,40), fase:Math.max(0,Math.min(2,+e.fase||0)), confrontos:conf,
+      historico:Array.isArray(e.historico)?e.historico.slice(-3):[], status:['pendente','andamento','fim','pulado'].includes(e.status)?e.status:'pulado',
+      campeao:ok(e.campeao)?+e.campeao:null, ganhos:Math.max(0,+e.ganhos||0), div:['A','B','C','D'].includes(e.div)?e.div:'D'};
+  },
+  // Série D: premiação por fase do mata-mata (classificar + cada fase avançada)
+  PREMIO_FASE_D:{classificou:1.5e5, 32:2e5, 16:3e5, 8:4e5, 4:6e5, 2:1e6, 1:2e6},
+  premiarFaseMataMata(chave, txt){
+    const v=this.PREMIO_FASE_D[chave]; if(!v) return 0;
+    const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+v; this.addExtrato('Premiação Série D: '+txt, +v);
+    (this._premiosFase||(this._premiosFase=[])).push({txt, v});
+    return v;
+  },
+
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
     const j=this._ultimoJogo; if(!j) return null;
@@ -6144,6 +6311,7 @@ const App={
     this.objetivos=Objetivos.novaTemporada(this.divisao);   // A3: novos objetivos p/ a divisão atual
     this.ultimato=null; this._reuniaoFeita=false;            // temporada nova, crise nova
     this._objetivosConcluidos=[];
+    this.criarEstadual();                                    // pré-temporada: estadual opcional
     this.renderShell(); this.showTab('arena');
     this.salvarSupabase(true);
     const msg = meuMov
@@ -6236,6 +6404,7 @@ const App={
       torcida:this.humorTorcida(),                                   // humor da torcida
       emprestimo:this.emprestimo||null,
       leiloes:this.leiloes||[], ofertasRecebidas:this.ofertasRecebidas||[],   // mercado: leilões e propostas pendentes
+      estadual:this.estadual||null,                                  // estadual de pré-temporada
       // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
       formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
     };
@@ -6374,7 +6543,7 @@ const App={
     this.stats=s.stats; this.resultados=s.resultados||[];
     this.histClube=Array.isArray(s.histClube)?s.histClube:[];   // A2
     this.objetivos=(s.objetivos&&s.objetivos.div)?s.objetivos:null;   // A3 (garantirObjetivos recria se faltar)
-    this.carreira=(s.carreira&&typeof s.carreira==='object')?{titulos:s.carreira.titulos||0, acessos:s.carreira.acessos||0}:{titulos:0, acessos:0};   // C3
+    this.carreira=(s.carreira&&typeof s.carreira==='object')?{titulos:s.carreira.titulos||0, acessos:s.carreira.acessos||0, estaduais:s.carreira.estaduais||0}:{titulos:0, acessos:0};   // C3
     this.opcoes=(s.opcoes&&typeof s.opcoes==='object')?{...this.OPCOES_PADRAO,...s.opcoes}:{...this.OPCOES_PADRAO};   // Bloco B
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;
@@ -6391,6 +6560,7 @@ const App={
     this.torcida = isFinite(+s.torcida) ? Math.max(0,Math.min(100,+s.torcida)) : this.TORCIDA_NEUTRA;
     this.emprestimo = s.emprestimo||null;
     this.leiloes = this.sanearLeiloes(s.leiloes);
+    this.estadual = this.sanearEstadual(s.estadual);
     this.ofertasRecebidas = Array.isArray(s.ofertasRecebidas) ? s.ofertasRecebidas.filter(o=>o && isFinite(+o.pid) && this.teams[+o.de] && +o.valor>0)
       .map(o=>({pid:+o.pid, nome:String(o.nome||'').slice(0,40), de:+o.de, deNome:String(o.deNome||'').slice(0,40), valor:+o.valor, rodada:+o.rodada||0, avisada:true})) : [];
     // finanças
