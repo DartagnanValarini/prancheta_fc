@@ -3443,7 +3443,7 @@ const App={
       const bd=document.getElementById('btnDescansar'); if(bd)bd.onclick=()=>this.descansar();
       const bsv=document.getElementById('btnSalvarArena'); if(bsv)bsv.onclick=()=>this.salvarSupabase(false);
       const bp=document.getElementById('btnPodio'); if(bp)bp.onclick=()=>this.abrirPodio();
-      const bnt=document.getElementById('btnNovaTemp'); if(bnt)bnt.onclick=()=>this.novaTemporadaCompleta();
+      const bnt=document.getElementById('btnNovaTemp'); if(bnt)bnt.onclick=()=>this.abrirDiagnostico();
     }
   },
 
@@ -4451,6 +4451,88 @@ const App={
       })});
   },
 
+  /* ---------- DIAGNÓSTICO DE FIM DE TEMPORADA (§6.1 item 4) ----------
+     Antes de virar a temporada: resultado + 3 dicas TIRADAS DA TEMPORADA (defesa,
+     ataque, desgaste, vestiário, idade, caixa, disciplina…) + "o que muda agora".
+     Tutorial disfarçado: ensina a ler o próprio time com números reais. */
+  diagnosticoTemporada(){
+    const eu=this.myTeam, t=this.teams[eu];
+    const ordem=this.classificacao(), idx=ordem.findIndex(s=>s.i===eu), st=ordem[idx]||{j:0,v:0,e:0,d:0,gp:0,gc:0,pts:0};
+    const j=Math.max(1,st.j), mediaGC=ordem.reduce((a,s)=>a+s.gc/Math.max(1,s.j),0)/Math.max(1,ordem.length);
+    const mediaGP=ordem.reduce((a,s)=>a+s.gp/Math.max(1,s.j),0)/Math.max(1,ordem.length);
+    const f1=v=>v.toFixed(2).replace('.',',');
+    const onze=this.onzeDe(eu), ps=t.players;
+    const dicas=[];
+    // defesa
+    const gcj=st.gc/j, amostra=st.j>=3;   // com menos de 3 jogos não dá pra tirar lição de gols
+    if(amostra && mediaGC>0 && gcj>=mediaGC*1.2) dicas.push({sev:3+gcj/mediaGC, ic:'🧱', t:'Defesa vazada', txt:`Sua defesa levou ${st.gc} gols (${f1(gcj)} por jogo; a média da tabela foi ${f1(mediaGC)}). Reforce zaga e gol.`});
+    else if(amostra && mediaGC>0 && gcj<=mediaGC*0.8) dicas.push({sev:0.5, ic:'🧱', t:'Defesa sólida', txt:`Só ${st.gc} gols sofridos (${f1(gcj)} por jogo). Mantenha a base da zaga.`, bom:true});
+    // ataque
+    const gpj=st.gp/j;
+    if(amostra && mediaGP>0 && gpj<=mediaGP*0.8) dicas.push({sev:3+mediaGP/Math.max(0.1,gpj), ic:'🎯', t:'Ataque sem pontaria', txt:`O time marcou ${st.gp} gols (${f1(gpj)} por jogo; média ${f1(mediaGP)}). Busque um centroavante ou pontas.`});
+    else if(amostra && mediaGP>0 && gpj>=mediaGP*1.2) dicas.push({sev:0.5, ic:'🎯', t:'Ataque afiado', txt:`${st.gp} gols marcados (${f1(gpj)} por jogo), acima da média. O ataque é o ponto forte.`, bom:true});
+    // desgaste
+    const enerMed=onze.length?onze.reduce((a,p)=>a+(p.energia||0),0)/onze.length:100;
+    if(enerMed<60) dicas.push({sev:3+(60-enerMed)/10, ic:'🔋', t:'Elenco esgotado', txt:`O time titular terminou com ${Math.round(enerMed)}% de energia média. Tenha reservas à altura e use o 🔋 Descansados.`});
+    // vestiário
+    const insat=ps.filter(p=>Rating.moralDe(p)<40).length, morMed=this.moralMediaTime();
+    if(insat>=3 || morMed<50) dicas.push({sev:2.5+insat/2, ic:'😤', t:'Vestiário tenso', txt:`${insat} jogador${insat===1?'':'es'} insatisfeito${insat===1?'':'s'} (moral média ${morMed}). Dê minutos a quem está parado ou negocie quem quer sair.`});
+    // idade
+    const idadeMed=onze.length?onze.reduce((a,p)=>a+(p.idade||25),0)/onze.length:25;
+    if(idadeMed>=30) dicas.push({sev:2.5, ic:'👴', t:'Time envelhecido', txt:`A média de idade dos titulares é ${idadeMed.toFixed(1)} anos. Veteranos caem de rendimento e podem se aposentar — renove com jovens.`});
+    // caixa
+    const hist=(this.histClube||[]).filter(h=>h.temporada<(this.temporada||1)).slice(-1)[0];
+    const saldoIni=hist?hist.saldo:null, saldo=t.saldo||0;
+    if(saldoIni!=null && saldo<saldoIni*0.8) dicas.push({sev:2.5, ic:'💸', t:'Caixa encolheu', txt:`O caixa caiu de ${this.fmtReais(saldoIni)} para ${this.fmtReais(saldo)}. Segure a folha antes de contratar.`});
+    if(saldo<0) dicas.push({sev:4, ic:'💸', t:'Caixa no vermelho', txt:`O clube terminou com ${this.fmtReais(saldo)}. Venda quem não joga ou peça empréstimo com cuidado.`});
+    // disciplina
+    const exp=ps.reduce((a,p)=>a+(p.expulsoes||0),0);
+    if(exp>=4) dicas.push({sev:2, ic:'🟥', t:'Indisciplina', txt:`O elenco acumula ${exp} expulsões. Marcação "muito pesada" cobra caro — pegue mais leve.`});
+    // destaque
+    const destaque=ps.filter(p=>(p._qtdNotas||0)>=3).map(p=>({p,m:p._somaNotas/p._qtdNotas})).sort((a,b)=>b.m-a.m)[0];
+    if(destaque) dicas.push({sev:0.3, ic:'⭐', t:'Destaque da temporada', txt:`${destaque.p.nome} teve nota média ${destaque.m.toFixed(1).replace('.',',')}${destaque.p.golsTemp?` e ${destaque.p.golsTemp} gols`:''}. Segure esse jogador.`, bom:true});
+    // contratos vencendo e objetivos secundários
+    const venc=ps.filter(p=>p.contratoMeses!=null && p.contratoMeses<=12);
+    if(venc.length) dicas.push({sev:1.2, ic:'📝', t:'Contratos no fim', txt:`${venc.length} contrato${venc.length>1?'s vencem':' vence'} em até 12 meses${venc.length<=3?` (${venc.map(p=>p.nome.split(' ').slice(-1)[0]).join(', ')})`:''}. Decida quem renovar antes que saiam de graça.`});
+    const sec=(this.objetivos&&this.objetivos.sec)||[], feitos=sec.filter(x=>x.feito).length;
+    if(sec.length) dicas.push({sev:feitos?0.4:1, ic:'🎯', t:'Objetivos da temporada', txt:`${feitos} de ${sec.length} objetivos secundários cumpridos. Eles pagam prêmio — confira os novos na aba Campeonatos.`, bom:feitos>=2});
+    dicas.sort((a,b)=>b.sev-a.sev);
+    const tres=dicas.slice(0,3);
+    while(tres.length<3){ const temAlerta=tres.some(x=>!x.bom);
+      tres.push(temAlerta?{ic:'📋', t:'Resto do time', txt:'Fora isso, nenhum outro setor preocupou. Corrija o alerta acima e mantenha a base.', bom:true}
+                        :{ic:'📋', t:'Temporada estável', txt:'Nenhum setor foi problema grave. Pequenos reforços pontuais bastam.', bom:true}); }
+    // o que muda agora
+    const minhaLiga=this.ligas&&this.ligas[this.divisao], dest=minhaLiga?this.destinosDaLiga(minhaLiga):{sobem:[],caem:[]};
+    const sobe=dest.sobem.includes(eu), cai=(dest.caem||[]).includes(eu);
+    const ORD=['A','B','C','D'], di=ORD.indexOf(this.divisao);
+    const prox=sobe?ORD[Math.max(0,di-1)]:cai?ORD[Math.min(3,di+1)]:this.divisao;
+    const obj=this.garantirObjetivos(), P=obj&&obj.principal;
+    let metaOk=null; if(P){ metaOk = P.id==='ficar_a' ? !cai : sobe; }
+    const folha=ps.reduce((a,p)=>a+(p.salario||0),0);
+    const vencem=ps.filter(p=>p.contratoMeses!=null && p.contratoMeses<=12).length;
+    const muda=[
+      {a:'Divisão', b:sobe?`⬆️ Série ${prox} (acesso!)`:cai?`🔻 Série ${prox} (rebaixado)`:`Série ${prox} (permanece)`},
+      P?{a:'Meta da diretoria', b:`${metaOk?'✅ cumprida':'❌ não cumprida'} · cargo ${metaOk?'+'+P.confOk:P.confFail}${metaOk?` · +${this.fmtReais(P.premio)}`:''}`}:null,
+      {a:'Folha salarial', b:`${this.fmtm(folha)}/mês`},
+      vencem?{a:'Contratos vencendo', b:`${vencem} jogador${vencem>1?'es':''} com contrato de até 12 meses`}:null,
+    ].filter(Boolean);
+    return {pos:idx+1, n:ordem.length, st, dicas:tres, muda, sobe, cai, prox};
+  },
+  abrirDiagnostico(){
+    const d=this.diagnosticoTemporada(), t=this.teams[this.myTeam], st=d.st;
+    const sg=st.gp-st.gc;
+    this.modalFLK({titulo:`📋 Balanço da temporada ${this.temporada}`, fechavel:true,
+      corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome), sub:`Série ${this.divisao} · ${d.pos}º de ${d.n}`},
+        destaque:{rotulo:'Campanha', titulo:`${st.pts} pts · ${st.v}V ${st.e}E ${st.d}D`, desc:`${st.gp} gols marcados, ${st.gc} sofridos (saldo ${sg>0?'+':''}${sg})`, tom:d.cai?'alerta':''},
+        extraHTML:`<div class="diag-h">3 lições da temporada</div>
+          <div class="diag-dicas">${d.dicas.map(x=>`<div class="diag-dica ${x.bom?'bom':''}"><span>${x.ic}</span><div><b>${x.t}</b><p>${this.esc(x.txt)}</p></div></div>`).join('')}</div>
+          <div class="diag-h">O que muda agora</div>
+          <div class="mf-lista">${d.muda.map(m=>`<div><b>${m.a}</b><span>${m.b}</span></div>`).join('')}</div>`,
+      }),
+      botoes:[{txt:`Começar temporada ${(this.temporada||1)+1} ▸`, tipo:'primary', onClick:()=>{ this.novaTemporadaCompleta(); }}]});
+  },
+
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
   contextoColetiva(){
     const j=this._ultimoJogo; if(!j) return null;
@@ -5405,7 +5487,7 @@ const App={
       <div class="podio-foot"><button class="btn primary" id="podNova">Nova temporada ▶</button></div>
     </div></div>`;
     document.getElementById('podClose').onclick=()=>ov.remove();
-    document.getElementById('podNova').onclick=()=>{ ov.remove(); this.novaTemporadaCompleta(); };
+    document.getElementById('podNova').onclick=()=>{ ov.remove(); this.abrirDiagnostico(); };
     ov.querySelector('.podio-bg').onclick=(e)=>{ if(e.target.classList.contains('podio-bg')) ov.remove(); };
   },
 
