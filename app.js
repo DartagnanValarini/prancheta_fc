@@ -777,7 +777,34 @@ const Menu={
       const {data}=await App.sb.auth.getSession();
       if(data && data.session){ this.user=data.session.user; return this.telaMenu(); }
     }catch(e){}
-    this.telaLogin();
+    this.telaEntrada();
+  },
+
+  // ---------- ENTRADA (D1): jogar primeiro, conta depois ----------
+  // O jogador novo não deve bater num formulário de login. "Jogar agora" entra
+  // como convidado; se ainda não há nenhuma carreira neste aparelho, vai direto
+  // escolher o clube (sem passar pela tela de slots).
+  telaEntrada(){
+    this.sub('manager de futebol');
+    this.el().innerHTML=`
+      <div class="pre-card">
+        <div class="pre-title">Bora treinar?</div>
+        <div class="pre-hint">Assuma um clube da Série D, monte o time e leve ele até o topo do futebol brasileiro.</div>
+        <button class="pre-btn" id="btnJogarAgora">▶ Jogar agora</button>
+        <div class="pre-sep"><span>já tem carreira salva na nuvem?</span></div>
+        <button class="pre-btn ghost" id="btnIrLogin">Entrar na minha conta</button>
+        <button class="pre-btn ghost" id="btnIrCriar">Criar uma conta</button>
+      </div>`;
+    this.foot('Sem conta, o jogo salva só neste aparelho. Crie uma conta quando quiser para salvar na nuvem e aparecer no ranking.');
+    document.getElementById('btnJogarAgora').onclick=()=>this.jogarAgora();
+    document.getElementById('btnIrLogin').onclick=()=>this.telaLogin();
+    document.getElementById('btnIrCriar').onclick=()=>this.telaCadastro();
+  },
+  async jogarAgora(){
+    this.convidado=true; this.user=null;
+    const saves=await this.listarSaves();
+    if(!Object.keys(saves).length) return this.telaNovoJogo('1');   // 1ª vez: direto pro clube
+    this.telaMenu();
   },
 
   // ---------- LOGIN ----------
@@ -793,14 +820,16 @@ const Menu={
         ${erro?this.msg(erro,'err'):''}
         <div class="pre-sep"><span>ainda não tem conta?</span></div>
         <button class="pre-btn ghost" id="btnIrCriar">Criar uma conta</button>
-        <button class="pre-btn ghost" id="btnConvidado">Jogar como convidado</button>
+        <button class="pre-btn ghost" id="btnConvidado">Jogar sem conta</button>
+        <button class="pre-btn ghost" id="btnVoltarEntrada">Voltar</button>
       </div>`;
-    this.foot('O modo convidado salva só neste dispositivo.');
+    this.foot('Sem conta, o jogo salva só neste aparelho.');
     const email=()=>document.getElementById('mEmail').value.trim();
     const senha=()=>document.getElementById('mSenha').value;
     document.getElementById('btnEntrar').onclick=()=>this.entrar(email(),senha());
     document.getElementById('btnIrCriar').onclick=()=>this.telaCadastro();
-    document.getElementById('btnConvidado').onclick=()=>{ this.convidado=true; this.user=null; this.telaMenu(); };
+    document.getElementById('btnConvidado').onclick=()=>this.jogarAgora();
+    document.getElementById('btnVoltarEntrada').onclick=()=>this.telaEntrada();
     document.getElementById('mSenha').onkeydown=(e)=>{ if(e.key==='Enter') this.entrar(email(),senha()); };
   },
 
@@ -866,7 +895,7 @@ const Menu={
   },
   async sair(){
     try{ await App.sb.auth.signOut(); }catch(e){}
-    this.user=null; this.convidado=false; this.slot=null; this.telaLogin();
+    this.user=null; this.convidado=false; this.slot=null; this.telaEntrada();
   },
 
   // ---------- MENU PRINCIPAL ----------
@@ -1013,6 +1042,7 @@ const Menu={
     this.mostrarOferta();
   },
   async comecarCarreira(ti){
+    const novoJogo=!this._demissaoFlow;
     App.myTeam=ti; App.squadView=ti;
     App.slotAtual=this.slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
     App.confianca=App.CONF_INICIAL;    // voto de confiança inicial (60/100)
@@ -1032,6 +1062,7 @@ const Menu={
     this.esconder();
     App.renderShell(); App.showTab('escala');
     App.salvarSupabase(true);
+    if(novoJogo) Tutorial.aoComecarCarreira();   // D1: boas-vindas + tour (1ª vez no aparelho)
   },
 
   // ---------- persistência dos slots ----------
@@ -1306,6 +1337,144 @@ const Objetivos={
   novaTemporada(div){
     return { div, principal:this.principalDe(div), principalStatus:'aberto',
              sec:this.sortearSecundarios(div) };
+  },
+};
+
+/* ====================================================================
+   TUTORIAL / PRIMEIRA SESSÃO (D1)
+   Boas-vindas do presidente → tour guiado na Escalação → primeira partida →
+   dica na Competições. Estado por APARELHO (localStorage), não por save: é
+   onboarding do jogador, não da carreira. Valores: null | 'jogo1' | 'feito'.
+   Sempre pulável; "Rever tutorial" fica nas Configurações.
+   ==================================================================== */
+const Tutorial={
+  CHAVE:'prancheta_tutorial_v1',
+  _passos:null, _i:0, _alvo:null, _onFim:null,
+
+  estado(){ try{ return localStorage.getItem(this.CHAVE); }catch(e){ return null; } },
+  marcar(v){ try{ if(v==null) localStorage.removeItem(this.CHAVE); else localStorage.setItem(this.CHAVE,v); }catch(e){} },
+  feito(){ return this.estado()==='feito'; },
+
+  // ---------- ganchos chamados pelo jogo ----------
+  aoComecarCarreira(){ if(!this.feito()) this.boasVindas(); },
+  aoIniciarPartida(){
+    if(this.estado()!=='jogo1') return;
+    this.toast('⚽ Partida ao vivo! Acompanhe os lances ou use <b>Pular ⏩</b> para ir direto ao resultado.');
+  },
+  aoFecharRodada(){
+    if(this.estado()!=='jogo1') return;
+    this.marcar('feito');
+    this.tour([
+      {alvo:'nav.tabs [data-tab="competicoes"]', titulo:'Primeira rodada no bolso',
+       txt:'Em <b>Competições</b> ficam a tabela e, na aba <b>📊 Estatísticas</b>, a artilharia e os <b>objetivos da temporada</b>. Cada objetivo cumprido paga prêmio em dinheiro.',
+       botao:'Ver objetivos', antes:null},
+      {alvo:'[data-tut="objetivos"]', titulo:'Seus objetivos',
+       txt:'A meta principal é o que a diretoria cobra. As secundárias são bônus. Daqui pra frente é com você, treinador!',
+       botao:'Bora!', antes:()=>{ App.cmpAba='stats'; App.renderCompeticoes(); App.showTab('competicoes'); }},
+    ], ()=>this.toast('Tutorial concluído. Dá pra rever quando quiser em <b>⚙️ Configurações</b>.'));
+  },
+  rever(){
+    this.marcar(null);
+    const f=document.getElementById('flkModal'); if(f) f.remove();
+    if(!App.teams.length) return;
+    App.showTab('escala'); this.boasVindas();
+  },
+
+  // ---------- boas-vindas do presidente ----------
+  boasVindas(){
+    const t=App.teams[App.myTeam]; if(!t) return;
+    const obj=App.garantirObjetivos(), P=obj&&obj.principal;
+    const nomeDiv='Série '+App.divisao;
+    const corpo=`
+      <div class="tut-bv">
+        <div class="tut-bv-top">
+          <span class="tut-bv-esc">${App.escudoHTML(t,48)}</span>
+          <div><div class="tut-bv-clube">${App.esc(t.nome)}</div>
+               <div class="tut-bv-div">${nomeDiv} · Temporada ${App.temporada}</div></div>
+        </div>
+        <p class="tut-bv-fala">🤵 “Seja bem-vindo, professor. O clube é pequeno, mas o torcedor é apaixonado. Conto com você.”</p>
+        ${P?`<div class="tut-bv-meta"><small>Meta da diretoria</small><b>${App.esc(P.titulo)}</b><span>${App.esc(P.desc)}</span></div>`:''}
+        <div class="tut-bv-nums">
+          <div><small>Caixa</small><b>${App.fmtReais(t.saldo||0)}</b></div>
+          <div><small>Confiança</small><b>${App.confianca==null?App.CONF_INICIAL:App.confianca}/100</b></div>
+        </div>
+      </div>`;
+    App.modalFLK({titulo:'Novo treinador no comando', corpoHTML:corpo,
+      botoes:[
+        {txt:'Já sei jogar', tipo:'sm', onClick:()=>{ this.marcar('feito'); }},
+        {txt:'Me mostra como funciona ▸', tipo:'primary', onClick:()=>{ setTimeout(()=>this.tourEscalacao(),0); }},
+      ]});
+  },
+
+  tourEscalacao(){
+    App.showTab('escala');
+    this.tour([
+      {alvo:'.pitch-h', titulo:'Seu time titular',
+       txt:'Já escalei os 11 melhores pra você. O número na bolinha é a força do jogador naquela posição — quanto maior, melhor.'},
+      {alvo:'.mk-left', titulo:'Elenco',
+       txt:'Aqui está todo o plantel. Na coluna <b>Posição</b> você coloca alguém no time ou manda pro <b>Banco</b>. Clique no nome para ver a ficha.'},
+      {alvo:'.esc-forminfo', titulo:'Formação',
+       txt:'Troque o esquema tático aqui. Depois de mudar, <b>⚡ Escalar</b> monta sozinho o melhor time para a formação escolhida.'},
+      {alvo:'.pres-wrap', titulo:'A diretoria está de olho',
+       txt:'Vitórias aumentam a confiança; derrotas derrubam. Se ela cair até a linha vermelha, você é demitido.'},
+      {alvo:'#btnJogarEsc', titulo:'Hora do jogo',
+       txt:'Tudo pronto? Clique em <b>Jogar</b> para disputar a primeira rodada.', botao:'Entendi'},
+    ], ()=>this.marcar('jogo1'));
+  },
+
+  // ---------- motor de coach-marks ----------
+  tour(passos,onFim){ this._passos=passos; this._i=0; this._onFim=onFim||null; this.mostrarPasso(); },
+  mostrarPasso(){
+    const p=this._passos&&this._passos[this._i];
+    if(!p){ this.fechar(); const f=this._onFim; this._onFim=null; if(f) f(); return; }
+    if(p.antes) p.antes();
+    const alvo=document.querySelector(p.alvo);
+    if(!alvo || !alvo.offsetParent){ this._i++; return this.mostrarPasso(); }   // alvo sumiu: pula o passo
+    this._alvo=alvo;
+    alvo.scrollIntoView({block:'center', behavior:'instant'});
+    let ov=document.getElementById('tutOverlay');
+    if(!ov){ ov=document.createElement('div'); ov.id='tutOverlay'; document.body.appendChild(ov); }
+    const ult=this._i===this._passos.length-1;
+    ov.innerHTML=`<div class="tut-block"></div><div class="tut-spot"></div>
+      <div class="tut-bubble" role="dialog" aria-live="polite">
+        <div class="tut-step">${this._i+1}/${this._passos.length}</div>
+        <div class="tut-h">${p.titulo}</div>
+        <div class="tut-txt">${p.txt}</div>
+        <div class="tut-foot">
+          <button class="tut-skip" data-tut-skip>Pular tutorial</button>
+          <button class="btn primary sm" data-tut-next>${p.botao||(ult?'Fechar':'Próximo ▸')}</button>
+        </div>
+      </div>`;
+    ov.querySelector('[data-tut-next]').onclick=()=>{ this._i++; this.mostrarPasso(); };
+    ov.querySelector('[data-tut-skip]').onclick=()=>{ this.marcar('feito'); this._onFim=null; this.fechar(); };
+    this.posicionar();
+    if(!this._onResize){ this._onResize=()=>this.posicionar(); window.addEventListener('resize',this._onResize); window.addEventListener('scroll',this._onResize,true); }
+  },
+  posicionar(){
+    const ov=document.getElementById('tutOverlay'); if(!ov||!this._alvo) return;
+    const r=this._alvo.getBoundingClientRect(), pad=6;
+    const spot=ov.querySelector('.tut-spot'), b=ov.querySelector('.tut-bubble');
+    Object.assign(spot.style,{left:(r.left-pad)+'px', top:(r.top-pad)+'px', width:(r.width+pad*2)+'px', height:(r.height+pad*2)+'px'});
+    const vw=window.innerWidth, vh=window.innerHeight, bw=Math.min(340, vw-32);
+    b.style.width=bw+'px';
+    const bh=b.offsetHeight;
+    let top = (r.bottom+14+bh<vh) ? r.bottom+14 : (r.top-14-bh>0 ? r.top-14-bh : Math.max(16, vh-bh-16));
+    let left=Math.max(16, Math.min(r.left+r.width/2-bw/2, vw-bw-16));
+    b.style.top=top+'px'; b.style.left=left+'px';
+  },
+  fechar(){
+    const ov=document.getElementById('tutOverlay'); if(ov) ov.remove();
+    this._alvo=null; this._passos=null;
+    if(this._onResize){ window.removeEventListener('resize',this._onResize); window.removeEventListener('scroll',this._onResize,true); this._onResize=null; }
+  },
+  toast(html){
+    let t=document.getElementById('tutToast');
+    if(!t){ t=document.createElement('div'); t.id='tutToast'; document.body.appendChild(t); }
+    t.innerHTML=`<span>${html}</span><button aria-label="Fechar">✕</button>`;
+    t.classList.add('on');
+    const fechar=()=>t.classList.remove('on');
+    t.querySelector('button').onclick=fechar;
+    clearTimeout(this._toastT); this._toastT=setTimeout(fechar,7000);
   },
 };
 
@@ -1738,6 +1907,7 @@ const App={
     this.liveState={jogos, sims, min:0, timer:null, playing:true, done:false,
                     fase:'1T', // 1T -> intervalo -> 2T -> fim
                     paused:false, subOpen:false};
+    Tutorial.aoIniciarPartida();   // D1: dica da 1ª partida
     this.showTab('arena');
     this.renderArena();
     this.rodarRelogio();
@@ -2614,7 +2784,7 @@ const App={
     // demissão tem prioridade: abre a tela e não segue pra escalação
     if(this._demissaoPendente){ this._demissaoPendente=false; this.abrirDemissao(); return; }
     // fluxo Brasfoot: depois de fechar o resultado, cai na Escalação
-    if(!this.tempEncerrada) this.showTab('escala');
+    if(!this.tempEncerrada){ this.showTab('escala'); Tutorial.aoFecharRodada(); }
   },
 
   descansar(){
@@ -2835,6 +3005,12 @@ const App={
     this.renderArena(); this.renderEscala(); this.renderElenco(); this.renderCompeticoes(); this.renderMercado(); this.renderFinancas(); this.renderDados();
   },
 
+  // D1: estado vazio de jogador (nunca "Conecte o Supabase"): leva de volta ao menu
+  vazioHTML(){
+    return `<div class="empty">Nenhuma carreira aberta no momento.
+      <div style="margin-top:12px"><button class="btn primary sm" onclick="Menu.iniciar()">Ir para o menu</button></div></div>`;
+  },
+
   showTab(name){
     document.querySelectorAll('nav.tabs button').forEach(b=>
       b.classList.toggle('active', b.dataset.tab===name));
@@ -2865,7 +3041,7 @@ const App={
 
   renderArena(){
     const el=document.getElementById('tab-arena');
-    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados para começar.</div>'; return; }
+    if(!this.teams.length){ el.innerHTML=this.vazioHTML(); return; }
     const live=!!this.liveState, L=this.liveState;
     const acabou=this.rodada>=this.fixtures.length;
 
@@ -3057,7 +3233,7 @@ const App={
 
   renderEscala(){
     const i=this.myTeam, t=this.teams[i], c=this.cfg[i];
-    if(!t){ document.getElementById('tab-escala').innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!t){ document.getElementById('tab-escala').innerHTML=this.vazioHTML(); return; }
     if(!c.formacao) c.formacao='4-3-3';
     const onze=this.onzeDe(i);
     const banco=this.bancoDe(i);
@@ -3406,7 +3582,7 @@ const App={
 
   renderElenco(){
     const el=document.getElementById('tab-elenco');
-    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!this.teams.length){ el.innerHTML=this.vazioHTML(); return; }
     el.innerHTML=`
       <div class="team-pick-bar">
         <span class="tp-label">Ver elenco de</span>
@@ -3457,7 +3633,7 @@ const App={
 
   renderFinancas(){
     const el=document.getElementById('tab-financas');
-    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!this.teams.length){ el.innerHTML=this.vazioHTML(); return; }
     const i=this.myTeam, t=this.teams[i];
     const saldo=t.saldo||0;
     const folha=this.folhaDe(i);
@@ -3550,7 +3726,7 @@ const App={
   renderMercado(){
     const el=document.getElementById('tab-mercado');
     if(!el) return;
-    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!this.teams.length){ el.innerHTML=this.vazioHTML(); return; }
     const i=this.myTeam, t=this.teams[i];
     const saldo=t.saldo||0;
     const ofertas=(this.ofertasRecebidas||[]);
@@ -3851,7 +4027,7 @@ const App={
   renderCompeticoes(){
     const el=document.getElementById('tab-competicoes');
     if(!el) return;
-    if(!this.teams.length){ el.innerHTML='<div class="empty">Conecte o Supabase na aba Dados.</div>'; return; }
+    if(!this.teams.length){ el.innerHTML=this.vazioHTML(); return; }
     const aba=this.cmpAba||(this.grupos?'grupos':'liga');
     const nomeDiv=({A:'Série A',B:'Série B',C:'Série C',D:'Série D'})[this.divisao]||'Liga';
     const outras=Object.keys(this.ligas||{}).filter(d=>d!==this.divisao).sort();
@@ -3972,7 +4148,7 @@ const App={
           ⭐ <b>Craque da última rodada:</b> ${this.esc(craque.nome)} —
           nota <b style="color:${this.corNota(craque.nota)}">${craque.nota.toFixed(1)}</b>${craque.gols>0?` · ${craque.gols} gol${craque.gols>1?'s':''}`:''}
         </div>`:''}
-        <div class="cmp-grupo meu" style="margin-bottom:12px">
+        <div class="cmp-grupo meu" data-tut="objetivos" style="margin-bottom:12px">
           <div class="cmp-grupo-h">🎯 Objetivos da temporada</div>
           <div class="obj-wrap">
             ${principalHTML}
@@ -4317,6 +4493,11 @@ const App={
             : `<div style="color:var(--gray2);line-height:1.6;margin-bottom:10px">Jogue de graça com anúncios opcionais, ou remova todos com uma compra única.</div>
                <button class="btn primary" data-cfg-buyad>Remover anúncios</button>`}
         </div>
+      </div>
+      <div class="cfg-sec">
+        <div class="cfg-h">🎓 Tutorial</div>
+        <div class="cfg-row"><button class="cfg-opt" data-cfg-tut>Rever tutorial</button></div>
+        <div class="cfg-hint">Mostra de novo as boas-vindas e o passo a passo da primeira rodada.</div>
       </div>`;
     this.modalFLK({ titulo:'⚙️ Configurações', corpoHTML:corpo,
       botoes:[{txt:'Fechar', tipo:'primary'}] });
@@ -4326,6 +4507,7 @@ const App={
       o.velocidade=parseFloat(b.dataset.cfgVel); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
     wrap.querySelectorAll('[data-cfg-save]').forEach(b=>b.onclick=()=>{
       o.autoSaveRodadas=parseInt(b.dataset.cfgSave,10); this.salvarSupabase&&this.salvarSupabase(true); this.abrirConfig(); });
+    const tut=wrap.querySelector('[data-cfg-tut]'); if(tut) tut.onclick=()=>Tutorial.rever();
     const buy=wrap.querySelector('[data-cfg-buyad]');
     if(buy) buy.onclick=()=>this.comprarRemoverAnuncios();
   },

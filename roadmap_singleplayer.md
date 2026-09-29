@@ -17,7 +17,7 @@
 
 ## 0. Onde estamos hoje (inventário real do código — auditado)
 
-O que **já existe e funciona** em `app.js` (4.141 linhas, monolito injetado no `prancheta_fc.html`):
+O que **já existe e funciona** em `app.js` (~5.150 linhas, monolito injetado no `prancheta_fc.html`) — *inventário revisado em 28/09/2026*:
 
 - **Motor de partida** minuto-a-minuto calibrado (2,43 gols/jogo, mando percentual). Harnesses de Node como rede (`harness_fase0`, `harness_calibracao`).
 - **Camada `Rating`** unificada (`overallGlobal`/`overallPosicao`/`rendimento`).
@@ -27,20 +27,20 @@ O que **já existe e funciona** em `app.js` (4.141 linhas, monolito injetado no 
 - **Finanças:** saldo, extrato, empréstimo com parcelas, premiação por acesso (`PREMIO_ACESSO`), receitas (patrocínio/bilheteria).
 - **Mercado:** `tickMercado`, ofertas, `executarTransferencia` (valida saldo), valor de mercado, contratos.
 - **Save robusto:** `SaveSchema` v8, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2 (corrupção) **+ assinatura HMAC-SHA256 (C1, anti-cheat)**, export/import backup. **Dois modos:** convidado (localStorage) e logado (Supabase `game_save` por user+slot). 3 slots.
-- **UI completa:** 7 abas (Arena, Escala, Elenco, Competições, Mercado, Finanças, Dados) + overlay de substituição. Design system FLK! Studios.
+- **UI completa:** 8 abas (Arena, Escala, Elenco, Competições, Mercado, Finanças, Ranking, Dados) + overlay de substituição + tela de Configurações. Design system FLK! Studios.
+- **Bloco A inteiro (✅):** Match Rating por jogo (`Rating.matchRating`, craque da rodada, média da temporada), estatísticas (artilharia ao vivo, histórico do clube com gráficos de saldo/overall), objetivos por divisão (`Objetivos`, principal + 3 secundários com prêmio) e moral 0–100 (`fatorMoral` no rendimento, força e valor; status na ficha). Harnesses `harness_matchrating`, `harness_a2/a3/a4`.
+- **Bloco B parcial:** `mostrarAnuncio()` como ponto único (modal stub), gancho "dobrar prêmio" dos objetivos, compra remove-ads ligada ao `entitlement` (stub no servidor). `harness_blocob`.
+- **Bloco C (✅):** assinatura HMAC do save, posse verificada no servidor e aba Ranking com selo de suspeito.
+- **D1 Onboarding (✅ 28/09/2026):** entrada "Jogar agora", boas-vindas do presidente, tour guiado e fim das telas "Conecte o Supabase". Gate: `harness_d1_onboarding` (Playwright).
 
 O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 
-- ❌ **Match Rating** (nota 0–10 por jogo) — `fatorForma` é binário (jogou/venceu), não é nota.
-- ❌ **Moral / forma / status** de elenco (insatisfeito, quer sair, em ascensão).
-- ❌ **Objetivos/missões por divisão** com recompensa.
-- ❌ **Estatísticas de temporada** visíveis (artilharia ao vivo, assistências, jogador da rodada).
-- ❌ **Onboarding / tutorial** — o jogo começa cru; abas mostram "Conecte o Supabase" se vazio.
-- ❌ **Rentabilização** — nenhum hook de ads/compra.
-- 🟡 **Anti-cheat** — C1 FEITO: editar `saldo` no console + salvar quebra a assinatura HMAC (`App._saveAssinado=false`). Falta expor o veredito (via selo no ranking C3) e a posse verificada no servidor (C2, backend pronto).
-- ❌ **Ranking online de treinadores** — não existe.
-- ❌ **Partida imersiva** (comentários por atributo, feedback de fadiga, escanteios/finalizações).
-- ❌ **Polimento de lançamento** (som, telas de vazio decentes, PWA/instalável).
+- ❌ **Assistências** — o motor só registra o autor do gol (o A2 pedia artilharia **e** assistências).
+- ❌ **Forma recente: 5 últimas notas** do jogador e do time (§6.1 item 5) — hoje só soma/qtd/melhor/última nota.
+- ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
+- ❌ **Carreira longa como gate** (D3) e **áudio** (D4).
+- ❌ **Layout da página do clube** (§6.2) e **layout de celular** — no celular a página hoje transborda na horizontal.
+- ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E).
 
 ---
 
@@ -146,16 +146,25 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 > **Bloco C fechado.** Falta só o que depende de outros blocos: a validação de compra REAL (Play Billing / checkout web) no POST do `entitlement` — hoje stub — que entra junto do empacotamento (Bloco B2 real + E). O ranking e o anti-cheat já estão de pé e testados. **Nota de teste manual:** as Edge Functions não puderam ser exercitadas por HTTP do meu ambiente (rede do sandbox bloqueia o host do Supabase); validei a lógica de plausibilidade isolada (8/8) e confirmei que ambas as funções estão ACTIVE com verify_jwt e o RLS correto. Vale um teste rápido no navegador: comprar remove-ads logado, recarregar (deve continuar sem ads), e terminar uma temporada pra aparecer no ranking.
 >
-> **Próximo grande passo (rota):** com A, B (parcial) e C prontos, seguir pro **Bloco D — Onboarding (D1)**, a maior alavanca de retenção, e depois o empacotamento (E) que destrava a compra real.
+> **Próximo grande passo (rota):** com A, B (parcial), C e D1 prontos, seguir pro **layout da página do clube (§6.2)** junto das **5 últimas notas** (§6.1 item 5), depois D2–D4 e o empacotamento (E) que destrava a compra real.
 
 ---
 
 ### 🔵 BLOCO D — Polimento de lançamento (de "projeto" a "produto")
 *Acabamento, não sistema novo. É o que faz o jogo parecer pronto.*
 
-**D1. Onboarding / primeira sessão.**
+**D1. Onboarding / primeira sessão. — ✅ FEITO (28/09/2026)**
 - Entrada limpa: escolher/gerar clube, escalar o primeiro time com dica, primeira partida guiada. **Matar as telas "Conecte o Supabase na aba Dados"** — o jogador nunca deveria ver isso. Maior alavanca de retenção.
-- *Pronto quando:* um jogador novo chega à primeira partida sem instrução externa.
+- *Pronto quando:* um jogador novo chega à primeira partida sem instrução externa. ✅
+- **Como ficou:**
+  - **Entrada sem muro de login** (`Menu.telaEntrada`): "▶ Jogar agora" é a ação principal (entra como convidado); "Entrar" e "Criar conta" ficam como secundárias. Na **primeira vez** no aparelho (sem nenhum save), pula a tela de slots e vai direto pra escolha do clube (`Menu.jogarAgora`).
+  - **Boas-vindas do presidente** (`Tutorial.boasVindas`) ao assumir o clube: divisão, **meta da diretoria** (objetivo principal do A3), caixa e confiança. Botões "Me mostra como funciona" / "Já sei jogar".
+  - **Tour guiado** (coach-marks com spotlight, módulo `Tutorial`): 5 passos na Escalação (campo → elenco/coluna Posição → formação/⚡Escalar → diretoria/confiança → Jogar). Na 1ª partida, um aviso explica o "Pular ⏩". Depois do 1º resultado, 2 passos levam a Competições → 📊 Estatísticas → objetivos.
+  - **Sempre pulável** ("Pular tutorial"). Estado por **aparelho** em `localStorage['prancheta_tutorial_v1']` (`null` → `jogo1` → `feito`) — é onboarding do jogador, não da carreira, então **não mexe no `SaveSchema`**. Segunda carreira não repete. **"Rever tutorial"** nas ⚙️ Configurações.
+  - **Estados vazios**: as 6 telas "Conecte o Supabase" viraram `App.vazioHTML()` ("Nenhuma carreira aberta" + botão pro menu).
+  - Token `--muted` (#8a8d84) definido no `:root` — era usado em vários lugares sem existir.
+- **Gate:** `harness_d1_onboarding.js` (Playwright + Chromium, com `ui_test/fake_supabase.js` gerando ligas sintéticas offline): 31/31 — fluxo completo no desktop, saídas "Já sei jogar"/"Pular", 2ª carreira, "Rever tutorial", bolhas dentro da tela no celular (390×844) e nenhuma tela "Conecte o Supabase".
+- **Pendências anotadas:** (1) as bolinhas do campo usam cor por **nível absoluto** (vermelho < 55), então na Série D quase o time todo aparece vermelho e o comentário do código diz "fora de posição" — confunde o jogador novo; vale trocar pra cor por **adequação à posição** (já previsto no §6.2). (2) O selo "SUPABASE" no cabeçalho e a aba Dados (ferramentas de dev) ainda aparecem pro jogador.
 
 **D2. Partida mais imersiva.**
 - Comentários dinâmicos por atributo ("golaço de fora" com `long_shots` alto; "de cabeça" com `heading`), feedback de fadiga (piscar vermelho < 40% energia), finalizações/escanteios/posse na tela.
@@ -229,7 +238,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 **Como o código decide:** `mostrarAnuncio()` já é o ponto único de integração. Ele detecta a superfície (navegador vs. dentro do app) e chama a rede certa: no app → AdMob recompensado; na web → AdSense (ou concede a recompensa de outra forma, já que banner não é recompensado). Troca cirúrgica num só lugar; o resto do jogo não muda.
 
-**Decisão pendente (pode ficar pra depois):** na versão web, o bônus "dobrar prêmio" (a) não existe (recompensado vira exclusivo do app, incentivando o download) ou (b) é concedido sem ad (web como vitrine generosa). (a) é mais rentável e cria funil web→app; (b) é mais generoso no navegador.
+**Decidido (09/2026):** na versão web, o bônus "dobrar prêmio" **continua existindo e é concedido sem anúncio** (opção b — web como vitrine generosa), já que o AdSense não tem formato recompensado. A alternativa descartada era deixar o bônus exclusivo do app, pra criar funil web→app.
 
 **O que vale pras DUAS versões:** o servidor (Bloco C) — a compra de "remover anúncios" precisa ser validada no servidor tanto na web quanto no app, senão é o primeiro alvo de cheat. Por isso o Bloco C vem antes do empacotamento: protege a compra e destrava o ranking, independente da superfície.
 
