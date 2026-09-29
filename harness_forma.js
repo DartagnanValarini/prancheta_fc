@@ -30,9 +30,9 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   console.log('\n[2] 7 rodadas de verdade (algumas podem virar ajuste de escalação)');
   page.on('dialog',d=>d.accept());   // avisos de desfalque (alert) não travam o teste
   for(let r=0;r<7;r++){
-    await page.evaluate(()=>App.jogarRodada());
+    await page.evaluate(()=>{ if(App.onzeDe(App.myTeam).length<11) App.escalarMelhor(); App.jogarRodada(); });
     await page.evaluate(()=>App.pularRodada());
-    await page.evaluate(()=>App.fecharRodada());
+    await page.evaluate(()=>{ App.fecharRodada(); const m=document.getElementById('flkModal'); if(m) m.remove(); App._filaModais=[]; });
   }
   const st=await page.evaluate(()=>{
     const me=App.teams[App.myTeam];

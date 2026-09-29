@@ -46,6 +46,8 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     await page.click('#btnPular');
     await page.waitForSelector('#btnFechar',{timeout:20000}); await shot(page,'fim_partida');
     await page.click('#btnFechar');
+    // avisos pós-rodada (desfalques etc.) vêm antes do tutorial: responde todos
+    for(let k=0;k<5 && await page.$('#flkModal');k++) await page.click('#flkModal .flkm-foot .btn:last-child');
     await page.waitForSelector('#tutOverlay .tut-bubble'); await shot(page,'pos_jogo_0');
     t(/Primeira rodada/.test(await page.textContent('#tutOverlay .tut-h')),'após a 1ª partida, dica aponta pra Competições');
     await page.click('[data-tut-next]');

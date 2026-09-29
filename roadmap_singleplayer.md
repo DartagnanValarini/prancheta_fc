@@ -26,7 +26,7 @@ O que **já existe e funciona** em `app.js` (~5.150 linhas, monolito injetado no
 - **Competição** 4 séries A/B/C/D, config data-driven (`FORMATO_DIVISOES`, `formatoDe`), acesso/rebaixamento, mata-mata.
 - **Finanças:** saldo, extrato, empréstimo com parcelas, premiação por acesso (`PREMIO_ACESSO`), receitas (patrocínio/bilheteria).
 - **Mercado:** `tickMercado`, ofertas, `executarTransferencia` (valida saldo), valor de mercado, contratos.
-- **Save robusto:** `SaveSchema` v8, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2 (corrupção) **+ assinatura HMAC-SHA256 (C1, anti-cheat)**, export/import backup. **Dois modos:** convidado (localStorage) e logado (Supabase `game_save` por user+slot). 3 slots.
+- **Save robusto:** `SaveSchema` v9, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2 (corrupção) **+ assinatura HMAC-SHA256 (C1, anti-cheat)**, export/import backup. **Dois modos:** convidado (localStorage, **comprimido** — ver §6.3) e logado (Supabase `game_save` por user+slot). 3 slots.
 - **UI completa:** 8 abas (Arena, Escala, Elenco, Competições, Mercado, Finanças, Ranking, Dados) + overlay de substituição + tela de Configurações. Design system FLK! Studios.
 - **Bloco A inteiro (✅):** Match Rating por jogo (`Rating.matchRating`, craque da rodada, média da temporada), estatísticas (artilharia ao vivo, histórico do clube com gráficos de saldo/overall), objetivos por divisão (`Objetivos`, principal + 3 secundários com prêmio) e moral 0–100 (`fatorMoral` no rendimento, força e valor; status na ficha). Harnesses `harness_matchrating`, `harness_a2/a3/a4`.
 - **Bloco B parcial:** `mostrarAnuncio()` como ponto único (modal stub), gancho "dobrar prêmio" dos objetivos, compra remove-ads ligada ao `entitlement` (stub no servidor). `harness_blocob`.
@@ -125,6 +125,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - `carregarSlot()` confere a assinatura e grava o veredito em **`App._saveAssinado`** — é o insumo que a submissão de ranking (C3) manda pro servidor.
 - Testado: `smoke_c1` 5/5 (assinatura válida confere; adulterar `saldo` quebra; reordenar chaves não quebra; sig ausente = não-assinado). Regressão dos harnesses existentes intacta.
 - **Falta ligar:** o veredito ainda não é *exibido* na UI (o save adulterado carrega, só fica marcado internamente). A visibilidade acontece via selo no ranking (C3).
+- **🐞 Corrigido (29/09/2026):** o `_canonical` tratava **qualquer referência repetida** como ciclo (virava `null`). O snapshot reaproveita `fixtures`/`stats`/`grupos` no topo e dentro de `ligas`, então a assinatura só batia no objeto original — **todo save recarregado (convidado ou nuvem) era julgado não-assinado** e o treinador ia pro ranking carimbado como **suspeito**. Agora só ciclo de verdade vira `null`. Saves gravados antes da correção continuam não-assinados até serem salvos de novo. Gate: `harness_save_convidado`.
 
 **C2. Posse de compra verificada no servidor. — ✅ FEITO (09/2026)**
 - A flag "removeu ads" (B2) vive no servidor e é **checada lá**, não confiada ao cliente. É a única coisa comprável, então a única que *precisa* de autoridade real.
@@ -252,7 +253,9 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - **⚙️ Botão de Configurações** — uma tela/aba de ajustes do jogador. Candidatos: velocidade da simulação (relógio da partida), frequência do save (auto-save a cada X rodadas / manual), talvez volume de áudio (quando entrar D4), e futuramente o toggle de "remover anúncios" (Bloco B). É o lar natural de várias preferências que hoje não têm onde morar. Baixo/médio esforço; alto valor percebido.
 - **📊 Estabilidade da contagem de jogos/pontos na tabela** — investigar a fundo o relato de "2 jogos / 6 pontos após a rodada 1". O motor conta certo em teste isolado (1 jogo por rodada); suspeita principal é save criado com código antigo carregando valor já dobrado, ou caminho de UII específico. Já removida a soma condicional `+1` na exibição e adicionada guarda de idempotência em `encerrarRodada`. **Confirmar com jogo novo** e, se persistir, capturar o caminho exato.
 - **🎯 Ficha/consistência do campo** — as posições das bolinhas no campo (vazio vs. escalado) já foram fixadas com altura de slot constante; validar em todas as formações no reteste.
-- **🖥️ Responsividade do sticky** — a barra de abas fixa foi calibrada pra colar abaixo do header; validar em telas estreitas (mobile) onde o header/abas podem quebrar em mais linhas e exigir ajuste dos offsets.
+- **🖥️ Responsividade do sticky** — a barra de abas fixa foi calibrada pra colar abaixo do header; validar em telas estreitas (mobile) onde o header/abas podem quebrar em mais linhas e exigir ajuste dos offsets. *(A casca do §6.2 trocou as abas do topo por menu lateral / barra inferior — item provavelmente resolvido; confirmar no reteste.)*
+- **🚪 Botão "Pedir demissão" (pra depois — pedido 29/09/2026)** — o treinador pode sair do clube por vontade própria. Confirmação no **modal padrão (§6.3)** mostrando clube, temporada, confiança e o que acontece depois; ao confirmar, cai no fluxo que já existe de "livre no mercado" (`procurarNovoClube`, mesmo slot). Onde colocar o botão: no card **Segurança no cargo** e/ou em ⚙️ Configurações. *A decidir:* se pedir demissão tem algum custo (ex.: pesa no ranking de treinadores ou só pode a partir de certa rodada).
+- **🤵 Recado do presidente a cada rodada (pra depois — pedido 29/09/2026)** — um modal **no estilo das boas-vindas** (o mesmo cartão do §6.3) a cada rodada, que leva direto pra tela de **Formação**, com: **frase do presidente** (sobre o próximo jogo — já existe em `falaPresidenteAtual()`), **meta da diretoria** (objetivo principal do A3), **caixa** e **confiança**. Entra na **fila** de avisos pós-rodada (depois de desfalques e propostas), pra nunca empilhar dois modais. *A decidir:* aparecer antes de toda rodada ou só quando algo mudou; e se vale um "não mostrar de novo" nas Configurações pra quem joga rápido.
 
 ---
 
@@ -341,6 +344,34 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - **Tutorial** atualizado pros novos alvos. "Round" virou "Rodada" na tela da partida.
 - **Gate:** `harness_layout.js` 61/61 — casca, cabeçalho, todas as abas sem rolagem horizontal (desktop e celular), 9 formações sem camisa fora do campo ou sobreposta (desktop e 390px), trocas por toque e arrasto, Auto/11 melhores/Descansados, ação principal, forma no cabeçalho, ordem de empilhamento no celular.
 - **Fica pra depois:** faixa superior com o ranking de treinadores (opcional no spec); placas como espaço de anúncio na versão web (`mostrarAnuncio()`); redesenho das outras abas no mesmo padrão.
+
+---
+
+## 6.3 Padrão de UI — decisões e avisos importantes (DECIDIDO E ADOTADO 29/09/2026)
+
+> **Regra:** tudo que é **importante e pede resposta** do jogador aparece no **modal FLK** — o mesmo visual das boas-vindas do presidente. **Nunca** `alert`/`confirm`/`prompt` do navegador.
+
+**Anatomia (sempre nesta ordem, só o que fizer sentido):**
+1. **Título** em Bungee, neon lemon (ex.: "📨 Proposta recebida").
+2. **Cabeçalho**: escudo + nome em destaque + linha de contexto (divisão, temporada, rodada).
+3. **Fala** (itálico) quando há um personagem falando — presidente, clube comprador.
+4. **Card de destaque** com borda lemon (ou **vermelha** quando é alerta): rótulo pequeno, título, descrição.
+5. **KPIs** em caixinhas (caixa, confiança, oferta, caixa depois…) — 2 por linha quando são 2 ou 4.
+6. **Aviso** em amarelo quando há consequência escondida (ex.: "é titular e sai da escalação").
+7. **Botões**: secundários à esquerda (Recusar, Decidir depois, Cancelar), **ação principal lemon** ocupando o resto à direita.
+
+**Comportamento (em `App.modalFLK` / `App.cartaoDecisao`):**
+- **Fila:** vários avisos seguidos saem **um de cada vez** (`fila:true`); `aposFila(fn)` roda algo só quando o jogador respondeu tudo (ex.: o tutorial pós-1ª rodada).
+- **Decisão obrigatória** (`fechavel:false`): sem ✕, Esc e clique fora não fecham — usado na demissão.
+- **Modal dentro de modal**: um aviso aberto a partir de outro (ex.: "Saldo insuficiente" na compra) **fica na tela** — antes ele sumia na hora. Na compra, fechar o aviso volta pra negociação.
+- Posição **fixa na tela** (antes era `absolute` e, com a página rolada, abria fora da vista — pior no celular); acima da barra inferior; rolagem interna se não couber.
+
+**Já convertido:** boas-vindas · **venda** (aceitar no Mercado agora abre o modal de decisão com oferta, valor de mercado, caixa depois, % da oferta e aviso de titular) · **proposta recebida** (novo: aparece sozinha no fim da rodada com Aceitar / Recusar / Decidir depois — antes só aparecia se o jogador abrisse o Mercado) · **compra** (com "caixa depois" ao vivo enquanto digita) · contraproposta · empréstimo · **desfalques** (lista quem sai e por quê) · escalação incompleta · time desfalcado · **demissão** · apagar carreira · falha ao salvar.
+**Fica como está (não é decisão):** ficha/card do jogador, pódio de fim de temporada, toasts do tutorial.
+**Gate:** `harness_modais.js` 30/30 (inclui checagem de que o `app.js` não tem nenhum `alert`/`confirm`/`prompt`).
+
+**🐞 Achado junto (29/09/2026) — save do convidado não cabia:** o snapshot tem **~8 MB** (atributos dos ~3 mil jogadores: `attrs`, `attrsDec`, `capAttr`) e a cota do localStorage é **~5 M caracteres**, então o save do convidado **falhava sempre, em silêncio**. Com o D1 isso virou o caminho padrão ("Jogar agora"). Correção: o convidado grava **comprimido** (gzip nativo do navegador + base64, campo `estadoZ`, ~1,7 M caracteres; envelope antigo com `estado` continua sendo lido) e uma falha de gravação agora **avisa** o jogador uma vez por sessão. Gate: `harness_save_convidado.js` 11/11.
+- **Pendente (D3):** o save **logado** manda os mesmos ~8 MB pro Supabase a cada auto-save. Funciona, mas é pesado — vale **enxugar o snapshot** (guardar só o que mudou em relação ao banco; `capAttr` e parte de `attrsDec` dá pra re-derivar) antes do lançamento. Não testado daqui se há limite de tamanho de requisição no Supabase.
 
 ---
 

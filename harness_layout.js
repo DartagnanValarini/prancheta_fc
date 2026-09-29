@@ -118,6 +118,7 @@ const checarCampo=page=>page.evaluate(()=>{
     await p2.click('#btnJogarEsc');
     t(await vis(p2,'#tab-arena'),'Jogar (card do adversário) leva à partida');
     await p2.click('#btnPular'); await p2.waitForSelector('#btnFechar'); await p2.click('#btnFechar');
+    for(let k=0;k<5 && await p2.$('#flkModal');k++) await p2.click('#flkModal .flkm-foot .btn:last-child');
     const forma=await p2.$$eval('#clubeHead .forma-vde span:not(.vazio)',s=>s.map(x=>x.textContent).join(''));
     t(/^[VED]$/.test(forma),'forma no cabeçalho mostra o resultado ('+forma+')');
     const notas=await p2.$$eval('.fm-row td:nth-child(6)',tds=>tds.filter(td=>/\d/.test(td.textContent)).length);

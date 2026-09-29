@@ -6,7 +6,9 @@ const fs=require('fs'),path=require('path');
 const REPO=process.env.REPO||path.join(__dirname,'..');
 const OUT=process.env.OUT||path.join(__dirname,'shots');
 fs.mkdirSync(OUT,{recursive:true});
-async function abrir(browser,{w=1280,h=860}={}){
+// seguro:true abre em https (contexto seguro → crypto.subtle, usado pela assinatura do save)
+async function abrir(browser,{w=1280,h=860,seguro=false}={}){
+  const BASE=seguro?'https://game.local/':'http://game.local/';
   const ctx=await browser.newContext({viewport:{width:w,height:h}});
   const page=await ctx.newPage();
   const erros=[];
@@ -14,11 +16,11 @@ async function abrir(browser,{w=1280,h=860}={}){
   page.on('console',m=>{ if(m.type()==='error') erros.push('console: '+m.text()); });
   await page.route('**/*',route=>{
     const u=route.request().url();
-    if(u.startsWith('http://game.local/')) return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'prancheta_fc.html'),'utf8')});
+    if(u.startsWith(BASE)) return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'prancheta_fc.html'),'utf8')});
     if(u.includes('supabase-js')) return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.join(__dirname,'fake_supabase.js'),'utf8')});
     return route.abort();
   });
-  await page.goto('http://game.local/');
+  await page.goto(BASE);
   return {ctx,page,erros};
 }
 module.exports={abrir,OUT,chromium};

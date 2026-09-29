@@ -403,8 +403,8 @@
   .fin-emp-sub{font-family:'Space Mono'; font-size:12px; color:var(--gray2)}
 
   /* ---- Modal FLK (prompt/confirm/alert estilizados) ---- */
-  .flkm-bg{position:absolute; inset:0; background:rgba(0,0,0,.82); display:flex; align-items:center; justify-content:center; padding:24px; z-index:50}
-  .flkm-box{position:relative; width:100%; max-width:440px; background:var(--black);
+  .flkm-bg{position:fixed; inset:0; background:rgba(0,0,0,.82); display:flex; align-items:center; justify-content:center; padding:16px; z-index:160}
+  .flkm-box{position:relative; width:100%; max-width:460px; max-height:calc(100vh - 32px); overflow-y:auto; background:var(--black);
     border:3px solid var(--lemon); border-radius:16px; box-shadow:8px 8px 0 var(--shadow); padding:22px}
   .flkm-title{font-family:'Bungee'; font-size:18px; color:var(--lemon); margin-bottom:14px; padding-right:30px}
   .flkm-body{font-family:'Space Mono'; font-size:13px; color:var(--white); margin-bottom:14px}
@@ -414,6 +414,30 @@
     border-radius:8px; padding:10px 12px; font-family:'Space Mono'; font-size:15px; box-sizing:border-box}
   .flkm-field input:focus{outline:none; border-color:var(--lemon)}
   .flkm-foot{display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap}
+  .flkm-foot .btn:last-child{flex:1 1 auto}
+  /* ---- §6.3 padrão de conteúdo dos modais (cartão de decisão) ---- */
+  .mf{display:flex; flex-direction:column; gap:12px}
+  .mf-top{display:flex; gap:12px; align-items:center}
+  .mf-esc{flex:none}
+  .mf-nome{font-family:'Bungee'; font-size:16px; line-height:1.15; color:var(--white); overflow-wrap:anywhere}
+  .mf-sub{font-size:11px; color:var(--gray)}
+  .mf-fala{font-style:italic; line-height:1.6; color:var(--white); margin:0}
+  .mf-msg{line-height:1.6}
+  .mf-destaque{display:flex; flex-direction:column; gap:2px; border:2px solid var(--lemon); border-radius:10px; padding:10px 12px; box-shadow:4px 4px 0 var(--shadow)}
+  .mf-destaque.alerta{border-color:var(--loss)}
+  .mf-destaque small, .mf-kpi small{font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:.5px}
+  .mf-destaque b{font-family:'Bungee'; font-size:14px; color:var(--lemon); overflow-wrap:anywhere}
+  .mf-destaque.alerta b{color:var(--white)}
+  .mf-destaque span{font-size:12px; color:var(--gray); line-height:1.5}
+  .mf-kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px}
+  .mf-kpis.n4{grid-template-columns:1fr 1fr}
+  .mf-kpi{background:var(--panel); border:2px solid var(--line); border-radius:10px; padding:8px 12px; display:flex; flex-direction:column; min-width:0}
+  .mf-kpi b{font-family:'Bungee'; font-size:14px; color:var(--white); overflow-wrap:anywhere}
+  .mf-lista{display:flex; flex-direction:column; border:2px solid var(--line); border-radius:10px; overflow:hidden}
+  .mf-lista>div{display:flex; justify-content:space-between; gap:10px; padding:7px 12px; font-size:12px; border-bottom:1px solid var(--line)}
+  .mf-lista>div:last-child{border-bottom:none}
+  .mf-lista b{color:var(--white)} .mf-lista span{color:var(--gray); text-align:right}
+  .mf-aviso{font-size:12px; color:#e8c547; line-height:1.5}
 
   /* ---- Tela de demissão ---- */
   .dem-body{font-family:'Space Mono'; font-size:13px; color:var(--white); line-height:1.7; margin:10px 0 18px}
@@ -1874,8 +1898,12 @@ const Menu={
     this.el().querySelectorAll('[data-novo]').forEach(d=>d.onclick=()=>this.telaNovoJogo(d.dataset.novo));
     this.el().querySelectorAll('[data-del]').forEach(b=>b.onclick=async(ev)=>{
       ev.stopPropagation();
-      if(!confirm('Apagar esta carreira? Não dá pra desfazer.')) return;
-      await this.apagarSave(b.dataset.del); this.telaMenu();
+      const slot=b.dataset.del, info=(saves[slot]||{});
+      App.modalFLK({titulo:'Apagar carreira?', corpoHTML:App.cartaoDecisao({
+          destaque:{rotulo:`Slot ${slot}`, titulo:App.esc(info.clube||'Carreira'), desc:`Temporada ${info.temporada||'–'} · Rodada ${info.rodada||'–'}`, tom:'alerta'},
+          aviso:'⚠️ Não dá pra desfazer.'}),
+        botoes:[{txt:'Cancelar', tipo:'sm'},
+                {txt:'Apagar carreira', tipo:'danger', onClick:()=>{ this.apagarSave(slot).then(()=>this.telaMenu()); }}]});
     });
   },
 
@@ -2046,7 +2074,8 @@ const Menu={
       let estado=null, sig=null;
       if(this.convidado){
         const raw=localStorage.getItem('flk_save_'+slot);
-        if(raw){ const env=JSON.parse(raw); estado=env.estado; sig=env.sig||null; }
+        if(raw){ const env=JSON.parse(raw); sig=env.sig||null;
+          estado = env.estadoZ ? JSON.parse(await App.descomprimir(env.estadoZ)) : env.estado; }
       } else {
         const {data}=await App.sb.from('game_save').select('estado')
           .eq('user_id',this.user.id).eq('slot',String(slot)).maybeSingle();
@@ -2350,20 +2379,13 @@ const Tutorial={
     const t=App.teams[App.myTeam]; if(!t) return;
     const obj=App.garantirObjetivos(), P=obj&&obj.principal;
     const nomeDiv='Série '+App.divisao;
-    const corpo=`
-      <div class="tut-bv">
-        <div class="tut-bv-top">
-          <span class="tut-bv-esc">${App.escudoHTML(t,48)}</span>
-          <div><div class="tut-bv-clube">${App.esc(t.nome)}</div>
-               <div class="tut-bv-div">${nomeDiv} · Temporada ${App.temporada}</div></div>
-        </div>
-        <p class="tut-bv-fala">🤵 “Seja bem-vindo, professor. O clube é pequeno, mas o torcedor é apaixonado. Conto com você.”</p>
-        ${P?`<div class="tut-bv-meta"><small>Meta da diretoria</small><b>${App.esc(P.titulo)}</b><span>${App.esc(P.desc)}</span></div>`:''}
-        <div class="tut-bv-nums">
-          <div><small>Caixa</small><b>${App.fmtReais(t.saldo||0)}</b></div>
-          <div><small>Confiança</small><b>${App.confianca==null?App.CONF_INICIAL:App.confianca}/100</b></div>
-        </div>
-      </div>`;
+    const corpo=App.cartaoDecisao({classe:'tut-bv',
+      topo:{escudo:App.escudoHTML(t,48), nome:App.esc(t.nome), sub:`${nomeDiv} · Temporada ${App.temporada}`},
+      fala:'🤵 “Seja bem-vindo, professor. O clube é pequeno, mas o torcedor é apaixonado. Conto com você.”',
+      destaque:P?{rotulo:'Meta da diretoria', titulo:App.esc(P.titulo), desc:App.esc(P.desc)}:null,
+      kpis:[{rotulo:'Caixa', valor:App.fmtReais(t.saldo||0)},
+            {rotulo:'Confiança', valor:`${App.confianca==null?App.CONF_INICIAL:App.confianca}/100`}],
+    });
     App.modalFLK({titulo:'Novo treinador no comando', corpoHTML:corpo,
       botoes:[
         {txt:'Já sei jogar', tipo:'sm', onClick:()=>{ this.marcar('feito'); }},
@@ -2857,15 +2879,25 @@ const App={
     if(onze.length<11){
       const faltam=11-onze.length;
       const disp=Motor.disp(this.teams[this.myTeam]).length;
+      const t=this.teams[this.myTeam];
       if(disp<11){
-        alert(`Você só tem ${disp} atletas disponíveis (lesões e suspensões).\nNão é possível formar um time completo.`);
+        this.modalFLK({titulo:'Time desfalcado', corpoHTML:this.cartaoDecisao({
+            topo:{escudo:this.escudoHTML(t,40), nome:this.esc(t.nome), sub:`Rodada ${this.rodada+1}`},
+            destaque:{rotulo:'Não dá pra entrar em campo', titulo:`Só ${disp} atletas disponíveis`, desc:'Lesões e suspensões deixaram o elenco sem 11 jogadores. Contrate no Mercado ou descanse um dia.', tom:'alerta'},
+          }),
+          botoes:[{txt:'Ir ao Mercado', tipo:'sm', onClick:()=>{ this.showTab('mercado'); }},
+                  {txt:'Entendido', tipo:'primary'}]});
         return;
       }
-      if(confirm(`Sua escalação está incompleta: ${onze.length}/11 titulares (falta${faltam>1?'m':''} ${faltam}).\n\nQuer escalar o melhor time automaticamente?`)){
-        this.escalarMelhor(); this.renderShell(); this.showTab('escala');
-      } else {
-        this.showTab('escala');
-      }
+      this.modalFLK({titulo:'Escalação incompleta', corpoHTML:this.cartaoDecisao({
+          topo:{escudo:this.escudoHTML(t,40), nome:this.esc(t.nome), sub:`Rodada ${this.rodada+1}`},
+          destaque:{rotulo:'Falta gente em campo', titulo:`${onze.length}/11 titulares`, desc:`Falta${faltam>1?'m':''} ${faltam} jogador${faltam>1?'es':''} para fechar o time.`, tom:'alerta'},
+          kpis:[{rotulo:'Disponíveis', valor:disp},{rotulo:'Formação', valor:this.cfg[this.myTeam].formacao||'–'}],
+        }),
+        botoes:[
+          {txt:'Ajustar eu mesmo', tipo:'sm', onClick:()=>{ this.showTab('escala'); }},
+          {txt:'Completar automaticamente', tipo:'primary', onClick:()=>{ this.escalarMelhor(); this.renderShell(); this.showTab('escala'); }},
+        ]});
       return;
     }
     const {jogos,sims}=this.prepararRodada();
@@ -3744,17 +3776,25 @@ const App={
   fecharRodada(){
     this.liveState=null;
     this.squadView=this.myTeam;      // volta pro meu time
-    // avisa quem saiu do time e por quê
-    if(this.baixas && this.baixas.length){
-      const txt=this.baixas.map(b=>`• ${b.nome} — ${b.motivo.replace(/^[^\s]+\s/,'')}`).join('\n');
-      alert(`⚠️ Desfalques para a próxima rodada:\n\n${txt}\n\nEles saíram da escalação automaticamente.`);
-      this.baixas=[];
-    }
+    const baixas=this.baixas||[]; this.baixas=[];
     this.renderShell();
     // demissão tem prioridade: abre a tela e não segue pra escalação
     if(this._demissaoPendente){ this._demissaoPendente=false; this.abrirDemissao(); return; }
     // fluxo Brasfoot: depois de fechar o resultado, cai na Escalação
-    if(!this.tempEncerrada){ this.showTab('escala'); Tutorial.aoFecharRodada(); }
+    if(!this.tempEncerrada) this.showTab('escala');
+    // avisos pós-rodada em FILA (um de cada vez): desfalques → propostas novas
+    if(baixas.length){
+      const t=this.teams[this.myTeam];
+      this.modalFLK({fila:true, titulo:'⚠️ Desfalques', corpoHTML:this.cartaoDecisao({
+          topo:{escudo:this.escudoHTML(t,40), nome:this.esc(t.nome), sub:`Para a rodada ${this.rodada+1}`},
+          destaque:{rotulo:'Fora da próxima rodada', titulo:`${baixas.length} jogador${baixas.length>1?'es':''}`, desc:'Eles saíram da escalação automaticamente.', tom:'alerta'},
+          lista:baixas.map(b=>({a:this.esc(b.nome), b:String(b.motivo||'').replace(/^[^\s]+\s/,'')})),
+        }),
+        botoes:[{txt:'Ver escalação', tipo:'primary', onClick:()=>{ this.showTab('escala'); }}]});
+    }
+    this.avisarPropostasNovas();
+    // tutorial só depois que o jogador respondeu tudo
+    this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
   },
 
   descansar(){
@@ -5012,20 +5052,24 @@ const App={
     const vm=this.valorMercadoReais(p);
     const meuSaldo=this.teams[this.myTeam].saldo||0;
     const sugestao=(vm/1e6).toFixed(0);
-    this.modalFLK({
-      titulo:`💼 Negociar ${p.nome}`,
-      corpoHTML:`<div style="line-height:1.7">
-        <b>${this.teams[ti].nome}</b> · ${Motor.melhorGeral(p).pos} · ${p.idade} anos<br>
-        Valor de mercado: <b style="color:var(--lemon)">${this.fmtReais(vm)}</b><br>
-        Seu saldo: <b style="color:${meuSaldo<vm?'var(--loss)':'var(--lemon)'}">${this.fmtReais(meuSaldo)}</b>
-      </div>`,
+    const mg=Motor.melhorGeral(p);
+    const mNeg=this.modalFLK({
+      titulo:'💼 Negociar contratação',
+      corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(this.teams[ti],40), nome:this.esc(p.nome), sub:`${this.esc(this.teams[ti].nome)} · ${mg.pos} · ${p.idade||'–'} anos`},
+        destaque:{rotulo:'Valor de mercado', titulo:this.fmtReais(vm), desc:`força ${mg.ov} · salário ${this.fmtm(p.salario)}/mês`},
+        kpis:[
+          {rotulo:'Seu caixa', valor:this.fmtReais(meuSaldo), cor:meuSaldo<vm?'var(--loss)':'var(--lemon)'},
+          {rotulo:'Caixa depois', valor:this.fmtReais(meuSaldo-Math.round(+sugestao*1e6)), id:'mfCaixaDepois'},
+        ],
+      }),
       campos:[{id:'oferta', label:'Sua oferta (em milhões)', tipo:'number', valor:sugestao}],
       botoes:[
         {txt:'Desistir', tipo:'sm'},
         {txt:'Fazer proposta', tipo:'sm primary', onClick:(v)=>{
           const oferta=Math.round(parseFloat(String(v.oferta).replace(',','.'))*1e6);
-          if(!(oferta>0)){ this.avisoFLK('Oferta inválida','Digite um valor em milhões (ex: 30).','var(--loss)'); return false; }
-          if((this.teams[this.myTeam].saldo||0)<oferta){ this.avisoFLK('Saldo insuficiente','Você não tem caixa para essa oferta.','var(--loss)'); return false; }
+          if(!(oferta>0)){ this.avisoFLK('Oferta inválida','Digite um valor em milhões (ex: 30).','var(--loss)',{onClose:()=>this.negociarCompraUI(pid)}); return false; }
+          if((this.teams[this.myTeam].saldo||0)<oferta){ this.avisoFLK('Saldo insuficiente','Você não tem caixa para essa oferta.','var(--loss)',{onClose:()=>this.negociarCompraUI(pid)}); return false; }
           const r=this.avaliarOfertaCompra(pid, oferta);
           if(r.decisao==='aceita'){
             const res=this.executarTransferencia(pid, this.myTeam, oferta);
@@ -5034,11 +5078,17 @@ const App={
           } else if(r.decisao==='recusa'){
             this.avisoFLK('❌ Proposta recusada', r.fala,'var(--loss)');
           } else {
-            // contraproposta: novo modal de confirmação
+            // contraproposta: novo modal de decisão
+            const cx=this.teams[this.myTeam].saldo||0;
             this.modalFLK({
               titulo:'🔁 Contraproposta',
-              corpoHTML:`<div style="line-height:1.7">${r.fala}<br><br>
-                Aceitar por <b style="color:var(--lemon)">${this.fmtReais(r.contra)}</b>?</div>`,
+              corpoHTML:this.cartaoDecisao({
+                topo:{escudo:this.escudoHTML(this.teams[ti],40), nome:this.esc(this.teams[ti].nome), sub:`sobre ${this.esc(p.nome)}`},
+                fala:`“${r.fala}”`,
+                destaque:{rotulo:'Eles pedem', titulo:this.fmtReais(r.contra), desc:`Sua oferta foi ${this.fmtReais(oferta)}.`},
+                kpis:[{rotulo:'Seu caixa', valor:this.fmtReais(cx)},
+                      {rotulo:'Caixa depois', valor:this.fmtReais(cx-r.contra), cor:cx<r.contra?'var(--loss)':'var(--lemon)'}],
+              }),
               botoes:[
                 {txt:'Recusar', tipo:'sm'},
                 {txt:'Aceitar', tipo:'sm primary', onClick:()=>{
@@ -5055,12 +5105,53 @@ const App={
         }},
       ],
     });
+    const inp=mNeg.el&&mNeg.el.querySelector('#flkm_oferta'), out=mNeg.el&&mNeg.el.querySelector('#mfCaixaDepois');
+    if(inp&&out) inp.oninput=()=>{ const v=Math.round(parseFloat(String(inp.value).replace(',','.'))*1e6)||0;
+      const d=meuSaldo-v; out.textContent=this.fmtReais(d); out.style.color=d<0?'var(--loss)':'var(--lemon)'; };
+    if(inp) inp.oninput&&inp.oninput();
   },
-  // aceitar/recusar oferta recebida (UI)
+  // aceitar/recusar oferta recebida (UI). Aceitar SEMPRE passa pelo modal de decisão.
   aceitarOfertaUI(pid, aceitar){
-    const r=this.responderOferta(pid, aceitar);
-    if(r.ok && aceitar) this.avisoFLK('✅ Venda concluída', r.msg,'var(--lemon)');
+    if(aceitar) return this.decidirVendaUI(pid);
+    this.responderOferta(pid, false);
     this.salvarSupabase(true); this.renderShell(); this.showTab('mercado');
+  },
+  // propostas que chegaram nesta rodada viram modais de decisão (em fila)
+  avisarPropostasNovas(){
+    (this.ofertasRecebidas||[]).filter(o=>!o.avisada).forEach(o=>{ o.avisada=true; this.decidirVendaUI(o.pid,{fila:true, nova:true}); });
+  },
+  // modal de decisão de venda: quem quer, quanto, impacto no caixa/folha/escalação
+  decidirVendaUI(pid, op){
+    op=op||{};
+    const o=(this.ofertasRecebidas||[]).find(x=>x.pid===pid); if(!o) return;
+    const t=this.teams[this.myTeam], p=t.players.find(x=>x.pid===pid); if(!p) return;
+    const comprador=this.teams[o.de];
+    const vm=this.valorMercadoReais(p), caixa=t.saldo||0;
+    const pos=this.posDe(this.myTeam,p.numero), titular=pos!=='BANCO'&&pos!=='FORA';
+    const mg=Motor.melhorGeral(p);
+    const pct=vm>0?Math.round(o.valor/vm*100):100;
+    const fim=()=>{ this.salvarSupabase(true); this.renderShell(); if(!op.fila) this.showTab('mercado'); };
+    this.modalFLK({fila:!!op.fila, titulo:op.nova?'📨 Proposta recebida':'Vender jogador?',
+      corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(comprador,40), nome:this.esc(o.deNome), sub:`quer contratar · Série ${comprador.divisao}`},
+        destaque:{rotulo:titular?'Titular do seu time':'Jogador à venda', titulo:this.esc(p.nome),
+          desc:`${mg.pos} · força ${p.forca} · ${p.idade||'–'} anos · salário ${this.fmtm(p.salario)}/mês`},
+        kpis:[
+          {rotulo:'Oferta', valor:this.fmtReais(o.valor), cor:pct>=100?'var(--lemon)':pct>=90?'#e8c547':'var(--loss)'},
+          {rotulo:'Valor de mercado', valor:this.fmtReais(vm)},
+          {rotulo:'Caixa depois', valor:this.fmtReais(caixa+o.valor), cor:'var(--lemon)'},
+          {rotulo:'Oferta × valor', valor:pct+'%'},
+        ],
+        aviso:titular?`⚠️ ${this.esc(p.nome.split(' ')[0])} é titular e sai da escalação se você vender.`:'',
+      }),
+      botoes:[
+        {txt:'Recusar', tipo:'sm', onClick:()=>{ this.responderOferta(pid,false); fim(); }},
+        ...(op.fila?[{txt:'Decidir depois', tipo:'sm'}]:[]),
+        {txt:'Aceitar venda', tipo:'primary', onClick:()=>{
+          const r=this.responderOferta(pid,true); fim();
+          this.avisoFLK(r.ok?'✅ Venda concluída':'❌ Não deu', r.msg, r.ok?'var(--lemon)':'var(--loss)');
+        }},
+      ]});
   },
 
   /* ---------- ESTATÍSTICAS DA TEMPORADA (A2) ----------
@@ -5626,35 +5717,87 @@ const App={
             botoes:[{txt,tipo,onClick(vals)}], onClose}
      Retorna nada; a interação é via callbacks dos botões.
      ============================================================ */
+  /* ====================================================================
+     MODAL FLK — padrão ÚNICO para tudo que é importante e pede resposta
+     (§6.3 do roadmap). Nunca usar alert/confirm/prompt nativos.
+     opts: {titulo, corpoHTML, campos[], botoes[{txt,tipo,onClick}], onClose,
+            fechavel:false  → decisão obrigatória (sem ✕, sem clique fora, sem Esc)
+            fila:true       → se já houver um modal aberto, entra na fila e abre depois}
+     Botões: onClick que retorna true mantém o modal aberto. Se o onClick abrir
+     OUTRO modal (ex.: aviso de erro), o fechamento do primeiro não apaga o novo.
+     ==================================================================== */
   modalFLK(opts){
     const id='flkModal';
     let ov=document.getElementById(id);
-    if(!ov){ ov=document.createElement('div'); ov.id=id; document.querySelector('.wrap').appendChild(ov); }
+    if(ov && opts.fila){ (this._filaModais||(this._filaModais=[])).push(opts); return {fechar(){}, el:null, enfileirado:true}; }
+    if(!ov){ ov=document.createElement('div'); ov.id=id; document.body.appendChild(ov); }
+    const tok=String(this._flkTok=(this._flkTok||0)+1); ov.dataset.tok=tok;
+    const fechavel=opts.fechavel!==false;
     const campos=(opts.campos||[]).map(c=>`
       <div class="flkm-field">
-        <label>${c.label||''}</label>
+        <label for="flkm_${c.id}">${c.label||''}</label>
         <input id="flkm_${c.id}" type="${c.tipo||'text'}" value="${c.valor!=null?c.valor:''}"
           placeholder="${c.placeholder||''}" ${c.tipo==='number'?'inputmode="decimal"':''}>
       </div>`).join('');
     const botoes=(opts.botoes||[{txt:'OK',tipo:'primary'}]).map((b,idx)=>
       `<button class="btn ${b.tipo||'sm'}" data-flkm-btn="${idx}">${b.txt}</button>`).join('');
-    ov.innerHTML=`<div class="flkm-bg"><div class="flkm-box">
-      <button class="fmodal-close" data-flkm-x>✕</button>
-      <div class="flkm-title">${opts.titulo||''}</div>
+    ov.innerHTML=`<div class="flkm-bg"><div class="flkm-box" role="dialog" aria-modal="true" aria-labelledby="flkmT${tok}">
+      ${fechavel?'<button class="fmodal-close" data-flkm-x aria-label="Fechar">✕</button>':''}
+      <div class="flkm-title" id="flkmT${tok}">${opts.titulo||''}</div>
       ${opts.corpoHTML?`<div class="flkm-body">${opts.corpoHTML}</div>`:''}
       ${campos?`<div class="flkm-fields">${campos}</div>`:''}
       <div class="flkm-foot">${botoes}</div>
     </div></div>`;
-    const fechar=()=>{ ov.remove(); if(opts.onClose) opts.onClose(); };
+    const ativo=()=>ov.isConnected && ov.dataset.tok===tok;
+    const fechar=()=>{
+      if(!ativo()) return;                       // já foi substituído por outro modal
+      ov.remove(); document.removeEventListener('keydown',onKey);
+      if(opts.onClose) opts.onClose();
+      this._proximoDaFila();
+    };
+    const onKey=(e)=>{ if(e.key==='Escape' && fechavel && ativo()) fechar(); };
+    document.addEventListener('keydown',onKey);
     const lerVals=()=>{ const v={}; (opts.campos||[]).forEach(c=>{
       const el=document.getElementById('flkm_'+c.id); v[c.id]=el?el.value:''; }); return v; };
-    ov.querySelector('[data-flkm-x]').onclick=fechar;
-    ov.querySelector('.flkm-bg').onclick=(e)=>{ if(e.target.classList.contains('flkm-bg')) fechar(); };
-    (opts.botoes||[]).forEach((b,idx)=>{
+    const x=ov.querySelector('[data-flkm-x]'); if(x) x.onclick=fechar;
+    ov.querySelector('.flkm-bg').onclick=(e)=>{ if(fechavel && e.target.classList.contains('flkm-bg')) fechar(); };
+    (opts.botoes||[{txt:'OK',tipo:'primary'}]).forEach((b,idx)=>{
       const el=ov.querySelector(`[data-flkm-btn="${idx}"]`); if(!el) return;
       el.onclick=()=>{ const keep=b.onClick?b.onClick(lerVals()):false; if(!keep) fechar(); };
     });
+    // foco: primeiro campo, senão o botão principal (último)
+    const foco=ov.querySelector('.flkm-field input')||ov.querySelector('.flkm-foot .btn:last-child');
+    if(foco) try{ foco.focus({preventScroll:true}); }catch(e){}
     return {fechar, el:ov};
+  },
+  // abre o próximo modal da fila (se nenhum estiver aberto); quando a fila esvazia, roda _aposFila
+  _proximoDaFila(){
+    if(document.getElementById('flkModal')) return;
+    const prox=(this._filaModais||[]).shift();
+    if(prox){ prox.fila=false; this.modalFLK(prox); return; }
+    const cbs=this._aposFila||[]; this._aposFila=[];
+    cbs.forEach(fn=>{ try{ fn(); }catch(e){ console.error(e); } });
+  },
+  // roda fn quando não houver mais nenhum modal aberto nem na fila
+  aposFila(fn){
+    if(!document.getElementById('flkModal') && !(this._filaModais||[]).length) return fn();
+    (this._aposFila||(this._aposFila=[])).push(fn);
+  },
+  // corpo padrão dos modais (mesmo visual das boas-vindas):
+  // {topo:{escudo, nome, sub}, fala, destaque:{rotulo,titulo,desc,tom}, kpis:[{rotulo,valor,cor,id}], lista:[{a,b}], aviso, extraHTML, classe}
+  cartaoDecisao(c){
+    const e=v=>v==null?'':v;
+    return `<div class="mf ${e(c.classe)}">
+      ${c.topo?`<div class="mf-top">${c.topo.escudo?`<span class="mf-esc">${c.topo.escudo}</span>`:''}
+        <div><div class="mf-nome">${e(c.topo.nome)}</div>${c.topo.sub?`<div class="mf-sub">${c.topo.sub}</div>`:''}</div></div>`:''}
+      ${c.fala?`<p class="mf-fala">${c.fala}</p>`:''}
+      ${c.destaque?`<div class="mf-destaque ${c.destaque.tom||''}">${c.destaque.rotulo?`<small>${c.destaque.rotulo}</small>`:''}
+        <b>${e(c.destaque.titulo)}</b>${c.destaque.desc?`<span>${c.destaque.desc}</span>`:''}</div>`:''}
+      ${c.lista&&c.lista.length?`<div class="mf-lista">${c.lista.map(l=>`<div><b>${l.a}</b><span>${e(l.b)}</span></div>`).join('')}</div>`:''}
+      ${c.kpis&&c.kpis.length?`<div class="mf-kpis n${c.kpis.length}">${c.kpis.map(k=>`<div class="mf-kpi"><small>${k.rotulo}</small><b${k.id?` id="${k.id}"`:''}${k.cor?` style="color:${k.cor}"`:''}>${k.valor}</b></div>`).join('')}</div>`:''}
+      ${c.aviso?`<div class="mf-aviso">${c.aviso}</div>`:''}
+      ${e(c.extraHTML)}
+    </div>`;
   },
   /* ---------- TELA DE CONFIGURAÇÕES (Bloco B) ---------- */
   abrirConfig(){
@@ -5737,8 +5880,9 @@ const App={
   },
 
   // aviso simples estilo FLK (substitui alert)
-  avisoFLK(titulo, msg, cor){    this.modalFLK({titulo, corpoHTML:`<div style="color:${cor||'var(--white)'};line-height:1.6">${msg}</div>`,
-      botoes:[{txt:'Entendido',tipo:'primary sm'}]});
+  avisoFLK(titulo, msg, cor, extra){
+    return this.modalFLK(Object.assign({titulo, corpoHTML:`<div class="mf"><div class="mf-msg" style="color:${cor||'var(--white)'}">${msg}</div></div>`,
+      botoes:[{txt:'Entendido',tipo:'primary'}]}, extra||{}));
   },
 
   // modal de empréstimo (usa o modal FLK)
@@ -5748,11 +5892,12 @@ const App={
     const dispM=(disp/1e6);
     this.modalFLK({
       titulo:'🏦 Empréstimo bancário',
-      corpoHTML:`<div style="line-height:1.7">
-        Crédito disponível: <b style="color:var(--lemon)">${this.fmtReais(disp)}</b><br>
-        Pagamento em <b>${this.PARCELAS_EMPRESTIMO}x</b> mensais · juros de <b>${Math.round(this.JUROS_EMPRESTIMO*100)}%</b> sobre o total.<br>
-        <span style="color:var(--gray2);font-size:12px">A parcela é debitada junto da folha, a cada 4 rodadas.</span>
-      </div>`,
+      corpoHTML:this.cartaoDecisao({
+        destaque:{rotulo:'Crédito disponível', titulo:this.fmtReais(disp), desc:'A parcela é debitada junto da folha, a cada 4 rodadas.'},
+        kpis:[{rotulo:'Parcelas', valor:`${this.PARCELAS_EMPRESTIMO}x mensais`},
+              {rotulo:'Juros', valor:`${Math.round(this.JUROS_EMPRESTIMO*100)}% no total`},
+              {rotulo:'Seu caixa', valor:this.fmtReais(this.teams[this.myTeam].saldo||0)}],
+      }),
       campos:[{id:'valor', label:`Valor (em milhões, até ${dispM.toFixed(1)})`, tipo:'number', placeholder:'ex: 3'}],
       botoes:[
         {txt:'Cancelar', tipo:'sm'},
@@ -5856,27 +6001,18 @@ const App={
   abrirDemissao(){
     this.demitido=true;
     const t=this.teams[this.myTeam];
-    const clube=t?t.nome:'seu clube';
-    const serie='Série '+(this.divisao||'D');
-    let ov=document.getElementById('demissaoModal');
-    if(!ov){ ov=document.createElement('div'); ov.id='demissaoModal'; document.querySelector('.wrap').appendChild(ov); }
-    ov.innerHTML=`<div class="podio-bg"><div class="podio-box" style="max-width:520px">
-      <div class="podio-titulo" style="color:var(--loss)">🚪 VOCÊ FOI DEMITIDO</div>
-      <div class="dem-body">
-        <p>A diretoria do <b>${clube}</b> (${serie}) perdeu a confiança no seu trabalho
-        e decidiu encerrar o seu ciclo no clube.</p>
-        <p>Você está <b>livre no mercado</b>. Um bom treinador sempre recebe novas propostas —
-        basta recomeçar por baixo e provar seu valor de novo.</p>
-        <div class="dem-conf">Confiança final: <b style="color:var(--loss)">${Math.round(this.confianca)}</b> / 100
-          · corte do clube: ${this.corteDemissao()}</div>
-      </div>
-      <div class="podio-foot" style="gap:10px;flex-wrap:wrap;justify-content:center">
-        <button class="btn primary" id="demNovo">Procurar novo clube ▶</button>
-        <button class="btn sm" id="demSair">Voltar ao menu</button>
-      </div>
-    </div></div>`;
-    document.getElementById('demNovo').onclick=()=>{ ov.remove(); this.procurarNovoClube(); };
-    document.getElementById('demSair').onclick=()=>{ ov.remove(); Menu.iniciar(); };
+    this.modalFLK({titulo:'🚪 Você foi demitido', fechavel:false,
+      corpoHTML:this.cartaoDecisao({
+        topo:t?{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome), sub:`Série ${this.divisao||'D'} · Temporada ${this.temporada}`}:null,
+        fala:'🤵 “Agradecemos o trabalho, professor, mas a diretoria decidiu encerrar o seu ciclo no clube.”',
+        destaque:{rotulo:'Livre no mercado', titulo:'Recomece por baixo', desc:'Um bom treinador sempre recebe novas propostas. Assuma outro clube e prove seu valor de novo.', tom:'alerta'},
+        kpis:[{rotulo:'Confiança final', valor:`${Math.round(this.confianca)}/100`, cor:'var(--loss)'},
+              {rotulo:'Corte do clube', valor:String(this.corteDemissao())}],
+      }),
+      botoes:[
+        {txt:'Voltar ao menu', tipo:'sm', onClick:()=>{ Menu.iniciar(); }},
+        {txt:'Procurar novo clube ▸', tipo:'primary', onClick:()=>{ this.procurarNovoClube(); }},
+      ]});
   },
   // treinador livre assume um novo clube fraco (mesmo arco de carreira do início)
   procurarNovoClube(){
@@ -6067,13 +6203,18 @@ const App={
   // JSON canônico: chaves ordenadas, ignorando o checksum interno, pra a assinatura
   // ser estável independentemente da ordem de serialização.
   _canonical(obj){
-    const seen=new WeakSet();
+    // só CICLO vira null (objeto que já está no caminho da recursão). Referência
+    // repetida (ex.: fixtures/stats/grupos no topo E dentro de ligas) é serializada
+    // por inteiro — senão a assinatura não sobrevive ao JSON (que duplica as cópias).
+    const caminho=new WeakSet();
     const ord=(v)=>{
       if(v && typeof v==='object'){
-        if(seen.has(v)) return null; seen.add(v);
-        if(Array.isArray(v)) return v.map(ord);
-        return Object.keys(v).filter(k=>k!=='checksum').sort()
-          .reduce((o,k)=>{ o[k]=ord(v[k]); return o; },{});
+        if(caminho.has(v)) return null;
+        caminho.add(v);
+        const r = Array.isArray(v) ? v.map(ord)
+          : Object.keys(v).filter(k=>k!=='checksum').sort().reduce((o,k)=>{ o[k]=ord(v[k]); return o; },{});
+        caminho.delete(v);
+        return r;
       }
       return v;
     };
@@ -6281,6 +6422,19 @@ const App={
   },
 
   // salva no Supabase (auto após rodada + botão manual)
+  // gzip nativo do navegador (CompressionStream) + base64 — sem biblioteca externa
+  podeComprimir(){ return typeof CompressionStream==='function' && typeof DecompressionStream==='function'; },
+  async comprimir(txt){
+    const buf=await new Response(new Blob([txt]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+    const b=new Uint8Array(buf); let bin=''; const C=0x8000;
+    for(let i=0;i<b.length;i+=C) bin+=String.fromCharCode.apply(null,b.subarray(i,i+C));
+    return btoa(bin);
+  },
+  async descomprimir(b64){
+    const bin=atob(b64), b=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i);
+    return await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  },
   async salvarSupabase(silencioso){
     const meta={temporada:this.temporada||1, rodada:this.rodada, dia:this.dia, myTeam:this.myTeam};
     const okHud=()=>{ const hud=document.getElementById('saveHint');
@@ -6290,13 +6444,21 @@ const App={
       try{
         const estado=this.snapshot();
         const sig=await this.assinarSnapshot(estado);   // C1: assina o corpo do save
-        localStorage.setItem('flk_save_'+(this.slotAtual||1), JSON.stringify({
-          clube:this.teams[this.myTeam]?.nome||'Carreira', ...meta,
-          estado, sig, updated_at:new Date().toISOString()
-        }));
+        // o snapshot tem ~8 MB (atributos de ~3 mil jogadores) e a cota do
+        // localStorage é ~5 M caracteres → grava COMPRIMIDO (gzip nativo + base64)
+        const env={clube:this.teams[this.myTeam]?.nome||'Carreira', ...meta, sig, updated_at:new Date().toISOString()};
+        if(this.podeComprimir()) env.estadoZ=await this.comprimir(JSON.stringify(estado));
+        else env.estado=estado;
+        localStorage.setItem('flk_save_'+(this.slotAtual||1), JSON.stringify(env));
+        this._falhaSaveAvisada=false;
         if(!silencioso) this.setStatus('saveStatus','ok','Salvo neste dispositivo.');
         okHud();
-      }catch(e){ if(!silencioso) this.setStatus('saveStatus','err','Falha ao salvar: '+e.message); }
+      }catch(e){
+        if(!silencioso) this.setStatus('saveStatus','err','Falha ao salvar: '+e.message);
+        // nunca falhar calado: avisa uma vez por sessão, mesmo no auto-save
+        if(!this._falhaSaveAvisada){ this._falhaSaveAvisada=true;
+          this.avisoFLK('Não deu pra salvar', 'O jogo não conseguiu salvar neste aparelho ('+this.esc(e.message)+'). Crie uma conta para salvar na nuvem, ou libere espaço do navegador.', 'var(--loss)', {fila:true}); }
+      }
       return;
     }
     if(!this.sb || !this.userId){ if(!silencioso) this.setStatus('saveStatus','err','Você não está logado.'); return; }
