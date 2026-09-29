@@ -1341,6 +1341,34 @@ const Objetivos={
 };
 
 /* ====================================================================
+   FORMA RECENTE (§6.1 item 5) — janelas deslizantes de 5 (FIFO), no save v9.
+   - jogador: p._notas5  = 5 últimas notas (Match Rating) de partidas em que atuou
+   - time:    t._notas5  = 5 últimas notas do time; nota do time na partida =
+                           média das notas dos jogadores que atuaram (banco não conta)
+              t._forma5  = 5 últimos resultados ('v'|'e'|'d'), mais antigo primeiro
+   ==================================================================== */
+const Forma={
+  N:5,
+  empurrar(obj,campo,val){
+    const arr=Array.isArray(obj[campo])?obj[campo]:[];
+    arr.push(val); while(arr.length>this.N) arr.shift();
+    obj[campo]=arr; return arr;
+  },
+  registrarTime(t,notas,res){
+    if(!t) return;
+    if(notas&&notas.length){
+      const m=notas.reduce((a,b)=>a+b,0)/notas.length;
+      this.empurrar(t,'_notas5',Math.round(m*10)/10);
+    }
+    if(res) this.empurrar(t,'_forma5',res);
+  },
+  media(arr){ return (Array.isArray(arr)&&arr.length) ? arr.reduce((a,b)=>a+b,0)/arr.length : null; },
+  // dados vindos do save são NÃO confiáveis: filtra, faz clamp e corta em 5
+  sanearNotas(v){ return Array.isArray(v) ? v.map(Number).filter(n=>isFinite(n)).map(n=>Math.max(0,Math.min(10,n))).slice(-this.N) : []; },
+  sanearResultados(v){ return Array.isArray(v) ? v.filter(r=>r==='v'||r==='e'||r==='d').slice(-this.N) : []; },
+};
+
+/* ====================================================================
    TUTORIAL / PRIMEIRA SESSÃO (D1)
    Boas-vindas do presidente → tour guiado na Escalação → primeira partida →
    dica na Competições. Estado por APARELHO (localStorage), não por save: é
@@ -1365,7 +1393,7 @@ const Tutorial={
     if(this.estado()!=='jogo1') return;
     this.marcar('feito');
     this.tour([
-      {alvo:'nav.tabs [data-tab="competicoes"]', titulo:'Primeira rodada no bolso',
+      {alvo:'#tabs [data-tab="competicoes"], #bottomBar [data-tab="competicoes"]', titulo:'Primeira rodada no bolso',
        txt:'Em <b>Competições</b> ficam a tabela e, na aba <b>📊 Estatísticas</b>, a artilharia e os <b>objetivos da temporada</b>. Cada objetivo cumprido paga prêmio em dinheiro.',
        botao:'Ver objetivos', antes:null},
       {alvo:'[data-tut="objetivos"]', titulo:'Seus objetivos',
@@ -1409,16 +1437,16 @@ const Tutorial={
   tourEscalacao(){
     App.showTab('escala');
     this.tour([
-      {alvo:'.pitch-h', titulo:'Seu time titular',
-       txt:'Já escalei os 11 melhores pra você. O número na bolinha é a força do jogador naquela posição — quanto maior, melhor.'},
-      {alvo:'.mk-left', titulo:'Elenco',
-       txt:'Aqui está todo o plantel. Na coluna <b>Posição</b> você coloca alguém no time ou manda pro <b>Banco</b>. Clique no nome para ver a ficha.'},
-      {alvo:'.esc-forminfo', titulo:'Formação',
-       txt:'Troque o esquema tático aqui. Depois de mudar, <b>⚡ Escalar</b> monta sozinho o melhor time para a formação escolhida.'},
-      {alvo:'.pres-wrap', titulo:'A diretoria está de olho',
+      {alvo:'.fm-campo', titulo:'Seu time titular',
+       txt:'Já escalei os 11 melhores pra você. Toque num jogador e depois em outro para trocar (no computador também dá pra arrastar). A borda do número mostra se ele joga na posição <b>natural</b>, <b>treinada</b> ou <b>improvisada</b>.'},
+      {alvo:'.fm-elenco', titulo:'Elenco',
+       txt:'Todo o plantel: <b>T</b> é titular, <b>R</b> é reserva, e a <b>nota</b> é a média das 5 últimas partidas. De olho na energia! Clique no nome para ver a ficha.'},
+      {alvo:'.fm-form-card', titulo:'Formação',
+       txt:'Escolha o esquema tático. <b>⚡ Auto</b> monta o melhor time na formação, <b>★ 11 melhores</b> testa todas e <b>🔋 Descansados</b> prioriza quem está inteiro.'},
+      {alvo:'.fm-cargo', titulo:'A diretoria está de olho',
        txt:'Vitórias aumentam a confiança; derrotas derrubam. Se ela cair até a linha vermelha, você é demitido.'},
-      {alvo:'#btnJogarEsc', titulo:'Hora do jogo',
-       txt:'Tudo pronto? Clique em <b>Jogar</b> para disputar a primeira rodada.', botao:'Entendi'},
+      {alvo:'.fm-adv', titulo:'Hora do jogo',
+       txt:'Aqui está o próximo adversário. Tudo pronto? Clique em <b>Jogar</b> para disputar a primeira rodada.', botao:'Entendi'},
     ], ()=>this.marcar('jogo1'));
   },
 
@@ -1428,8 +1456,8 @@ const Tutorial={
     const p=this._passos&&this._passos[this._i];
     if(!p){ this.fechar(); const f=this._onFim; this._onFim=null; if(f) f(); return; }
     if(p.antes) p.antes();
-    const alvo=document.querySelector(p.alvo);
-    if(!alvo || !alvo.offsetParent){ this._i++; return this.mostrarPasso(); }   // alvo sumiu: pula o passo
+    const alvo=[...document.querySelectorAll(p.alvo)].find(e=>e.offsetParent);
+    if(!alvo){ this._i++; return this.mostrarPasso(); }   // alvo sumiu: pula o passo
     this._alvo=alvo;
     alvo.scrollIntoView({block:'center', behavior:'instant'});
     let ov=document.getElementById('tutOverlay');
@@ -1493,7 +1521,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:8,
+  SCHEMA_VERSION:9,   // v9: forma recente (5 últimas notas de jogador/time + V/E/D)
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -2149,6 +2177,7 @@ const App={
       // Calculado ANTES de limpar _golsRodada, pois a nota lê os gols da partida.
       const resH = gc>gf?'v':(gc<gf?'d':'e');
       const resA = gf>gc?'v':(gf<gc?'d':'e');
+      let notasLado=[];
       const notaLado=(campo, gsofTime, res)=>campo.forEach(c=>{ if(!c.ref) return;
         const nota=Rating.matchRating(c.ref, {
           slot:c.posicao, role:c.role,
@@ -2165,10 +2194,14 @@ const App={
           c.ref._somaNotas=(c.ref._somaNotas||0)+nota;               // acumulador temporada
           c.ref._qtdNotas=(c.ref._qtdNotas||0)+1;                    // nº de notas na temporada
           if(nota>(c.ref._melhorNota||0)) c.ref._melhorNota=nota;    // recorde da temporada
+          Forma.empurrar(c.ref,'_notas5',nota);                      // forma recente: 5 últimas notas
+          notasLado.push(nota);
         }
       });
-      notaLado(campoH, gf, resH);   // a defesa da casa sofreu 'gf' gols
-      notaLado(campoA, gc, resA);   // a defesa de fora sofreu 'gc' gols
+      notasLado=[]; notaLado(campoH, gf, resH);   // a defesa da casa sofreu 'gf' gols
+      Forma.registrarTime(this.teams[h], notasLado, resH);
+      notasLado=[]; notaLado(campoA, gc, resA);   // a defesa de fora sofreu 'gc' gols
+      Forma.registrarTime(this.teams[a], notasLado, resA);
       // A1: craque do jogo do MEU time (maior nota) — pro feedback pós-rodada
       let craqueRef=null;
       if(h===this.myTeam || a===this.myTeam){
@@ -2996,13 +3029,14 @@ const App={
 
   /* ============ RENDER ============ */
   renderShell(){
-    document.getElementById('hudRound').textContent=this.rodada;
-    document.getElementById('hudDia').textContent=this.dia;
-    const mt=this.teams[this.myTeam];
-    const hudEl=document.getElementById('hudTeam');
-    if(mt){ hudEl.innerHTML=this.escudoHTML(mt,18)+' '+mt.nome; }
-    else hudEl.textContent='— —';
+    this.renderCabecalho();
     this.renderArena(); this.renderEscala(); this.renderElenco(); this.renderCompeticoes(); this.renderMercado(); this.renderFinancas(); this.renderDados();
+  },
+
+  async irMenuPrincipal(){
+    if(this.liveState && this.liveState.playing){ this.avisoFLK('Partida em andamento','Termine a rodada antes de sair.'); return; }
+    try{ await this.salvarSupabase(true); }catch(e){}
+    Menu.mostrar(); Menu.telaMenu();
   },
 
   // D1: estado vazio de jogador (nunca "Conecte o Supabase"): leva de volta ao menu
@@ -3011,9 +3045,57 @@ const App={
       <div style="margin-top:12px"><button class="btn primary sm" onclick="Menu.iniciar()">Ir para o menu</button></div></div>`;
   },
 
+  /* ---------- §6.2: cabeçalho do clube + menu lateral + ação principal ---------- */
+  DIAS_SEMANA:['DOM','SEG','TER','QUA','QUI','SEX','SAB'],
+  diaSemana(dia){ return this.DIAS_SEMANA[((dia||1)-1)%7]; },
+  formaHTML(res){
+    const r=Array.isArray(res)?res:[];
+    if(!r.length) return `<span class="forma-vde"><span class="vazio">sem jogos</span></span>`;
+    return `<span class="forma-vde" title="Últimos ${r.length} jogos (mais antigo → mais recente)">${
+      r.map(x=>`<span class="${x}">${({v:'V',e:'E',d:'D'})[x]}</span>`).join('')}</span>`;
+  },
+  renderCabecalho(){
+    const head=document.getElementById('clubeHead'), side=document.getElementById('sideClube');
+    const t=this.teams[this.myTeam];
+    if(!t){ if(head) head.innerHTML=''; if(side) side.innerHTML=''; this.atualizarAcao(); return; }
+    const total=(this.fixtures||[]).length;
+    if(side) side.innerHTML=`${this.escudoHTML(t,36)}<div class="side-clube-txt">
+        <div class="side-clube-nm">${this.esc(t.nome)}</div>
+        <div class="side-clube-sub">Série ${this.divisao} · Temporada ${this.temporada}</div></div>`;
+    if(head) head.innerHTML=`
+      <span class="ch-esc">${this.escudoHTML(t,56)}</span>
+      <div class="ch-id">
+        <div class="ch-nome">${this.esc(t.nome)}</div>
+        <div class="ch-meta"><span>Treinador <b>${this.esc(this.nomeTreinador())}</b></span><span>·</span><span>🇧🇷 Brasil</span><span>·</span>
+          <span>Série ${this.divisao}</span>
+          <span class="ch-pill">${this.diaSemana(this.dia)} · dia ${this.dia}</span>
+          <span class="ch-pill">Rodada ${Math.min(this.rodada+1,total||1)}/${total||'–'}</span>
+          <span class="ch-pill">Temp. ${this.temporada}</span></div>
+      </div>
+      <div class="ch-right">
+        <div class="ch-kpi"><small>Em caixa</small><b>${this.fmtReais(t.saldo||0)}</b></div>
+        <div class="ch-kpi"><small>Forma</small>${this.formaHTML(t._forma5)}</div>
+        <button class="btn sm primary" id="btnSalvarHead">💾 Salvar</button>
+      </div>`;
+    const bs=document.getElementById('btnSalvarHead'); if(bs) bs.onclick=()=>this.salvarSupabase(false);
+    this.atualizarAcao();
+  },
+  // botão flutuante de ação principal (celular): Jogar / Ver resultado / Pódio
+  atualizarAcao(){
+    const f=document.getElementById('fabAcao'); if(!f) return;
+    if(!this.teams.length){ f.hidden=true; return; }
+    const L=this.liveState, acabou=this.rodada>=(this.fixtures||[]).length;
+    if(L && L.playing){ f.hidden=false; f.textContent='⏱ Ao vivo'; f.onclick=()=>this.showTab('arena'); }
+    else if(L && L.done){ f.hidden=false; f.textContent='✓ Resultado'; f.onclick=()=>this.showTab('arena'); }
+    else if(acabou){ f.hidden=false; f.textContent='🏆 Temporada'; f.onclick=()=>this.showTab('arena'); }
+    else { f.hidden=false; f.textContent=`▶ Jogar R${this.rodada+1}`; f.onclick=()=>this.jogarRodada(); }
+  },
+
   showTab(name){
-    document.querySelectorAll('nav.tabs button').forEach(b=>
+    document.querySelectorAll('#tabs [data-tab], #bottomBar [data-tab]').forEach(b=>
       b.classList.toggle('active', b.dataset.tab===name));
+    const ms=document.getElementById('maisSheet'); if(ms) ms.classList.add('hidden');
+    this.atualizarAcao();
     ['arena','escala','elenco','competicoes','mercado','financas','ranking','dados'].forEach(t=>
       document.getElementById('tab-'+t).classList.toggle('hidden', t!==name));
     if(name==='ranking') this.renderRanking();   // C3: carrega a tabela pública sob demanda
@@ -3048,7 +3130,7 @@ const App={
     // ---- TOPO: botões (ou controles da rodada ao vivo) ----
     const topo = live ? `
       <div class="live-head" style="margin-bottom:18px">
-        <div class="live-title">Round ${L.done?this.rodada:this.rodada+1} <span class="lbl">${L.done?'encerrado':'ao vivo'}</span></div>
+        <div class="live-title">Rodada ${L.done?this.rodada:this.rodada+1} <span class="lbl">${L.done?'encerrada':'ao vivo'}</span></div>
         <div class="live-clockbox">
           <div class="live-progwrap"><div class="live-prog" id="liveProg"></div></div>
           <div class="live-clock" id="liveClock">0'</div>
@@ -3062,7 +3144,7 @@ const App={
         ${acabou
           ? `<button class="btn primary" id="btnPodio">🏆 Ver pódio da temporada</button>
              <button class="btn sm" id="btnNovaTemp">Nova temporada</button>`
-          : `<button class="btn primary" id="btnRodada">▶ Jogar round ${this.rodada+1}</button>
+          : `<button class="btn primary" id="btnRodada">▶ Jogar rodada ${this.rodada+1}</button>
              <button class="btn sm" id="btnDescansar">＋1 dia</button>`}
         <button class="btn sm" id="btnSalvarArena">💾 Salvar</button>
         <span id="saveHint" style="font-family:'Space Mono';font-size:11px;color:var(--lemon)"></span>
@@ -3073,7 +3155,7 @@ const App={
     // ---- DIREITA: última rodada (normal) OU partidas ao vivo ----
     const direita = live ? `
       <div class="panel">
-        <div class="ptitle">Rodada ao vivo <span class="lbl" id="liveLbl">round ${L.done?this.rodada:this.rodada+1}</span></div>
+        <div class="ptitle">Rodada ao vivo <span class="lbl" id="liveLbl">rodada ${L.done?this.rodada:this.rodada+1}</span></div>
         <div class="live-list">${L.jogos.map(([h,a],i)=>({h,a,i}))
           .sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; })
           .map(({h,a,i})=>{
@@ -3089,7 +3171,7 @@ const App={
       </div>`
     : `
       <div class="panel">
-        <div class="ptitle">Última rodada <span class="lbl">${this.rodada?'round '+this.rodada:'—'}</span></div>
+        <div class="ptitle">Última rodada <span class="lbl">${this.rodada?'rodada '+this.rodada:'—'}</span></div>
         <div id="resultados">${this.resultados.length? [...this.resultados].sort((x,y)=>{ const mx=(x.h===this.myTeam||x.a===this.myTeam)?0:1, my=(y.h===this.myTeam||y.a===this.myTeam)?0:1; return mx-my; }).map(r=>{
           const th=this.teams[r.h],ta=this.teams[r.a],me=r.h===this.myTeam||r.a===this.myTeam;
           const hc=r.gc>r.gf?'w':r.gc<r.gf?'l':'',ac=r.gf>r.gc?'w':r.gf<r.gc?'l':'';
@@ -3097,7 +3179,7 @@ const App={
             <span class="home ${hc}">${th.nome} <span class="abrev">${th.abrev}</span></span>
             <span class="score">${r.gc}-${r.gf}</span>
             <span class="away ${ac}"><span class="abrev">${ta.abrev}</span> ${ta.nome}</span>
-          </div>`;}).join('') : '<div class="empty">Bora! Clique em JOGAR ROUND.</div>'}</div>
+          </div>`;}).join('') : '<div class="empty">Bora! Clique em JOGAR RODADA.</div>'}</div>
       </div>`;
 
     // ---- seletor de série/grupo do PLACAR GERAL (visualização; não muda o que é jogado) ----
@@ -3231,227 +3313,399 @@ const App={
   },
   escudoFallbackEl(t, s){ const d=document.createElement('span'); d.innerHTML=this.escudoFallback(t,s); return d.firstChild; },
 
+  /* ====================================================================
+     §6.2 PÁGINA DO CLUBE — FORMAÇÃO (desktop 2 colunas / celular empilhado)
+     Esquerda: elenco (T/R, força, nota das 5 últimas, energia) + moral e cargo.
+     Direita: formações + adversário/ação + semana + campo vertical de camisas.
+     Troca: toque num jogador e depois em outro (celular) ou arrastar (desktop).
+     ==================================================================== */
+  PLACAS:['FLK! STUDIOS','PRANCHETA.FC!','CAFÉ DA VÁRZEA','CHUTEIRA TORTA','RÁDIO ARQUIBANCADA','PASTEL DO ESTÁDIO'],
+
+  // fala do presidente estável durante a rodada (memoizada por temporada/rodada/adversário)
+  falaPresidenteAtual(){
+    const adv=this.proximoAdversario();
+    if(!adv) return 'Sem jogo para você nesta rodada. Aproveite para ajustar o elenco.';
+    const exp=this.expectativaJogo(this.myTeam, adv.ti, adv.casa);
+    const chave=`${this.temporada}|${this.rodada}|${adv.ti}`;
+    if(this._falaChave!==chave){ this._falaChave=chave; this._falaCache=this.falaPresidente(exp); }
+    return this._falaCache;
+  },
+
+  // escala com critério alternativo: {descansados:true} pesa a energia
+  escalarCom(ti, opts){
+    const i=(ti==null)?this.myTeam:ti, t=this.teams[i];
+    if(!opts||!opts.descansados) return this.escalarMelhor(i);
+    // truque barato: escala com a força "efetiva" (overall × energia) e restaura
+    const orig=Motor.overallEm;
+    try{
+      Motor.overallEm=function(p,pos,role){ return orig.call(Motor,p,pos,role)*(0.35+0.65*Math.max(0,Math.min(100,p.energia))/100); };
+      this.escalarMelhor(i);
+    } finally { Motor.overallEm=orig; }
+    // role volta a ser escolhida pela força real
+    const c=this.cfg[i];
+    this.onzeDe(i).forEach(p=>{ const pos=c.posEscala[p.numero], roles=ROLES_POS[pos]||[];
+      let bR=roles[0], bOv=-1; roles.forEach(r=>{ const ov=Motor.overallEm(p,pos,r); if(ov>bOv){bOv=ov;bR=r;} });
+      if(bR) c.roleEscala[p.numero]=bR; });
+  },
+  // testa todas as formações e fica com a de maior força em campo
+  escalar11Melhores(ti){
+    const i=(ti==null)?this.myTeam:ti, c=this.cfg[i];
+    const salvo={f:c.formacao, pos:{...c.posEscala}, role:{...c.roleEscala}};
+    let melhor=null;
+    Object.keys(LINHAS_FM).forEach(f=>{
+      c.formacao=f; this.escalarMelhor(i);
+      const onze=this.onzeDe(i); if(onze.length<11) return;
+      const forca=Motor.forcaEmCampo(onze,this.slotsDe(i),this.rolesDe(i));
+      if(!melhor||forca>melhor.forca) melhor={f,forca};
+    });
+    if(!melhor){ c.formacao=salvo.f; c.posEscala=salvo.pos; c.roleEscala=salvo.role; return null; }
+    c.formacao=melhor.f; this.escalarMelhor(i);
+    return melhor.f;
+  },
+
+  // move um jogador para uma posição/BANCO/FORA respeitando as vagas. Retorna erro ou null.
+  moverJogador(i, num, novaPos){
+    const c=this.cfg[i], posAtual=this.posDe(i,num);
+    if(novaPos!=='BANCO' && novaPos!=='FORA'){
+      const vagas=LINHAS_FM[c.formacao].flat().filter(s=>s===novaPos).length;
+      const ocupados=this.onzeDe(i).filter(p=>p.numero!==num && this.posDe(i,p.numero)===novaPos).length;
+      if(ocupados>=vagas) return `A formação ${c.formacao} só tem ${vagas} vaga(s) de ${novaPos}. Já está preenchida.`;
+      if((posAtual==='BANCO'||posAtual==='FORA') && this.onzeDe(i).length>=11) return 'Já há 11 titulares. Mande um titular pro banco antes.';
+    }
+    if(novaPos==='BANCO' && posAtual!=='BANCO' && this.bancoDe(i).length>=12) return 'Banco cheio (12). Mande alguém pra Fora antes.';
+    c.posEscala[num]=novaPos;
+    if(novaPos!=='BANCO' && novaPos!=='FORA' && !ROLES_POS[novaPos].includes(c.roleEscala[num]))
+      c.roleEscala[num]=ROLES_POS[novaPos][0];
+    return null;
+  },
+  // troca dois jogadores de lugar (titular↔reserva, titular↔titular, titular↔fora)
+  trocarJogadores(i, numA, numB){
+    const t=this.teams[i], c=this.cfg[i];
+    const A=t.players.find(p=>p.numero===numA), B=t.players.find(p=>p.numero===numB);
+    if(!A||!B||numA===numB) return 'Jogador inválido.';
+    const pA=this.posDe(i,numA), pB=this.posDe(i,numB);
+    const titA=pA!=='BANCO'&&pA!=='FORA', titB=pB!=='BANCO'&&pB!=='FORA';
+    if(!titA && !titB) return 'Escolha pelo menos um titular para trocar.';
+    if((titB && this.indisponivel(A)) || (titA && this.indisponivel(B)))
+      return `${(titB?A:B).nome} está lesionado ou suspenso e não pode entrar.`;
+    const rA=c.roleEscala[numA], rB=c.roleEscala[numB];
+    c.posEscala[numA]=pB; c.posEscala[numB]=pA;
+    const ajustaRole=(num,pos,rOutro)=>{
+      if(pos==='BANCO'||pos==='FORA'){ delete c.roleEscala[num]; return; }
+      const roles=ROLES_POS[pos]||[];
+      c.roleEscala[num]= roles.includes(rOutro) ? rOutro : roles[0];
+    };
+    ajustaRole(numA,pB,rB); ajustaRole(numB,pA,rA);
+    return null;
+  },
+  // toque/clique num jogador: seleciona; com outro já selecionado, troca
+  tocarJogador(num){
+    const i=this.myTeam;
+    if(this._trocaSel==null){ this._trocaSel=num; this.selPlayer=num; return this.renderEscala(); }
+    if(this._trocaSel===num){ this._trocaSel=null; return this.renderEscala(); }
+    const err=this.trocarJogadores(i,this._trocaSel,num);
+    if(err){ this._trocaSel=num; this.selPlayer=num; this.renderEscala(); return this.avisoFLK('Troca não feita', err); }
+    this._trocaSel=null; this.selPlayer=num;
+    this.renderEscala();
+  },
+
+  // camisa SVG nas cores do clube, com o número
+  camisaSVG(cor1, cor2, numero){
+    const lum=(hex)=>{ const h=(hex||'#333').replace('#',''); const n=parseInt(h.length===3?h.split('').map(x=>x+x).join(''):h,16);
+      const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return (0.299*r+0.587*g+0.114*b); };
+    const txt = lum(cor1)>150 ? '#111112' : '#ffffff';
+    return `<svg class="fm-shirt" viewBox="0 0 64 60" aria-hidden="true">
+      <path d="M20 4 L8 10 L2 24 L12 28 L14 22 L14 56 L50 56 L50 22 L52 28 L62 24 L56 10 L44 4 Q32 12 20 4 Z"
+        fill="${cor1}" stroke="#000" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M2 24 L12 28 L14 22 L10 12 Z M62 24 L52 28 L50 22 L54 12 Z" fill="${cor2}" opacity=".9"/>
+      <path d="M20 4 Q32 12 44 4" fill="none" stroke="${cor2}" stroke-width="3"/>
+      <text x="32" y="44" text-anchor="middle" font-family="Bungee, sans-serif" font-size="20" fill="${txt}" stroke="${txt==='#ffffff'?'#000':'none'}" stroke-width=".6">${numero}</text>
+    </svg>`;
+  },
+
   renderEscala(){
     const i=this.myTeam, t=this.teams[i], c=this.cfg[i];
-    if(!t){ document.getElementById('tab-escala').innerHTML=this.vazioHTML(); return; }
+    const el=document.getElementById('tab-escala');
+    if(!t){ el.innerHTML=this.vazioHTML(); return; }
     if(!c.formacao) c.formacao='4-3-3';
-    const onze=this.onzeDe(i);
-    const banco=this.bancoDe(i);
-    const slots=this.slotsDe(i);
-    const forcaMedia=Motor.forcaEmCampo(onze,slots,this.rolesDe(i))/11;
+    const onze=this.onzeDe(i), banco=this.bancoDe(i);
+    const forcaMedia=onze.length?Motor.forcaEmCampo(onze,this.slotsDe(i),this.rolesDe(i))/11:0;
+    if(this._trocaSel!=null && !t.players.find(p=>p.numero===this._trocaSel)) this._trocaSel=null;
+    const sel=this._trocaSel;
+    const onzeSet=new Set(onze.map(p=>p.numero));
+    const esc=s=>this.esc(s);
+    const notaForma=p=>Forma.media(p._notas5);
+    const corEnergia=e=>e>=70?'var(--lemon)':e>=40?'#e8c547':'var(--loss)';
+    const ovAtual=(p)=>{ const pos=this.posDe(i,p.numero); return (pos==='BANCO'||pos==='FORA')? p.forca : Motor.overallEm(p,pos,this.roleDe(i,p.numero)); };
 
-    if(this.selPlayer==null || !t.players.find(p=>p.numero===this.selPlayer)) this.selPlayer=t.players[0]?.numero;
-
-    // ---- filtros + ordenação ----
+    // ---------- ELENCO (tabela) ----------
     const fil=this.elencoFiltro, srt=this.elencoSort;
     let lista=[...t.players];
     if(fil.setor) lista=lista.filter(p=>p.setorNat===fil.setor);
-    const ovAtual=(p)=>{ const pos=this.posDe(i,p.numero); return (pos==='BANCO'||pos==='FORA')? p.forca : Motor.overallEm(p,pos,this.roleDe(i,p.numero)); };
     const valOrd=(p)=>{ switch(srt.col){
-      case 'nome': return p.nome.toLowerCase();
-      case 'ov': return ovAtual(p);
-      case 'setor': return p.setorNat||'zzz';
-      case 'idade': return p.idade||0;
-      case 'jogos': return p.jogos||0;
-      case 'gols': return p.gols||0;
-      case 'salario': return p.salario||0;
-      case 'valor': return p.valor||0;
-      default: return ovAtual(p);
-    }};
-    lista.sort((a,b)=>{ const va=valOrd(a),vb=valOrd(b); if(va<vb)return -srt.dir; if(va>vb)return srt.dir; return 0; });
-    // padrão: titulares > banco > fora
-    if(srt.col==='ov' && srt.dir===-1 && !fil.setor){
+      case 'nome': return p.nome.toLowerCase(); case 'setor': return p.setorNat||'zzz';
+      case 'idade': return p.idade||0; case 'valor': return p.valor||0;
+      case 'nota': return notaForma(p)??-1; case 'energia': return p.energia||0;
+      default: return ovAtual(p); } };
+    lista.sort((a,b)=>{ const va=valOrd(a),vb=valOrd(b); return va<vb?-srt.dir:va>vb?srt.dir:0; });
+    if((srt.col==='ov'||srt.col==='forca'||!srt.col) && srt.dir===-1 && !fil.setor){
       const rank=(p)=>{ const ps=this.posDe(i,p.numero); return ps==='FORA'?2:ps==='BANCO'?1:0; };
-      lista.sort((a,b)=>{ const ra=rank(a),rb=rank(b); if(ra!==rb)return ra-rb; return ovAtual(b)-ovAtual(a); });
+      const ordemSlot=LINHAS_FM[c.formacao].flat();
+      lista.sort((a,b)=>{ const ra=rank(a),rb=rank(b); if(ra!==rb) return ra-rb;
+        if(ra===0) return ordemSlot.indexOf(this.posDe(i,a.numero))-ordemSlot.indexOf(this.posDe(i,b.numero));
+        return ovAtual(b)-ovAtual(a); });
     }
     const seta=(col)=> srt.col===col?(srt.dir===-1?' ▼':' ▲'):'';
     const POSICOES=Object.keys(PESOS_POS);
+    const linhasElenco=lista.map(p=>{
+      const pos=this.posDe(i,p.numero), tit=onzeSet.has(p.numero), res=pos==='BANCO';
+      const indisp=this.indisponivel(p), nf=notaForma(p), e=Math.round(p.energia);
+      const ov=ovAtual(p);
+      return `<tr class="fm-row ${sel===p.numero?'sel':''} ${indisp?'indisp':''} ${pos==='FORA'?'fora':''}" data-pnum="${p.numero}" draggable="true">
+        <td><span class="tr-badge ${tit?'t':res?'r':'f'}" title="${tit?'Titular':res?'Reserva':'Fora da lista'}">${tit?'T':res?'R':'–'}</span></td>
+        <td class="fm-pos">${tit?pos:(p.setorNat||'–')}</td>
+        <td class="l"><a class="mk-nome-link" data-modal="${p.numero}">${esc(p.nome)}</a>${p.lesionado?` <span class="mk-les" title="Lesionado">🩹${p.lesionado}</span>`:''}${p.suspenso>0?` <span class="mk-susp" title="${esc(p._motivoSusp||'Suspenso')}">🟥${p.suspenso}</span>`:''}</td>
+        <td class="fm-col-id">${p.idade||'–'}</td>
+        <td><b style="color:${tit?Motor.corAdequacao(ov):'var(--white)'}">${ov}</b></td>
+        <td title="${(p._notas5||[]).length?'Últimas notas: '+p._notas5.map(n=>n.toFixed(1)).join(' · '):'Ainda sem notas'}">${this.notaChip(nf)}</td>
+        <td><span class="fm-ener"><span style="width:${Math.max(0,Math.min(100,e))}%;background:${corEnergia(e)}"></span></span><small>${e}%</small></td>
+        <td class="fm-col-valor">${this.fmtM(p.valor)}</td>
+        <td class="fm-col-posdd">${indisp?`<span class="mk-indisp">${p.lesionado?'Lesionado':'Suspenso'}</span>`
+          : `<select class="mk-posdd" data-pnum="${p.numero}" aria-label="Posição de ${esc(p.nome)}">
+              <option value="FORA" ${pos==='FORA'?'selected':''}>Fora</option>
+              <option value="BANCO" ${res?'selected':''}>Banco</option>
+              ${POSICOES.map(ps=>`<option value="${ps}" ${pos===ps?'selected':''}>${ps}</option>`).join('')}
+            </select>`}</td>
+      </tr>`;
+    }).join('');
 
-    // ---- campo HORIZONTAL: colunas = linhas táticas (GK à esquerda, ATA à direita) ----
-    const linhasCampo=LINHAS_FM[c.formacao];
-    const porPos={}; const usadosCampo=new Set();
-    onze.forEach(p=>{ const pos=this.posDe(i,p.numero); (porPos[pos]||=[]).push(p); });
-    // monta as colunas do campo na ordem da formação
-    const colunas=linhasCampo.map(linha=>{
-      return linha.map(pos=>{
-        const arr=porPos[pos]||[];
-        const p=arr.find(x=>!usadosCampo.has(x.numero));
-        if(p) usadosCampo.add(p.numero);
-        return {pos, p};
-      });
-    });
+    // ---------- MORAL + CARGO ----------
+    const morais=t.players.map(p=>Rating.moralDe(p));
+    const moralMed=Math.round(morais.reduce((a,b)=>a+b,0)/Math.max(1,morais.length));
+    const insat=t.players.filter(p=>Rating.moralDe(p)<40).length;
+    const moralTxt=moralMed>=75?'Vestiário em festa':moralMed>=60?'Clima bom':moralMed>=45?'Clima neutro':'Vestiário tenso';
+    if(this.confianca==null) this.confianca=this.CONF_INICIAL;
+    const conf=Math.round(this.confianca), corte=this.corteDemissao(), humor=this.humorDiretoria();
 
-    const el=document.getElementById('tab-escala');
+    // ---------- ADVERSÁRIO + AÇÃO ----------
+    const adv=this.proximoAdversario();
+    const live=this.liveState&&this.liveState.playing, fimRod=this.liveState&&this.liveState.done;
+    const acabou=this.rodada>=this.fixtures.length;
+    const linhaStat=(ti)=>{ const s=this.stats[ti]||{j:0,v:0,d:0,gp:0,gc:0,pts:0};
+      return `<tr${ti===i?' class="me"':''}><td class="l">${esc(this.teams[ti].nome)}</td><td>${s.j}</td><td>${s.v}</td><td>${s.d}</td><td>${s.gp}:${s.gc}</td><td><b>${s.pts}</b></td></tr>`; };
+    const acao = live ? `<button class="btn primary fm-acao" data-ir-arena>⏱ Ver jogo ao vivo</button>`
+      : fimRod ? `<button class="btn primary fm-acao" data-ir-arena>✓ Ver resultado</button>`
+      : acabou ? `<button class="btn primary fm-acao" data-ir-arena>🏆 Ver pódio da temporada</button>`
+      : `<button class="btn primary fm-acao jogar" id="btnJogarEsc">▶ Jogar rodada ${this.rodada+1}</button>`;
+    const advHTML = adv ? `
+        <div class="fm-adv-top"><span>Adversário</span><span>Rodada ${this.rodada+1} · ${this.diaSemana(this.dia)}</span></div>
+        <div class="fm-adv-id">${this.escudoHTML(this.teams[adv.ti],40)}<div>
+          <div class="fm-adv-nome">${esc(this.teams[adv.ti].nome)}</div>
+          <div class="fm-adv-sub">${adv.casa?'🏠 Em casa':'✈️ Fora'} · Série ${this.teams[adv.ti].divisao}</div></div></div>
+        <table class="fm-adv-tab"><thead><tr><th class="l"></th><th>J</th><th>V</th><th>D</th><th>GM:GS</th><th>P</th></tr></thead>
+          <tbody>${linhaStat(i)}${linhaStat(adv.ti)}</tbody></table>`
+      : `<div class="fm-adv-top"><span>Próximo jogo</span></div>
+         <div class="fm-adv-vazio">${acabou?'Temporada encerrada.':'Seu time não joga nesta rodada.'}</div>`;
+
+    // ---------- FORMAÇÕES ----------
+    const barras=(f)=>{ const n={DEF:0,MEI:0,ATQ:0}; LINHAS_FM[f].flat().forEach(ps=>{ const s=POS_SETOR[ps]; if(n[s]!=null) n[s]++; });
+      return `<span class="fm-bars"><i style="width:${n.DEF*20}%"></i><i style="width:${n.MEI*20}%"></i><i style="width:${n.ATQ*20}%"></i></span>`; };
+    const formBtns=Object.keys(LINHAS_FM).map(f=>
+      `<button class="fm-fbtn ${c.formacao===f?'on':''}" data-form="${f}">${f}${barras(f)}</button>`).join('');
+
+    // ---------- SEMANA ----------
+    const ini=this.dia-((this.dia-1)%7);
+    const semana=[0,1,2,3,4,5,6].map(k=>{ const d=ini+k, hoje=d===this.dia;
+      return `<div class="fm-dia ${hoje?'hoje':''} ${d<this.dia?'passou':''}"><small>${this.DIAS_SEMANA[k]}</small><b>${d}</b>${hoje?`<em>${adv&&!acabou?'jogo':'hoje'}</em>`:''}</div>`; }).join('');
+
+    // ---------- CAMPO VERTICAL ----------
+    const linhas=LINHAS_FM[c.formacao];
+    const porPos={}; const usados=new Set();
+    onze.forEach(p=>{ (porPos[this.posDe(i,p.numero)]||=[]).push(p); });
+    const nL=linhas.length;
+    const yDe=(li)=> li===0 ? 90 : 73 - (li-1)*(57/Math.max(1,nL-2));
+    const camisas=linhas.map((linha,li)=>linha.map((pos,j)=>{
+      const x=10+80*(j+0.5)/linha.length, y=yDe(li);
+      const p=(porPos[pos]||[]).find(q=>!usados.has(q.numero));
+      if(!p) return `<div class="fm-slot vazio n${linha.length}" style="left:${x}%;top:${y}%"><div class="fm-vazio">+</div><div class="fm-nm">${pos}</div></div>`;
+      usados.add(p.numero);
+      const ov=Motor.overallEm(p,pos,this.roleDe(i,p.numero));
+      const fPos=Evolucao.fatorPosicaoTreino(p,pos);
+      const adq=fPos>=1?'nat':fPos>=0.7?'trein':'impro';
+      const nf=notaForma(p), e=Math.round(p.energia);
+      return `<div class="fm-slot n${linha.length} ${adq} ${sel===p.numero?'sel':''}" data-pnum="${p.numero}" draggable="true" style="left:${x}%;top:${y}%"
+          title="${esc(p.nome)} · ${pos} · força ${ov}${nf!=null?' · nota '+nf.toFixed(1):''} · energia ${e}%">
+        <div class="fm-shirt-wrap">${this.camisaSVG(t.cor1||'#333',t.cor2||'#fff',p.numero)}<span class="fm-ovr">${ov}</span></div>
+        <div class="fm-nm">${esc(p.nome.split(' ').slice(-1)[0])}</div>
+        <div class="fm-info"><span style="color:${this.corNota(nf)}">${nf!=null?nf.toFixed(1):'–'}</span><span class="fm-ener mini"><span style="width:${e}%;background:${corEnergia(e)}"></span></span></div>
+      </div>`;
+    }).join('')).join('');
+    const setorBanco=this.bancoSetor||'';
+    const bancoLista=[...banco].filter(p=>!setorBanco||p.setorNat===setorBanco)
+      .sort((a,b)=> this.bancoOrdem==='energia' ? b.energia-a.energia : b.forca-a.forca);
+    const placas=(k)=>[0,1,2].map(j=>`<span class="fm-placa p${(k+j)%3}">${this.PLACAS[(k+j)%this.PLACAS.length]}</span>`).join('');
+    const selP=sel!=null?t.players.find(p=>p.numero===sel):null;
+    const selPos=selP?this.posDe(i,selP.numero):null;
+    const selTit=selP && selPos!=='BANCO' && selPos!=='FORA';
+
     el.innerHTML=`
-      <div class="esc-topbar">
-        <div class="esc-teampick">
-          <span class="esc-escudo">${this.escudoHTML(t,30)}</span>
-          <span class="esc-teamnome">${t.nome}</span>
-          <span class="esc-badge">seu clube</span>
+    <div class="fm-grid">
+      <div class="fm-col fm-left">
+        <div class="fm-card fm-elenco">
+          <div class="fm-card-h"><span>Elenco</span>
+            <span class="fm-card-sub">${t.players.length} jogadores · ${onze.length} titulares · ${banco.length} reservas</span></div>
+          <div class="fm-filtros">
+            <select class="mk-sel" id="filSetor" aria-label="Filtrar setor">
+              <option value="">Todos setores</option>
+              ${[['GK','Goleiros'],['DEF','Defesa'],['MEI','Meio'],['ATQ','Ataque']].map(([v,l])=>`<option value="${v}" ${fil.setor===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+            <span class="fm-legenda">nota = média das 5 últimas</span>
+          </div>
+          <div class="fm-tablewrap"><table class="fm-table">
+            <thead><tr>
+              <th></th><th class="sortable" data-sort="setor">Pos${seta('setor')}</th>
+              <th class="l sortable" data-sort="nome">Nome${seta('nome')}</th>
+              <th class="sortable fm-col-id" data-sort="idade">Id${seta('idade')}</th>
+              <th class="sortable" data-sort="ov">Frç${seta('ov')}</th>
+              <th class="sortable" data-sort="nota">Nota${seta('nota')}</th>
+              <th class="sortable" data-sort="energia">Energia${seta('energia')}</th>
+              <th class="sortable fm-col-valor" data-sort="valor">Valor${seta('valor')}</th>
+              <th class="fm-col-posdd">Posição</th>
+            </tr></thead>
+            <tbody>${linhasElenco}</tbody></table></div>
         </div>
-        <div class="esc-forminfo">
-          <label>Formação</label>
-          <select class="esc-formsel" id="formSel">
-            ${Object.keys(LINHAS_FM).map(f=>`<option value="${f}" ${c.formacao===f?'selected':''}>${f}</option>`).join('')}
-          </select>
-          <button class="btn sm primary" id="btnEscalarAuto" title="Escala o melhor time possível nesta formação">⚡ Escalar</button>
-          <button class="btn sm" id="btnLimparForm" title="Tira todos os titulares do campo">🧹 Limpar</button>
-          ${(()=>{ const acabou=this.rodada>=this.fixtures.length; const live=this.liveState&&this.liveState.playing;
-            return live ? `<button class="btn sm jogar" disabled>⏱ Em jogo</button>`
-              : acabou ? `<button class="btn sm jogar" disabled>Temporada encerrada</button>`
-              : `<button class="btn sm jogar" id="btnJogarEsc" title="Vai direto para a rodada">▶ Jogar round ${this.rodada+1}</button>`;
-          })()}
+        <div class="fm-duo">
+          <div class="fm-card fm-moral">
+            <div class="fm-card-h"><span>Moral do plantel</span></div>
+            <div class="fm-big">${moralMed}<small>/100</small></div>
+            <div class="fm-card-sub">${moralTxt}${insat?` · ${insat} insatisfeito${insat>1?'s':''}`:''}</div>
+          </div>
+          <div class="fm-card fm-cargo">
+            <div class="fm-card-h"><span>Segurança no cargo</span></div>
+            <div class="fm-big" style="color:${humor.cor}">${conf}<small>/100</small></div>
+            <div class="pres-bar"><div class="pres-bar-fill" style="width:${Math.max(0,Math.min(100,conf))}%;background:${humor.cor}"></div>
+              <div class="pres-bar-corte" style="left:${Math.max(0,Math.min(100,corte))}%" title="Demissão se cair até ${corte}"></div></div>
+            <div class="fm-card-sub">${humor.txt} · demissão se cair até <b>${corte}</b></div>
+            <div class="fm-pres">🤵 “${esc(this.falaPresidenteAtual())}”</div>
+          </div>
         </div>
-        <div class="esc-forca">força em campo <b>${forcaMedia.toFixed(1)}</b> · ${onze.length}/11 titulares · ${banco.length}/12 banco</div>
       </div>
 
-      ${this.painelPresidenteHTML()}
-
-      <div class="mk-wrap">
-        <div class="mk-left">
-          <div class="mk-panel">
-            <div class="mk-filtros">
-              <select class="mk-sel" id="filSetor">
-                <option value="">Todos setores</option>
-                <option value="GK" ${fil.setor==='GK'?'selected':''}>Goleiros</option>
-                <option value="DEF" ${fil.setor==='DEF'?'selected':''}>Defesa</option>
-                <option value="MEI" ${fil.setor==='MEI'?'selected':''}>Meio</option>
-                <option value="ATQ" ${fil.setor==='ATQ'?'selected':''}>Ataque</option>
-              </select>
-              ${fil.setor?`<button class="btn sm" id="filLimpar">Limpar</button>`:''}
-              <span class="mk-count">${lista.length}/${t.players.length}</span>
+      <div class="fm-col fm-right">
+        <div class="fm-row2">
+          <div class="fm-card fm-form-card">
+            <div class="fm-card-h"><span>Formações</span><span class="fm-card-sub">DEF · MEI · ATA</span></div>
+            <div class="fm-formgrid">${formBtns}</div>
+            <div class="fm-formacoes-acoes">
+              <button class="btn sm primary" id="btnEscalarAuto" title="Monta o melhor time nesta formação">⚡ Auto</button>
+              <button class="btn sm" id="btn11Melhores" title="Testa todas as formações e escolhe a mais forte">★ 11 melhores</button>
+              <button class="btn sm" id="btnDescansados" title="Prioriza quem está com mais energia">🔋 Descansados</button>
             </div>
-            <div class="mk-tablewrap">
-              <table class="mk-table">
-                <colgroup>
-                  <col class="c-nome"><col class="c-nat"><col class="c-pos"><col class="c-role">
-                  <col class="c-ovr"><col class="c-id"><col class="c-j"><col class="c-g"><col class="c-valor">
-                </colgroup>
-                <thead><tr>
-                  <th class="l sortable" data-sort="nome">Jogador${seta('nome')}</th>
-                  <th class="sortable" data-sort="setor">Nat${seta('setor')}</th>
-                  <th>Posição</th><th>Role</th>
-                  <th class="sortable" data-sort="ov">OVR${seta('ov')}</th>
-                  <th class="sortable" data-sort="idade">Id${seta('idade')}</th>
-                  <th class="sortable" data-sort="jogos">J${seta('jogos')}</th>
-                  <th class="sortable" data-sort="gols">G${seta('gols')}</th>
-                  <th class="sortable" data-sort="valor">Valor${seta('valor')}</th>
-                </tr></thead>
-                <tbody>${lista.map(p=>{
-                  const pos=this.posDe(i,p.numero), role=this.roleDe(i,p.numero);
-                  const noBanco=pos==='BANCO', foraEq=pos==='FORA';
-                  const semPos=noBanco||foraEq;
-                  const ov=semPos?p.forca:Motor.overallEm(p,pos,role);
-                  const cor=semPos?'var(--gray)':Motor.corAdequacao(ov);
-                  const selRow=p.numero===this.selPlayer, les=p.lesionado;
-                  const susp=p.suspenso>0?p.suspenso:0;
-                  const indisp=this.indisponivel(p);
-                  const rolesDisp=semPos?[]:(ROLES_POS[pos]||[]);
-                  return `<tr class="mk-row ${selRow?'sel':''} ${indisp?'les':''} ${foraEq?'fora':noBanco?'banco':''}" data-pnum="${p.numero}">
-                    <td class="l"><a class="mk-nome-link" data-modal="${p.numero}">${p.nome}</a>${les?` <span class="mk-les">🩹${les}</span>`:''}${susp?` <span class="mk-susp" title="${p._motivoSusp||''}">🟥${susp}</span>`:''}</td>
-                    <td class="mk-nat">${p.setorNat||'–'}</td>
-                    <td>${indisp
-                      ? `<span class="mk-indisp">${p.lesionado?'🩹 Lesionado':'🟥 Suspenso'}</span>`
-                      : `<select class="mk-posdd" data-pnum="${p.numero}">
-                      <option value="FORA" ${foraEq?'selected':''}>— Fora —</option>
-                      <option value="BANCO" ${noBanco?'selected':''}>— Banco —</option>
-                      ${POSICOES.map(ps=>`<option value="${ps}" ${pos===ps?'selected':''}>${ps} · ${POS_NOME[ps]}</option>`).join('')}
-                    </select>`}</td>
-                    <td>${(semPos||indisp)?'<span class="mk-dash">–</span>':
-                      `<select class="mk-roledd" data-pnum="${p.numero}">
-                        ${rolesDisp.map(r=>`<option value="${r}" ${role===r?'selected':''}>${r}</option>`).join('')}
-                      </select>`}</td>
-                    <td class="mk-f" style="color:${cor}">${ov}</td>
-                    <td>${p.idade||'–'}</td>
-                    <td>${p.jogos||0}</td><td>${p.gols||0}</td>
-                    <td class="mk-money">${this.fmtM(p.valor)}</td>
-                  </tr>`;}).join('')}</tbody>
-              </table>
+            <div class="fm-tatica">
+              <div><div class="fm-mini-h">Estilo</div><div class="opt-row">${['defensivo','normal','ofensivo'].map(s=>
+                `<button class="opt ${c.estilo===s?'active':''}" data-est="${s}">${s}</button>`).join('')}</div></div>
+              <div><div class="fm-mini-h">Marcação</div><div class="opt-row">${[['leve','leve'],['pesada','pesada'],['muito_pesada','muito']].map(([v,l])=>
+                `<button class="opt ${c.marcacao===v?'active':''}" data-mrc="${v}">${l}</button>`).join('')}</div></div>
             </div>
+          </div>
+          <div class="fm-card fm-adv">
+            ${advHTML}
+            ${acao}
+            ${!live&&!fimRod&&!acabou?`<button class="btn sm fm-descansar" id="btnDescansarEsc" title="Avança um dia: +2% de energia pra todo o elenco">＋1 dia de descanso</button>`:''}
           </div>
         </div>
 
-        <div class="mk-right">
-          <div class="mk-panel">
-            <div class="mk-tactic2" style="margin-bottom:12px">
-              <div class="ctrl-group" style="margin:0"><div class="h">Estilo</div>
-                <div class="opt-row">${['defensivo','normal','ofensivo'].map(s=>
-                  `<button class="opt ${c.estilo===s?'active':''}" data-est="${s}">${s}</button>`).join('')}</div></div>
-              <div class="ctrl-group" style="margin:0"><div class="h">Marcação</div>
-                <div class="opt-row">${[['leve','leve'],['pesada','pesada'],['muito_pesada','muito']].map(([v,l])=>
-                  `<button class="opt ${c.marcacao===v?'active':''}" data-mrc="${v}">${l}</button>`).join('')}</div></div>
+        <div class="fm-card fm-semana-card">
+          <div class="fm-card-h"><span>Esta semana</span><span class="fm-card-sub">o dia destacado é hoje</span></div>
+          <div class="fm-semana">${semana}</div>
+        </div>
+
+        <div class="fm-card fm-campo-card" id="fmCampoCard">
+          <div class="fm-card-h"><span>Tática ${c.formacao} · força ${forcaMedia.toFixed(1)}</span>
+            <span class="fm-card-sub">onze <b>${onze.length}/11</b> · T titular · R reserva
+              <button class="fm-full-btn" id="btnCampoFull" title="Tela cheia" aria-label="Tela cheia">⤢</button></span></div>
+          <div class="fm-dica ${sel!=null?'on':''}">${selP
+            ? `<span><b>${esc(selP.nome)}</b> selecionado — toque em outro jogador (campo, banco ou elenco) para trocar.</span>
+               ${selTit?`<label>Função <select id="selRole">${(ROLES_POS[selPos]||[]).map(r=>`<option ${this.roleDe(i,selP.numero)===r?'selected':''}>${r}</option>`).join('')}</select></label>`:''}
+               <button class="btn sm" id="btnCancelaTroca">Cancelar</button>`
+            : `<span>Toque num jogador e depois em outro para trocar${(typeof matchMedia==='function'&&matchMedia('(hover:hover)').matches)?' — ou arraste':''}.</span>`}</div>
+          <div class="fm-estadio">
+            <div class="fm-placas">${placas(0)}</div>
+            <div class="fm-campo">
+              <svg class="fm-linhas" viewBox="0 0 68 100" preserveAspectRatio="none" aria-hidden="true">
+                <g fill="none" stroke="rgba(255,255,255,.28)" stroke-width=".45">
+                  <rect x="2" y="2" width="64" height="96"/>
+                  <line x1="2" y1="50" x2="66" y2="50"/>
+                  <circle cx="34" cy="50" r="7.5"/><circle cx="34" cy="50" r=".6" fill="rgba(255,255,255,.4)"/>
+                  <rect x="15" y="2" width="38" height="14"/><rect x="25" y="2" width="18" height="5"/>
+                  <path d="M27 16 A7.5 7.5 0 0 0 41 16"/><circle cx="34" cy="11" r=".5" fill="rgba(255,255,255,.4)"/>
+                  <rect x="15" y="84" width="38" height="14"/><rect x="25" y="93" width="18" height="5"/>
+                  <path d="M27 84 A7.5 7.5 0 0 1 41 84"/><circle cx="34" cy="89" r=".5" fill="rgba(255,255,255,.4)"/>
+                  <rect x="29" y=".4" width="10" height="1.6"/><rect x="29" y="98" width="10" height="1.6"/>
+                </g>
+              </svg>
+              ${camisas}
             </div>
-            <div class="pitch-h">
-              ${colunas.map(col=>`<div class="pitch-col">${col.map(({pos,p})=>{
-                if(!p) return `<div class="slot-h empty"><div class="doth empty">+</div><div class="slot-hnm">&nbsp;</div><div class="slot-hpos">${pos}</div></div>`;
-                const ov=Motor.overallEm(p,pos,this.roleDe(i,p.numero)), cor=Motor.corAdequacao(ov);
-                const selDot=p.numero===this.selPlayer;
-                return `<div class="slot-h ${selDot?'sel':''}" data-selnum="${p.numero}">
-                  <div class="doth" style="border-color:${cor};color:${cor}">${ov}</div>
-                  <div class="slot-hnm">${p.nome.split(' ')[0]}</div>
-                  <div class="slot-hpos">${pos}</div>
-                </div>`;}).join('')}</div>`).join('')}
-            </div>
+            <div class="fm-placas">${placas(3)}</div>
+          </div>
+          <div class="fm-legenda-adq"><span class="nat">natural</span><span class="trein">treinada</span><span class="impro">improvisada</span></div>
+          <div class="fm-banco">
+            <div class="fm-banco-h"><span>Banco (${banco.length}/12)</span>
+              <span class="fm-banco-filtros">
+                ${[['','Todos'],['GK','GOL'],['DEF','DEF'],['MEI','MEI'],['ATQ','ATA']].map(([v,l])=>`<button class="opt ${setorBanco===v?'active':''}" data-bset="${v}">${l}</button>`).join('')}
+                <button class="opt" data-bord title="Ordenar">${this.bancoOrdem==='energia'?'🔋 energia':'💪 força'}</button>
+              </span></div>
+            <div class="fm-banco-lista">${bancoLista.map(p=>{ const e=Math.round(p.energia);
+              return `<button class="fm-chip ${sel===p.numero?'sel':''}" data-pnum="${p.numero}" draggable="true">
+                <span class="tr-badge r">R</span><b>${esc(p.nome.split(' ').slice(-1)[0])}</b><small>${p.setorNat||''} · ${p.forca} · ${e}%</small></button>`; }).join('')
+              || '<span class="fm-card-sub">Nenhum reserva neste filtro.</span>'}</div>
           </div>
         </div>
-      </div>`;
+      </div>
+    </div>`;
 
-    // handlers
-    const bJog=document.getElementById('btnJogarEsc'); if(bJog)bJog.onclick=()=>this.jogarRodada();
-    document.getElementById('formSel').onchange=(e)=>{ this.aplicarFormacao(i,e.target.value); this.renderEscala(); };
-    document.getElementById('btnEscalarAuto').onclick=()=>{
-      this.escalarMelhor(); this.renderShell(); this.showTab('escala');
-    };
-    document.getElementById('btnLimparForm').onclick=()=>{
-      // tira todos os titulares do campo -> vão pra Fora
-      this.onzeDe(i).forEach(p=>{ c.posEscala[p.numero]='FORA'; });
-      this.renderEscala();
-    };
+    // ---------- handlers ----------
+    const re=()=>this.renderEscala();
+    const bJog=document.getElementById('btnJogarEsc'); if(bJog) bJog.onclick=()=>this.jogarRodada();
+    el.querySelectorAll('[data-ir-arena]').forEach(b=>b.onclick=()=>this.showTab('arena'));
+    const bDesc=document.getElementById('btnDescansarEsc'); if(bDesc) bDesc.onclick=()=>{ this.descansar(); this.showTab('escala'); };
+    el.querySelectorAll('[data-form]').forEach(b=>b.onclick=()=>{ this.aplicarFormacao(i,b.dataset.form); this._trocaSel=null; re(); });
+    document.getElementById('btnEscalarAuto').onclick=()=>{ this.escalarMelhor(); this._trocaSel=null; this.renderShell(); this.showTab('escala'); };
+    document.getElementById('btn11Melhores').onclick=()=>{ const f=this.escalar11Melhores(); this._trocaSel=null; this.renderShell(); this.showTab('escala');
+      if(f) Tutorial.toast(`★ A formação mais forte do seu elenco é a <b>${f}</b>.`); };
+    document.getElementById('btnDescansados').onclick=()=>{ this.escalarCom(i,{descansados:true}); this._trocaSel=null; this.renderShell(); this.showTab('escala'); };
+    el.querySelectorAll('[data-est]').forEach(b=>b.onclick=()=>{ c.estilo=b.dataset.est; re(); });
+    el.querySelectorAll('[data-mrc]').forEach(b=>b.onclick=()=>{ c.marcacao=b.dataset.mrc; re(); });
     el.querySelectorAll('.mk-posdd').forEach(dd=>dd.onchange=()=>{
-      const num=+dd.dataset.pnum, novaPos=dd.value, posAtual=this.posDe(i,num);
-      if(novaPos!=='BANCO' && novaPos!=='FORA'){
-        // vagas dessa posição na formação atual
-        const slotsForm=LINHAS_FM[c.formacao].flat();
-        const vagas=slotsForm.filter(s=>s===novaPos).length;
-        // quantos já ocupam essa posição (fora o próprio jogador)
-        const ocupados=this.onzeDe(i).filter(p=>p.numero!==num && this.posDe(i,p.numero)===novaPos).length;
-        if(ocupados>=vagas){
-          alert(`A formação ${c.formacao} só tem ${vagas} vaga(s) de ${novaPos}. Já está preenchida.`);
-          dd.value=posAtual; return;
-        }
-        // limite total de 11 titulares
-        if((posAtual==='BANCO'||posAtual==='FORA') && this.onzeDe(i).length>=11){
-          alert('Já há 11 titulares. Mande um titular pro banco antes.'); dd.value=posAtual; return;
-        }
-      }
-      if(novaPos==='BANCO'){
-        if(posAtual!=='BANCO' && this.bancoDe(i).length>=12){ alert('Banco cheio (12). Mande alguém pra Fora antes.'); dd.value=posAtual; return; }
-      }
-      c.posEscala[num]=novaPos;
-      if(novaPos!=='BANCO' && novaPos!=='FORA' && !ROLES_POS[novaPos].includes(c.roleEscala[num]))
-        c.roleEscala[num]=ROLES_POS[novaPos][0];
-      this.renderEscala();
+      const err=this.moverJogador(i,+dd.dataset.pnum,dd.value);
+      if(err){ dd.value=this.posDe(i,+dd.dataset.pnum); return this.avisoFLK('Não deu', err); }
+      re();
     });
-    el.querySelectorAll('.mk-roledd').forEach(dd=>dd.onchange=()=>{ c.roleEscala[+dd.dataset.pnum]=dd.value; this.renderEscala(); });
-    // clique no NOME abre modal; clique no resto da linha seleciona
-    el.querySelectorAll('.mk-nome-link').forEach(a=>a.onclick=(ev)=>{
-      ev.stopPropagation(); this.selPlayer=+a.dataset.modal; this.abrirFichaModal(i,+a.dataset.modal);
+    el.querySelectorAll('.mk-nome-link').forEach(a=>a.onclick=(ev)=>{ ev.stopPropagation(); this.selPlayer=+a.dataset.modal; this.abrirFichaModal(i,+a.dataset.modal); });
+    el.querySelectorAll('.fm-row').forEach(r=>r.onclick=(ev)=>{ if(ev.target.closest('select')||ev.target.closest('a')) return; this.tocarJogador(+r.dataset.pnum); });
+    el.querySelectorAll('.fm-slot[data-pnum], .fm-chip[data-pnum]').forEach(s=>s.onclick=()=>this.tocarJogador(+s.dataset.pnum));
+    // arrastar e soltar (desktop): solta um jogador sobre outro para trocar
+    el.querySelectorAll('[draggable="true"][data-pnum]').forEach(d=>{
+      d.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain',d.dataset.pnum); ev.dataTransfer.effectAllowed='move'; });
+      d.addEventListener('dragover',ev=>{ ev.preventDefault(); d.classList.add('drop'); });
+      d.addEventListener('dragleave',()=>d.classList.remove('drop'));
+      d.addEventListener('drop',ev=>{ ev.preventDefault(); d.classList.remove('drop');
+        const de=+ev.dataTransfer.getData('text/plain'), para=+d.dataset.pnum; if(!de||de===para) return;
+        const err=this.trocarJogadores(i,de,para); this._trocaSel=null;
+        if(err) this.avisoFLK('Troca não feita',err); re(); });
     });
-    el.querySelectorAll('.mk-row').forEach(r=>r.onclick=(ev)=>{
-      if(ev.target.closest('select')||ev.target.closest('a')) return;
-      this.selPlayer=+r.dataset.pnum; this.renderEscala();
-    });
-    el.querySelectorAll('.slot-h[data-selnum]').forEach(sl=>sl.onclick=()=>{ this.selPlayer=+sl.dataset.selnum; this.renderEscala(); });
+    const bc=document.getElementById('btnCancelaTroca'); if(bc) bc.onclick=()=>{ this._trocaSel=null; re(); };
+    const sr=document.getElementById('selRole'); if(sr) sr.onchange=()=>{ c.roleEscala[sel]=sr.value; re(); };
+    el.querySelectorAll('[data-bset]').forEach(b=>b.onclick=()=>{ this.bancoSetor=b.dataset.bset; re(); });
+    const bo=el.querySelector('[data-bord]'); if(bo) bo.onclick=()=>{ this.bancoOrdem=this.bancoOrdem==='energia'?'forca':'energia'; re(); };
     el.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
       const col=th.dataset.sort;
-      if(srt.col===col) srt.dir*=-1;
-      else this.elencoSort={col, dir:(col==='nome'||col==='setor')?1:-1};
-      this.renderEscala();
-    });
-    const fs=document.getElementById('filSetor'); if(fs)fs.onchange=()=>{this.elencoFiltro.setor=fs.value;this.renderEscala();};
-    const fl=document.getElementById('filLimpar'); if(fl)fl.onclick=()=>{this.elencoFiltro={setor:'',pais:''};this.renderEscala();};
-    el.querySelectorAll('[data-est]').forEach(b=>b.onclick=()=>{ c.estilo=b.dataset.est; this.renderEscala(); });
-    el.querySelectorAll('[data-mrc]').forEach(b=>b.onclick=()=>{ c.marcacao=b.dataset.mrc; this.renderEscala(); });
+      if(srt.col===col) srt.dir*=-1; else this.elencoSort={col, dir:(col==='nome'||col==='setor')?1:-1};
+      re(); });
+    const fs=document.getElementById('filSetor'); if(fs) fs.onchange=()=>{ this.elencoFiltro.setor=fs.value; re(); };
+    const full=document.getElementById('btnCampoFull'), card=document.getElementById('fmCampoCard');
+    if(this._campoFull) card.classList.add('fm-full');
+    if(full) full.onclick=()=>{ this._campoFull=!this._campoFull; card.classList.toggle('fm-full',this._campoFull); };
   },
 
   // abre a ficha do jogador como MODAL sobre a tela
@@ -4816,6 +5070,7 @@ const App={
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
         somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
         moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
+        notas5:p._notas5||[],                                      // v9: forma recente
         ovBase:p._ovBase!=null?p._ovBase:null,   // item 4
         attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor,
         ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr,
@@ -4848,6 +5103,8 @@ const App={
       confianca:this.confianca!=null?this.confianca:this.CONF_INICIAL,
       demitido:!!this.demitido,
       emprestimo:this.emprestimo||null,
+      // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
+      formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
     };
     snap.checksum=this._checksum(snap);
     return snap;
@@ -4993,6 +5250,9 @@ const App={
     // finanças
     if(s.saldos) s.saldos.forEach((v,ti)=>{ if(this.teams[ti]) this.teams[ti].saldo=v; });
     this.extrato=s.extrato||[]; this.ultimoMesPago=s.ultimoMesPago||0;
+    // v9: forma recente por time (save v8 não tem → listas vazias)
+    this.teams.forEach((t,ti)=>{ const f=Array.isArray(s.formaTimes)?s.formaTimes[ti]:null;
+      t._notas5=Forma.sanearNotas(f&&f.n); t._forma5=Forma.sanearResultados(f&&f.r); });
 
     if((s.versao||4)>=6 && s.composicao && s.jogadoresById){
       // --- v6: recompõe elencos por pid (transferências persistem) ---
@@ -5008,6 +5268,7 @@ const App={
         p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
         p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
         p._ovBase=(sp.ovBase!=null)?sp.ovBase:null;   // item 4
+        p._notas5=Forma.sanearNotas(sp.notas5);       // v9 (save v8 → lista vazia)
         if(sp.melhorNota) p._melhorNota=sp.melhorNota; if(sp.notaRodada) p._notaRodada=sp.notaRodada;
         if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
         if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
@@ -5140,10 +5401,21 @@ const App={
   },
 };
 
-/* tabs binding (uma vez) */
-document.getElementById('tabs').addEventListener('click',e=>{
-  const b=e.target.closest('button[data-tab]'); if(b) App.showTab(b.dataset.tab);
-});
-(function(){ const g=document.getElementById('btnConfig'); if(g) g.onclick=()=>App.abrirConfig(); })();
+/* navegação (uma vez): menu lateral, barra inferior, folha "Mais" */
+['tabs','bottomBar','maisSheet'].forEach(id=>{ const n=document.getElementById(id); if(n) n.addEventListener('click',e=>{
+  const b=e.target.closest('button[data-tab]'); if(b){ App.showTab(b.dataset.tab); window.scrollTo(0,0); return; }
+  if(e.target.closest('[data-mais]')) document.getElementById('maisSheet').classList.remove('hidden');
+  if(e.target.closest('[data-mais-cfg]')){ document.getElementById('maisSheet').classList.add('hidden'); App.abrirConfig(); }
+  if(e.target.closest('[data-mais-menu]')){ document.getElementById('maisSheet').classList.add('hidden'); App.irMenuPrincipal(); }
+  if(e.target.id==='maisSheet') e.target.classList.add('hidden');
+}); });
+(function(){
+  const g=document.getElementById('btnConfig'); if(g) g.onclick=()=>App.abrirConfig();
+  const m=document.getElementById('btnMenuPrincipal'); if(m) m.onclick=()=>App.irMenuPrincipal();
+  const grid=document.getElementById('appGrid'), r=document.getElementById('btnRecolher');
+  const K='prancheta_menu_recolhido';
+  try{ if(localStorage.getItem(K)==='1') grid.classList.add('side-min'); }catch(e){}
+  if(r) r.onclick=()=>{ const on=grid.classList.toggle('side-min'); try{ localStorage.setItem(K,on?'1':'0'); }catch(e){} };
+})();
 
 App.boot();

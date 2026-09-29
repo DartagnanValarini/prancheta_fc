@@ -32,14 +32,15 @@ O que **já existe e funciona** em `app.js` (~5.150 linhas, monolito injetado no
 - **Bloco B parcial:** `mostrarAnuncio()` como ponto único (modal stub), gancho "dobrar prêmio" dos objetivos, compra remove-ads ligada ao `entitlement` (stub no servidor). `harness_blocob`.
 - **Bloco C (✅):** assinatura HMAC do save, posse verificada no servidor e aba Ranking com selo de suspeito.
 - **D1 Onboarding (✅ 28/09/2026):** entrada "Jogar agora", boas-vindas do presidente, tour guiado e fim das telas "Conecte o Supabase". Gate: `harness_d1_onboarding` (Playwright).
+- **Página do clube §6.2 (✅ 28/09/2026):** menu lateral recolhível / barra inferior no celular, cabeçalho do clube, Formação em 2 colunas com campo vertical de camisas. Gate: `harness_layout` (Playwright).
+- **Forma recente §6.1 item 5 (✅ 28/09/2026):** 5 últimas notas de jogador e time + 5 últimos resultados, no save v9. Gate: `harness_forma`.
 
 O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 
 - ❌ **Assistências** — o motor só registra o autor do gol (o A2 pedia artilharia **e** assistências).
-- ❌ **Forma recente: 5 últimas notas** do jogador e do time (§6.1 item 5) — hoje só soma/qtd/melhor/última nota.
 - ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
 - ❌ **Carreira longa como gate** (D3) e **áudio** (D4).
-- ❌ **Layout da página do clube** (§6.2) e **layout de celular** — no celular a página hoje transborda na horizontal.
+- 🟡 **Layout das outras abas** (Elenco, Mercado, Campeonatos, Finanças) — cabem no celular sem rolagem horizontal, mas ainda não foram redesenhadas no padrão da página do clube.
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E).
 
 ---
@@ -146,7 +147,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 > **Bloco C fechado.** Falta só o que depende de outros blocos: a validação de compra REAL (Play Billing / checkout web) no POST do `entitlement` — hoje stub — que entra junto do empacotamento (Bloco B2 real + E). O ranking e o anti-cheat já estão de pé e testados. **Nota de teste manual:** as Edge Functions não puderam ser exercitadas por HTTP do meu ambiente (rede do sandbox bloqueia o host do Supabase); validei a lógica de plausibilidade isolada (8/8) e confirmei que ambas as funções estão ACTIVE com verify_jwt e o RLS correto. Vale um teste rápido no navegador: comprar remove-ads logado, recarregar (deve continuar sem ads), e terminar uma temporada pra aparecer no ranking.
 >
-> **Próximo grande passo (rota):** com A, B (parcial), C e D1 prontos, seguir pro **layout da página do clube (§6.2)** junto das **5 últimas notas** (§6.1 item 5), depois D2–D4 e o empacotamento (E) que destrava a compra real.
+> **Próximo grande passo (rota):** com A, B (parcial), C, D1, §6.2 e a forma recente prontos, seguir pros quick wins do §6.1 (coletiva, reunião com a diretoria, contador de caixa, diagnóstico de fim de temporada) e **assistências**, depois D2–D4 e o empacotamento (E) que destrava a compra real.
 
 ---
 
@@ -164,7 +165,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
   - **Estados vazios**: as 6 telas "Conecte o Supabase" viraram `App.vazioHTML()` ("Nenhuma carreira aberta" + botão pro menu).
   - Token `--muted` (#8a8d84) definido no `:root` — era usado em vários lugares sem existir.
 - **Gate:** `harness_d1_onboarding.js` (Playwright + Chromium, com `ui_test/fake_supabase.js` gerando ligas sintéticas offline): 31/31 — fluxo completo no desktop, saídas "Já sei jogar"/"Pular", 2ª carreira, "Rever tutorial", bolhas dentro da tela no celular (390×844) e nenhuma tela "Conecte o Supabase".
-- **Pendências anotadas:** (1) as bolinhas do campo usam cor por **nível absoluto** (vermelho < 55), então na Série D quase o time todo aparece vermelho e o comentário do código diz "fora de posição" — confunde o jogador novo; vale trocar pra cor por **adequação à posição** (já previsto no §6.2). (2) O selo "SUPABASE" no cabeçalho e a aba Dados (ferramentas de dev) ainda aparecem pro jogador.
+- **Pendências anotadas:** (1) ~~cor das bolinhas por nível absoluto~~ — resolvido no §6.2: no campo novo a borda do número indica **adequação à posição** (natural/treinada/improvisada). (2) ~~selo "SUPABASE" no cabeçalho~~ — removido com o cabeçalho novo; a aba Dados (ferramentas de dev) continua no menu.
 
 **D2. Partida mais imersiva.**
 - Comentários dinâmicos por atributo ("golaço de fora" com `long_shots` alto; "de cabeça" com `heading`), feedback de fadiga (piscar vermelho < 40% energia), finalizações/escanteios/posse na tela.
@@ -266,7 +267,9 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 2. **Reunião com a diretoria antes da demissão** *(A3/A4)* — quando a confiança cruza um limite, evento com 2 perguntas ("por que piorou?" / "qual o plano?"); a escolha dá fôlego ou piora. Mostrar a **fórmula da confiança** na tela (ex.: X% posição + Y% moral) pra o jogador saber o que corrigir. Hoje a demissão chega sem aviso.
 3. **Contador na compra e na renovação** *(Mercado/Finanças)* — card com 3 números: **caixa depois**, **variação por rodada** e **projeção de fim de temporada**, + uma frase ("Cabe hoje, não cabe amanhã"). Não proíbe, só mostra a consequência. Só UI sobre números que já calculamos.
 4. **Diagnóstico de fim de temporada** *(onboarding disfarçado)* — tela de fechamento com o resultado + 3 dicas tiradas da temporada ("a defesa levou 115 gols — reforce zaga e gol", "elenco terminou esgotado", "caiu cedo na copa") + bloco "O que muda agora" (divisão, folha, cargo).
-5. **Forma recente: últimas 5 notas — jogador E time** *(A1/A2)*
+5. **Forma recente: últimas 5 notas — jogador E time** *(A1/A2)* — **✅ FEITO (28/09/2026)**
+   - *Como ficou:* módulo `Forma` (FIFO de 5). Jogador: `p._notas5`; time: `t._notas5` (média de quem recebeu nota na partida) e `t._forma5` (V/E/D). Save **v9** (`jogadoresById[pid].notas5` + `formaTimes`); save v8 carrega com listas vazias e dado adulterado é saneado (clamp 0–10, máx. 5). Aparece na coluna **Nota** do elenco (média das 5, com as notas no tooltip), nas camisas do campo e na **Forma** do cabeçalho. `harness_forma` 16/16.
+   - *Limite conhecido:* quem é substituído (sai do campo) não recebe nota — herdado do Match Rating (A1), então também não entra na média do time.
    - **Jogador:** guardar as **5 últimas notas** (Match Rating) de cada jogador; exibir como forma recente (ex.: `7,0 · 5,6 · 6,4 · 8,1 · 6,9`) na ficha e na escalação.
    - **Time:** guardar as **5 últimas notas do time**, onde **nota do time na partida = média das notas dos jogadores que atuaram naquela partida** (titulares + quem entrou; quem ficou no banco não conta).
    - Janela deslizante (FIFO de 5), entra no save (`SaveSchema` → bump de versão + migração com lista vazia).
@@ -326,7 +329,18 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - Colunas empilham: cabeçalho → adversário + ação → formações → **campo** → elenco.
 
 ### Pronto quando
-- Desktop mostra menu lateral + cabeçalho + 2 colunas com campo vertical de camisas; celular mostra barra inferior; todas as abas atuais acessíveis pelo menu; testado nas 6 formações (validar item "Ficha/consistência do campo" do §6).
+- Desktop mostra menu lateral + cabeçalho + 2 colunas com campo vertical de camisas; celular mostra barra inferior; todas as abas atuais acessíveis pelo menu; testado nas 6 formações (validar item "Ficha/consistência do campo" do §6). ✅
+
+### ✅ FEITO (28/09/2026) — como ficou
+- **Casca:** menu lateral fixo (Formação · Rodada · Elenco · Mercado · Campeonatos · Finanças · Ranking · Dados + Configurações, Menu principal, Recolher). "Recolher" deixa só ícones e é lembrado no aparelho. No celular (≤ 900px) vira **barra inferior** (Formação, Elenco, Mercado, Tabela, Mais) + **botão de ação principal** flutuante (Jogar / Ao vivo / Resultado / Temporada).
+- **Cabeçalho do clube:** escudo, nome, treinador, país, divisão, dia da semana + dia, rodada, temporada; à direita caixa, **forma (5 últimos V/E/D)** e Salvar. O selo "SUPABASE" saiu.
+- **Arena → "Rodada":** a partida ao vivo e as tabelas da rodada continuam lá (o jogo leva pra ela ao clicar em Jogar). A Formação virou a tela inicial do clube e tem o card do adversário com a ação.
+- **Formação, coluna esquerda:** elenco com T/R, posição, nome (abre a ficha), idade, força, **nota (média das 5 últimas)**, barra de energia, valor e o seletor de posição (esconde idade/valor/posição no celular). Cards de **Moral do plantel** e **Segurança no cargo** (com a fala do presidente).
+- **Formação, coluna direita:** grade das **9 formações** com mini-barras DEF/MEI/ATA; **⚡ Auto**, **★ 11 melhores** (testa todas e fica com a mais forte) e **🔋 Descansados** (pesa energia); estilo e marcação. Card do **adversário** (casa/fora, mini-tabela J/V/D/GM:GS/P, botão de ação e "+1 dia de descanso"). **Esta semana** (DOM–SAB, hoje em destaque). **Campo vertical** com marcações, camisas nas cores do clube com número, selo de força cuja cor mostra **natural/treinada/improvisada**, nome, nota e energia; **placas** do próprio jogo em volta (nunca "ANUNCIE AQUI"); banco com filtro por setor e ordem por força/energia; tela cheia.
+- **Troca:** toque num jogador e depois em outro (campo, banco ou tabela) — titular↔reserva, titular↔titular; reserva↔reserva é recusado. No desktop também **arrasta**. Com um titular selecionado dá pra trocar a **função (role)**.
+- **Tutorial** atualizado pros novos alvos. "Round" virou "Rodada" na tela da partida.
+- **Gate:** `harness_layout.js` 61/61 — casca, cabeçalho, todas as abas sem rolagem horizontal (desktop e celular), 9 formações sem camisa fora do campo ou sobreposta (desktop e 390px), trocas por toque e arrasto, Auto/11 melhores/Descansados, ação principal, forma no cabeçalho, ordem de empilhamento no celular.
+- **Fica pra depois:** faixa superior com o ranking de treinadores (opcional no spec); placas como espaço de anúncio na versão web (`mostrarAnuncio()`); redesenho das outras abas no mesmo padrão.
 
 ---
 
