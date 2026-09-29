@@ -4294,70 +4294,143 @@ const App={
     el.querySelectorAll('[data-mf]').forEach(sel=>sel.onchange=()=>{ this.mercadoFiltro[sel.dataset.mf]=sel.value; this.renderMercado(); });
   },
 
-  // fluxo de negociação de COMPRA (MVP com prompt; refino visual depois)
-  negociarCompraUI(pid){
-    const ti=this.timeDoJogador(pid); if(ti<0) return;
-    const p=this.teams[ti].players.find(x=>x.pid===pid);
-    const vm=this.valorMercadoReais(p);
-    const meuSaldo=this.teams[this.myTeam].saldo||0;
-    const sugestao=(vm/1e6).toFixed(0);
+  /* ====================================================================
+     NEGOCIAÇÃO EM 3 ETAPAS (§6.1 item 6) — 1) taxa com o clube (piso visível)
+     2) salário com o jogador (o mínimo que ele diz NÃO é o real) 3) fechar,
+     com prazo do contrato e risco de aposentadoria. Em todas: o CONTADOR
+     projeta caixa depois, variação por rodada e fim da temporada.
+     ==================================================================== */
+  // receita e despesa média por rodada (patrocínio e folha são mensais = 4 rodadas;
+  // bilheteria em ~metade dos jogos). Base da projeção do contador.
+  fluxoPorRodada(deltaFolhaMensal){
+    const i=this.myTeam;
+    const receita=this.patrocinioMensal(i)/4 + this.rendaBilheteria(i,null)/2;
+    const parcela=(this.emprestimo&&this.emprestimo.parcela)?this.emprestimo.parcela/4:0;
+    const folha=(this.folhaDe(i)+(deltaFolhaMensal||0))/4;
+    return Math.round(receita-folha-parcela);
+  },
+  projecaoCaixa(deltaCaixa, deltaFolhaMensal){
+    const caixa=(this.teams[this.myTeam].saldo||0)+(deltaCaixa||0);
+    const porRodada=this.fluxoPorRodada(deltaFolhaMensal);
+    const restantes=Math.max(0,(this.fixtures||[]).length-this.rodada);
+    return {caixaDepois:caixa, porRodada, fim:caixa+porRodada*restantes, restantes,
+      folhaDepois:this.folhaDe(this.myTeam)+(deltaFolhaMensal||0)};
+  },
+  contadorHTML(pr){
+    const R=v=>this.fmtReais(v), cor=v=>v<0?'var(--loss)':'var(--lemon)';
+    const fala = pr.caixaDepois<0 ? `Não cabe: o caixa fica em ${R(pr.caixaDepois)} na hora.`
+      : pr.fim<0 ? `Cabe hoje, não cabe amanhã: com essa folha o ano termina em ${R(pr.fim)}.`
+      : pr.porRodada<0 ? `Dá pra fazer, mas a folha come ${R(-pr.porRodada)} por rodada. Fecha o ano em ${R(pr.fim)}.`
+      : `Cabe com folga. O ano fecha em ${R(pr.fim)}.`;
+    return `<div class="contador ${pr.caixaDepois<0||pr.fim<0?'alerta':''}">
+      <div class="contador-top"><span class="col-mic">🧮</span><div><div class="contador-nome">Seu contador</div>
+        <div class="contador-fala">“${fala}”</div></div></div>
+      <div class="mf-kpis"><div class="mf-kpi"><small>Caixa depois</small><b style="color:${cor(pr.caixaDepois)}" data-ct="caixa">${R(pr.caixaDepois)}</b></div>
+        <div class="mf-kpi"><small>Por rodada</small><b style="color:${cor(pr.porRodada)}" data-ct="rodada">${pr.porRodada>=0?'+':''}${R(pr.porRodada)}</b></div>
+        <div class="mf-kpi"><small>Fim da temporada</small><b style="color:${cor(pr.fim)}" data-ct="fim">${R(pr.fim)}</b></div></div>
+      <div class="contador-folha">Folha depois: <b>${R(pr.folhaDepois)}/mês</b> · ${pr.restantes} rodada${pr.restantes===1?'':'s'} até o fim</div>
+    </div>`;
+  },
+  // risco de parar por idade no fim da temporada (usado na compra e na aposentadoria)
+  chanceAposentadoria(p){
+    const id=p.idade||0;
+    if(id<=32) return 0;
+    return ({33:0.10,34:0.25,35:0.45,36:0.65})[id] ?? 0.85;
+  },
+  // salário que o jogador pede pra vir (em MIL/mês): o atual + 10% pra trocar de clube.
+  // O "real" (escondido) pode ser até 12% maior — o empresário testa o mercado.
+  pedidoSalarial(p){ return Math.max(5, Math.round((p.salario||20)*1.10)); },
+  cabecaNegociacao(p, ti, rotuloDir, valorDir){
     const mg=Motor.melhorGeral(p);
-    const mNeg=this.modalFLK({
-      titulo:'💼 Negociar contratação',
-      corpoHTML:this.cartaoDecisao({
-        topo:{escudo:this.escudoHTML(this.teams[ti],40), nome:this.esc(p.nome), sub:`${this.esc(this.teams[ti].nome)} · ${mg.pos} · ${p.idade||'–'} anos`},
-        destaque:{rotulo:'Valor de mercado', titulo:this.fmtReais(vm), desc:`força ${mg.ov} · salário ${this.fmtm(p.salario)}/mês`},
-        kpis:[
-          {rotulo:'Seu caixa', valor:this.fmtReais(meuSaldo), cor:meuSaldo<vm?'var(--loss)':'var(--lemon)'},
-          {rotulo:'Caixa depois', valor:this.fmtReais(meuSaldo-Math.round(+sugestao*1e6)), id:'mfCaixaDepois'},
-        ],
-      }),
-      campos:[{id:'oferta', label:'Sua oferta (em milhões)', tipo:'number', valor:sugestao}],
-      botoes:[
-        {txt:'Desistir', tipo:'sm'},
-        {txt:'Fazer proposta', tipo:'sm primary', onClick:(v)=>{
+    return `<div class="neg-top">${this.escudoHTML(this.teams[ti],40)}<div class="neg-id"><div class="mf-nome">${this.esc(p.nome)}</div>
+      <div class="mf-sub">${this.esc(this.teams[ti].nome)} · ${mg.pos} · ${p.idade||'–'} anos · força ${mg.ov}</div></div>
+      <div class="neg-dir"><small>${rotuloDir}</small><b>${valorDir}</b></div></div>`;
+  },
+
+  negociarCompraUI(pid){
+    const ti=this.timeDoJogador(pid); if(ti<0||ti===this.myTeam) return;
+    const p=this.teams[ti].players.find(x=>x.pid===pid);
+    const alvo=this.precoPedido(p), piso=alvo*0.6;
+    const neg={pid, ti, taxa:null, salReal:Math.round(this.pedidoSalarial(p)*(1+Math.random()*0.12)), salPedido:this.pedidoSalarial(p)};
+    this._negAtual=neg;
+    this.negEtapa1(neg, Math.ceil(alvo/1e5)/10);
+  },
+  negEtapa1(neg, sugestaoM, contra){
+    const p=this.teams[neg.ti].players.find(x=>x.pid===neg.pid); if(!p) return;
+    const alvo=this.precoPedido(p), piso=alvo*0.6, clube=this.teams[neg.ti].nome;
+    const sug=contra?contra/1e6:sugestaoM;
+    const pr=this.projecaoCaixa(-sug*1e6, this.pedidoSalarial(p)*1000);
+    this.modalFLK({titulo:`<span class="neg-etapa">Etapa 1 de 3 · taxa com o clube</span>Proposta por ${this.esc(p.nome)}`,
+      corpoHTML:`<div class="mf">${this.cabecaNegociacao(p, neg.ti, 'Pedido', this.fmtReais(alvo))}
+        ${contra?`<div class="mf-destaque"><small>Contraproposta do ${this.esc(clube)}</small><b>${this.fmtReais(contra)}</b><span>Ofereça esse valor (ou mais) e a taxa fecha.</span></div>`:''}
+        <div class="mf-aviso">Abaixo de <b>${this.fmtReais(piso)}</b> o ${this.esc(clube)} recusa direto.</div>
+        <div data-contador>${this.contadorHTML(pr)}</div>
+        <div class="mf-sub">Primeiro acerta-se a TAXA com o clube. O salário vem na etapa seguinte (estimativa: ${this.fmtReais(this.pedidoSalarial(p)*1000)}/mês).</div></div>`,
+      campos:[{id:'oferta', label:'Valor da proposta (em milhões)', tipo:'number', valor:sug.toFixed(1)}],
+      botoes:[{txt:'Cancelar', tipo:'sm'},
+        {txt:'Enviar proposta', tipo:'primary', onClick:(v)=>{
           const oferta=Math.round(parseFloat(String(v.oferta).replace(',','.'))*1e6);
-          if(!(oferta>0)){ this.avisoFLK('Oferta inválida','Digite um valor em milhões (ex: 30).','var(--loss)',{onClose:()=>this.negociarCompraUI(pid)}); return false; }
-          if((this.teams[this.myTeam].saldo||0)<oferta){ this.avisoFLK('Saldo insuficiente','Você não tem caixa para essa oferta.','var(--loss)',{onClose:()=>this.negociarCompraUI(pid)}); return false; }
-          const r=this.avaliarOfertaCompra(pid, oferta);
-          if(r.decisao==='aceita'){
-            const res=this.executarTransferencia(pid, this.myTeam, oferta);
-            if(res.ok){ this.salvarSupabase(true); this.renderShell(); this.showTab('mercado'); }
-            this.avisoFLK(res.ok?'✅ Negócio fechado':'❌ Falhou', res.ok?`${r.fala}<br><br>${res.msg}`:res.msg, res.ok?'var(--lemon)':'var(--loss)');
-          } else if(r.decisao==='recusa'){
-            this.avisoFLK('❌ Proposta recusada', r.fala,'var(--loss)');
-          } else {
-            // contraproposta: novo modal de decisão
-            const cx=this.teams[this.myTeam].saldo||0;
-            this.modalFLK({
-              titulo:'🔁 Contraproposta',
-              corpoHTML:this.cartaoDecisao({
-                topo:{escudo:this.escudoHTML(this.teams[ti],40), nome:this.esc(this.teams[ti].nome), sub:`sobre ${this.esc(p.nome)}`},
-                fala:`“${r.fala}”`,
-                destaque:{rotulo:'Eles pedem', titulo:this.fmtReais(r.contra), desc:`Sua oferta foi ${this.fmtReais(oferta)}.`},
-                kpis:[{rotulo:'Seu caixa', valor:this.fmtReais(cx)},
-                      {rotulo:'Caixa depois', valor:this.fmtReais(cx-r.contra), cor:cx<r.contra?'var(--loss)':'var(--lemon)'}],
-              }),
-              botoes:[
-                {txt:'Recusar', tipo:'sm'},
-                {txt:'Aceitar', tipo:'sm primary', onClick:()=>{
-                  if((this.teams[this.myTeam].saldo||0)<r.contra){ this.avisoFLK('Saldo insuficiente','Caixa insuficiente para a contraproposta.','var(--loss)'); return false; }
-                  const res=this.executarTransferencia(pid, this.myTeam, r.contra);
-                  if(res.ok){ this.salvarSupabase(true); this.renderShell(); this.showTab('mercado'); }
-                  this.avisoFLK(res.ok?'✅ Fechado!':'❌ Falhou', res.ok?res.msg:res.msg, res.ok?'var(--lemon)':'var(--loss)');
-                  return false;
-                }},
-              ],
-            });
-          }
-          return false;
-        }},
-      ],
+          if(!(oferta>0)){ this.avisoFLK('Oferta inválida','Digite um valor em milhões (ex: 3,5).','var(--loss)',{onClose:()=>this.negEtapa1(neg,sug)}); return false; }
+          if((this.teams[this.myTeam].saldo||0)<oferta){ this.avisoFLK('Saldo insuficiente','Você não tem caixa para essa oferta.','var(--loss)',{onClose:()=>this.negEtapa1(neg,sug)}); return false; }
+          const r=this.avaliarOfertaCompra(neg.pid, oferta);
+          if(r.decisao==='aceita'){ neg.taxa=oferta; this.negEtapa2(neg); return false; }
+          if(r.decisao==='recusa'){ this.avisoFLK('❌ Proposta recusada', `O ${this.esc(clube)} nem considerou: “${r.fala}”`,'var(--loss)',{onClose:()=>this.negEtapa1(neg,sug)}); return false; }
+          this.negEtapa1(neg, sug, r.contra); return false;
+        }}],
+      aoAbrir:(el)=>this.ligarContador(el,'oferta',v=>this.projecaoCaixa(-v*1e6, this.pedidoSalarial(p)*1000)),
     });
-    const inp=mNeg.el&&mNeg.el.querySelector('#flkm_oferta'), out=mNeg.el&&mNeg.el.querySelector('#mfCaixaDepois');
-    if(inp&&out) inp.oninput=()=>{ const v=Math.round(parseFloat(String(inp.value).replace(',','.'))*1e6)||0;
-      const d=meuSaldo-v; out.textContent=this.fmtReais(d); out.style.color=d<0?'var(--loss)':'var(--lemon)'; };
-    if(inp) inp.oninput&&inp.oninput();
+  },
+  negEtapa2(neg, contraSal){
+    const p=this.teams[neg.ti].players.find(x=>x.pid===neg.pid); if(!p) return;
+    const sug=contraSal||neg.salPedido;
+    this.modalFLK({titulo:`<span class="neg-etapa">Etapa 2 de 3 · salário com o jogador</span>Salário de ${this.esc(p.nome)}`,
+      corpoHTML:`<div class="mf">${this.cabecaNegociacao(p, neg.ti, 'Taxa acertada', this.fmtReais(neg.taxa))}
+        <div class="mf-destaque"><small>${contraSal?'O empresário contrapropõe':'Taxa aceita'}</small>
+          <b>${contraSal?`Ele pede ${this.fmtReais(contraSal*1000)}/mês`:`O ${this.esc(this.teams[neg.ti].nome)} aceitou ${this.fmtReais(neg.taxa)}`}</b>
+          <span>${contraSal?'Abaixo disso o empresário não fecha.':'Falta acertar o salário com o jogador.'}</span></div>
+        <div class="mf-aviso">O jogador diz que o mínimo é <b>${this.fmtReais(neg.salPedido*1000)}/mês</b>.</div>
+        <div data-contador>${this.contadorHTML(this.projecaoCaixa(-neg.taxa, sug*1000))}</div>
+        <div class="mf-sub">A taxa já está fechada — daqui em diante você negocia só com o jogador.</div></div>`,
+      campos:[{id:'sal', label:'Salário oferecido (em mil por mês)', tipo:'number', valor:String(sug)}],
+      botoes:[{txt:'Cancelar', tipo:'sm'},
+        {txt:'Enviar termos', tipo:'primary', onClick:(v)=>{
+          const sal=Math.round(parseFloat(String(v.sal).replace(',','.')));
+          if(!(sal>0)){ this.avisoFLK('Salário inválido','Digite o salário em mil por mês (ex: 40).','var(--loss)',{onClose:()=>this.negEtapa2(neg,contraSal)}); return false; }
+          if(sal<neg.salPedido){ this.avisoFLK('❌ Abaixo do mínimo',`O jogador não aceita menos de ${this.fmtReais(neg.salPedido*1000)}/mês.`,'var(--loss)',{onClose:()=>this.negEtapa2(neg,contraSal)}); return false; }
+          if(sal<neg.salReal){ this.negEtapa2(neg, neg.salReal); return false; }
+          neg.sal=sal; this.negEtapa3(neg); return false;
+        }}],
+      aoAbrir:(el)=>this.ligarContador(el,'sal',v=>this.projecaoCaixa(-neg.taxa, v*1000)),
+    });
+  },
+  negEtapa3(neg){
+    const p=this.teams[neg.ti].players.find(x=>x.pid===neg.pid); if(!p) return;
+    const risco=this.chanceAposentadoria(p);
+    const pr=this.projecaoCaixa(-neg.taxa, neg.sal*1000);
+    this.modalFLK({titulo:`<span class="neg-etapa">Etapa 3 de 3 · fechar</span>Contratar ${this.esc(p.nome)}`,
+      corpoHTML:`<div class="mf">${this.cabecaNegociacao(p, neg.ti, 'Taxa', this.fmtReais(neg.taxa))}
+        ${risco>0?`<div class="mf-destaque alerta"><small>Risco</small><b>${Math.round(risco*100)}% de chance de se aposentar</b><span>Aos ${p.idade} anos, ${this.esc(p.nome.split(' ')[0])} pode parar no fim desta temporada.</span></div>`:''}
+        <div class="mf-lista"><div><b>Taxa ao ${this.esc(this.teams[neg.ti].nome)}</b><span>${this.fmtReais(neg.taxa)}</span></div>
+          <div><b>Salário</b><span>${this.fmtReais(neg.sal*1000)}/mês</span></div></div>
+        ${this.contadorHTML(pr)}
+        <div class="mf-sub">Clube e jogador já concordaram. Escolha o prazo e confirme.</div></div>`,
+      campos:[{id:'anos', label:'Prazo do contrato (anos: 1 a 4)', tipo:'number', valor:risco>=0.45?'1':'2'}],
+      botoes:[{txt:'Cancelar', tipo:'sm'},
+        {txt:'Aceitar e fechar', tipo:'primary', onClick:(v)=>{
+          const anos=Math.max(1,Math.min(4,Math.round(+v.anos||2)));
+          const res=this.executarTransferencia(neg.pid, this.myTeam, neg.taxa);
+          if(res.ok){ const j=res.jogador; j.salario=neg.sal; j.contratoMeses=anos*12;
+            this.salvarSupabase(true); this.renderShell(); this.showTab('mercado'); }
+          this._negAtual=null;
+          this.avisoFLK(res.ok?'✅ Contratado!':'❌ Falhou', res.ok?`${this.esc(p.nome)} assinou por ${anos} ano${anos>1?'s':''} (${this.fmtReais(neg.sal*1000)}/mês).`:res.msg, res.ok?'var(--lemon)':'var(--loss)');
+          return false;
+        }}],
+    });
+  },
+  // atualiza o contador ao digitar no campo `campo`: fn(valor) → projeção
+  ligarContador(el, campo, fn){
+    const inp=el.querySelector('#flkm_'+campo), box=el.querySelector('[data-contador]'); if(!inp||!box) return;
+    inp.oninput=()=>{ const v=parseFloat(String(inp.value).replace(',','.'))||0; box.innerHTML=this.contadorHTML(fn(v)); };
   },
   // aceitar/recusar oferta recebida (UI). Aceitar SEMPRE passa pelo modal de decisão.
   aceitarOfertaUI(pid, aceitar){
@@ -4538,7 +4611,7 @@ const App={
     const muda=[
       {a:'Divisão', b:sobe?`⬆️ Série ${prox} (acesso!)`:cai?`🔻 Série ${prox} (rebaixado)`:`Série ${prox} (permanece)`},
       P?{a:'Meta da diretoria', b:`${metaOk?'✅ cumprida':'❌ não cumprida'} · cargo ${metaOk?'+'+P.confOk:P.confFail}${metaOk?` · +${this.fmtReais(P.premio)}`:''}`}:null,
-      {a:'Folha salarial', b:`${this.fmtm(folha)}/mês`},
+      {a:'Folha salarial', b:`${this.fmtReais(folha*1000)}/mês`},
       vencem?{a:'Contratos vencendo', b:`${vencem} jogador${vencem>1?'es':''} com contrato de até 12 meses`}:null,
     ].filter(Boolean);
     return {pos:idx+1, n:ordem.length, st, dicas:tres, muda, sobe, cai, prox};

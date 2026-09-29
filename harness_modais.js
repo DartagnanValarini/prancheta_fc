@@ -98,16 +98,16 @@ const shot=async(page,n)=>{ if(SHOTS){ await page.waitForTimeout(150); await pag
   console.log('\n[4] compra');
   const alvo=await page.evaluate(()=>{ const ti=App.teams.findIndex((x,i)=>i!==App.myTeam); return App.teams[ti].players[0].pid; });
   await page.evaluate(pid=>App.negociarCompraUI(pid),alvo);
-  t((await titulo(page))==='💼 Negociar contratação' && /Caixa depois/.test(await page.textContent('#flkModal')),'negociação no padrão, com "caixa depois"');
+  t(/Proposta por/.test(await titulo(page)||'') && /Caixa depois/i.test(await page.textContent('#flkModal')),'negociação no padrão, com o contador (caixa depois)');
   await page.fill('#flkm_oferta','999');
-  const cd=await page.$eval('#mfCaixaDepois',e=>({txt:e.textContent, cor:e.style.color}));
+  const cd=await page.$eval('#flkModal [data-ct="caixa"]',e=>({txt:e.textContent, cor:e.style.color}));
   t(/-/.test(cd.txt) && /loss/.test(cd.cor),'"caixa depois" atualiza ao digitar (negativo em vermelho)');
   await shot(page,'compra');
-  await clicar(page,'Fazer proposta');
+  await clicar(page,'Enviar proposta');
   t((await titulo(page))==='Saldo insuficiente','saldo insuficiente aparece (antes sumia na hora)');
   await clicar(page,'Entendido');
-  t((await titulo(page))==='💼 Negociar contratação','fechar o aviso volta pra negociação');
-  await page.click('#flkModal [data-flkm-x]');
+  t(/Proposta por/.test(await titulo(page)||''),'fechar o aviso volta pra negociação');
+  await page.click('#flkModal .flkm-foot .btn:has-text("Cancelar")');
 
   console.log('\n[5] demissão');
   await page.evaluate(()=>{ App._demissaoPendente=true; App.liveState={done:true}; App.fecharRodada(); });

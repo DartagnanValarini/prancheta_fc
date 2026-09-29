@@ -59,10 +59,17 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     return App.valorMercadoReais(p)*(p.idade<=21?1.25:p.idade<=26?1.1:0.95); },pid);
   await page.evaluate(pid=>App.negociarCompraUI(pid),pid);
   await page.fill('#flkm_oferta', String(Math.ceil(alvo*1.02/1e5)/10));   // 2% acima do preço
-  await page.click('#flkModal .flkm-foot .btn:has-text("Fazer proposta")');
+  await page.click('#flkModal .flkm-foot .btn:has-text("Enviar proposta")');
+  const e2=await page.$eval('#flkModal .flkm-title',e=>e.textContent);
+  t(/Etapa 2 de 3/i.test(e2),'oferta 2% acima do preço: taxa aceita na hora (vai pro salário)');
+  await page.fill('#flkm_sal', String(await page.evaluate(()=>App._negAtual.salReal)));
+  await page.click('#flkModal .flkm-foot .btn:has-text("Enviar termos")');
+  await page.click('#flkModal .flkm-foot .btn:has-text("Aceitar e fechar")');
   const tit=await page.$eval('#flkModal .flkm-title',e=>e.textContent);
   const meu=await page.evaluate(pid=>App.timeDoJogador(pid)===App.myTeam,pid);
-  t(tit==='✅ Negócio fechado' && meu,'oferta 2% acima do preço fecha na hora e o jogador vem pro seu time');
+  t(tit==='✅ Contratado!' && meu,'fecha nas 3 etapas e o jogador vem pro seu time');
+  await page.click('#flkModal .flkm-foot .btn');
+
   console.log('\n[4] filtros do mercado');
   const f=await page.evaluate(()=>{
     const t=App.teams[App.myTeam]; t.saldo=3e6; App.mercadoFiltro=null; App.renderMercado();
