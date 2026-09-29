@@ -171,6 +171,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 **D2. Partida mais imersiva.**
 - Comentários dinâmicos por atributo ("golaço de fora" com `long_shots` alto; "de cabeça" com `heading`), feedback de fadiga (piscar vermelho < 40% energia), finalizações/escanteios/posse na tela.
 - Sobe de "bom" pra "gostoso de assistir".
+- **✅ FEITO (29/09/2026)**: painel **Seu jogo** no topo da Arena ao vivo: placar grande com escudos, barras de **posse / finalizações / no alvo / escanteios** (≈ 11 chutes, 5 no alvo e 4–5 escanteios por time; o mais forte tem mais posse em ~3 de 4 jogos; estilo ofensivo/defensivo mexe ±4 p.p.), **narração lance a lance** (gols, defesas, bolas na trave, cartões, trocas, escanteios, apito). O texto do gol depende de **quem fez**: cabeceador + cruzamento → de cabeça; bom de longe → de fora da área; driblador → driblou e bateu; velocista → arrancada. **Fadiga**: titular abaixo de 60% em amarelo, abaixo de 40% piscando em vermelho, com botão **Trocar**. É camada de TV: o motor de gols não muda. Gate: `harness_d2`.
 
 **D3. Estabilidade e bordas.**
 - Carreira longa (10+ temporadas) sem quebra de save. Telas de vazio decentes, erro amigável. Novo harness "carreira longa" como gate de release, junto dos existentes.

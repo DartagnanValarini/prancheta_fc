@@ -2301,6 +2301,8 @@ const App={
       Motor.desgastarMinuto(s.campoH); Motor.desgastarMinuto(s.campoA);
       // CPU faz substituições inteligentes (não no jogo do usuário)
       this.cpuSubstituir(s);
+      // D2: estatísticas + narração do MEU jogo
+      if(s.h===this.myTeam||s.a===this.myTeam) this.lancesMeuJogo(s, fH, fA, n0);
       // D4: som só pro MEU jogo (e não no "pular")
       if(!L._rapido && (s.h===this.myTeam||s.a===this.myTeam)){
         const meuLado=s.h===this.myTeam?'casa':'fora';
@@ -2446,6 +2448,7 @@ const App={
   // recomputa placar/último lance de cada jogo e reordena a tabela quando há gol
   atualizarPlacaresAoVivo(){
     const L=this.liveState; const m=L.min;
+    this.atualizarMeuJogo();   // D2: painel "Seu jogo"
     const clk=document.getElementById('liveClock');
     if(clk) clk.textContent=m>=90?'FIM':(L.fase==='intervalo'?'INTERVALO':`${m}'`+(m<=45?' · 1ºT':' · 2ºT'));
     const prog=document.getElementById('liveProg');
@@ -3643,6 +3646,7 @@ const App={
     })();
 
     el.innerHTML=`${topo}
+      ${live&&this.meuSim()?'<div class="panel mj" id="meuJogo"></div>':''}
       <div class="grid-2">
         <div class="panel">
           <div class="ptitle-row">
@@ -5374,6 +5378,113 @@ const App={
     const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+v; this.addExtrato('Premiação Série D: '+txt, +v); Som.tocar(chave===1?'titulo':'moeda');
     (this._premiosFase||(this._premiosFase=[])).push({txt, v});
     return v;
+  },
+
+  /* ====================================================================
+     D2 — PARTIDA IMERSIVA: só o MEU jogo ganha estatísticas (posse,
+     finalizações, no alvo, escanteios), narração lance a lance com texto
+     que depende dos atributos de quem fez (cabeça, de fora, drible,
+     arrancada…) e alerta de fadiga dos meus titulares. Nada disso muda o
+     resultado: gols continuam vindo do motor; aqui é só a camada de TV.
+     ==================================================================== */
+  estatMeuJogo(s){
+    if(!s.est) s.est={posse:[0,0], fin:[0,0], alvo:[0,0], esc:[0,0]};
+    if(!s.narr) s.narr=[];
+    return s.est;
+  },
+  _nomeCurto(n){ const p=String(n||'').trim().split(/\s+/); return p.length>1?p[p.length-1]:p[0]||''; },
+  _sorteio(arr){ return arr[Math.floor(Math.random()*arr.length)]; },
+  // tipo do gol pelos atributos do autor (e do cruzamento de quem deu o passe)
+  tipoDeGol(autor, assist){
+    const a=(autor&&autor.ref&&autor.ref.attrs)||{}, b=(assist&&assist.ref&&assist.ref.attrs)||{};
+    const v=k=>Math.max(1,+a[k]||50);
+    const pesos={
+      cabeca: Math.pow(v('heading'),3)*(assist?(1+(+b.crossing||50)/60):0.4),
+      fora:   Math.pow(v('long_shots'),3)*0.8,
+      drible: Math.pow(v('dribbling'),3)*0.7,
+      arrancada: Math.pow((v('pace')+v('acceleration'))/2,3)*0.7,
+      finalizacao: Math.pow(v('finishing'),3)*1.2,
+    };
+    const tot=Object.values(pesos).reduce((x,y)=>x+y,0); let r=Math.random()*tot;
+    for(const k in pesos){ r-=pesos[k]; if(r<=0) return k; }
+    return 'finalizacao';
+  },
+  TEXTO_GOL:{
+    cabeca:['{a} sobe mais que todo mundo e testa pro fundo da rede!','Cabeçada certeira de {a}!','{a} de cabeça, no cantinho!'],
+    fora:['{a} arrisca de fora da área… GOLAÇO!','Bomba de {a} de longe, sem chance pro goleiro!','{a} solta o pé de fora da área e acerta a gaveta!'],
+    drible:['{a} passa por dois marcadores e toca na saída do goleiro!','Que jogada de {a}! Driblou e bateu cruzado!','{a} deixa o zagueiro no chão e marca!'],
+    arrancada:['{a} dispara em velocidade, ninguém alcança, e marca!','Contra-ataque rápido, {a} sai na cara e não perdoa!','{a} ganha na corrida e empurra pra rede!'],
+    finalizacao:['{a} recebe na área e bate firme, gol!','{a} aparece livre e finaliza com categoria!','Oportunista, {a} completa pro gol!'],
+  },
+  TEXTO_ASSIST:{cabeca:'cruzamento de {b}', fora:'rolada de {b}', drible:'passe de {b}', arrancada:'lançamento de {b}', finalizacao:'passe de {b}'},
+  // chamado a cada minuto pro MEU jogo, depois do motor decidir gols e cartões
+  lancesMeuJogo(s, fH, fA, n0){
+    const L=this.liveState, m=L.min, est=this.estatMeuJogo(s);
+    const nome=i=>this.teams[i].nome, lados=[['casa',0,s.h,s.campoH,s.campoA],['fora',1,s.a,s.campoA,s.campoH]];
+    const narrar=(txt,tipo,time)=>{ s.narr.push({m,txt,tipo,time}); if(s.narr.length>40) s.narr.shift(); };
+    // posse: minuto a minuto, pela força relativa (com ruído)
+    const EST={ofensivo:0.04, normal:0, defensivo:-0.04}, eH=EST[(this.cfg[s.h]||{}).estilo]||0, eA=EST[(this.cfg[s.a]||{}).estilo]||0;
+    const pH=Math.max(0.28,Math.min(0.72, Math.pow(fH,2.5)/(Math.pow(fH,2.5)+Math.pow(fA,2.5)) + eH - eA + (Math.random()-0.5)*0.3));
+    est.posse[Math.random()<pH?0:1]++;
+    // eventos do motor neste minuto
+    s.evs.slice(n0).forEach(e=>{
+      const k=e.time==='casa'?0:1, ti=k?s.a:s.h;
+      if(e.tipo==='gol'){
+        est.fin[k]++; est.alvo[k]++;
+        const campo=k?s.campoA:s.campoH, autor=campo.find(c=>c.nome===e.quem)||{nome:e.quem}, assist=e.assist?campo.find(c=>c.nome===e.assist):null;
+        const tipo=this.tipoDeGol(autor,assist); e.estilo=tipo;
+        let txt=this._sorteio(this.TEXTO_GOL[tipo]).replace('{a}',this.esc(e.quem||nome(ti)));
+        if(e.assist) txt+=` <span class="nr-ast">(${this.TEXTO_ASSIST[tipo].replace('{b}',this.esc(this._nomeCurto(e.assist)))})</span>`;
+        narrar(`⚽ GOL DO ${this.esc(nome(ti)).toUpperCase()}! ${txt}`,'gol',e.time);
+      } else if(e.tipo==='amarelo') narrar(`🟨 Amarelo pra ${this.esc(e.quem)} (${this.esc(this.teams[ti].abrev||nome(ti))}).`,'cartao',e.time);
+      else if(e.tipo==='vermelho') narrar(`🟥 Expulso! ${this.esc(e.quem)} ${e.motivo?'leva o 2º amarelo':'vê o vermelho direto'} e deixa o ${this.esc(nome(ti))} com um a menos.`,'cartao',e.time);
+      else if(e.tipo==='sub') narrar(`⇄ Entra ${this.esc(e.quem)} no ${this.esc(nome(ti))}.`,'sub',e.time);
+    });
+    // finalizações que não viraram gol + escanteios (≈ 12 chutes e 5 escanteios por time/jogo)
+    lados.forEach(([time,k,ti,meu,adv])=>{
+      const share=k?1-pH:pH;
+      if(Math.random()<0.21*share){
+        est.fin[k]++;
+        const pool=meu.filter(c=>c.posicao!=='GK' && !(c.ref&&c.ref._expulso)); if(!pool.length) return;
+        const quem=this._sorteio(pool), a=(quem.ref&&quem.ref.attrs)||{}, gk=adv.find(c=>c.posicao==='GK');
+        const deFora=(+a.long_shots||50)>(+a.finishing||50) && Math.random()<0.6;
+        if(Math.random()<0.38){ est.alvo[k]++;
+          narrar(this._sorteio([`🧤 ${this.esc(this._nomeCurto(quem.nome))} ${deFora?'chuta de fora':'finaliza'}, ${gk?this.esc(this._nomeCurto(gk.nome)):'o goleiro'} defende!`,
+            `🧤 Boa defesa de ${gk?this.esc(this._nomeCurto(gk.nome)):'o goleiro'} no chute de ${this.esc(this._nomeCurto(quem.nome))}.`]),'chance',time);
+        } else if(Math.random()<0.35) narrar(this._sorteio([`💨 ${this.esc(this._nomeCurto(quem.nome))} ${deFora?'arrisca de longe':'bate'}… pra fora!`,
+            `😱 Quase! ${this.esc(this._nomeCurto(quem.nome))} tira tinta da trave.`]),'chance',time);
+      }
+      if(Math.random()<0.1*share){ est.esc[k]++; if(Math.random()<0.25) narrar(`🚩 Escanteio pro ${this.esc(nome(ti))}.`,'esc',time); }
+    });
+    if(m===45) narrar('⏸️ Fim do primeiro tempo.','apito');
+    if(m===90) narrar('🏁 Fim de jogo!','apito');
+  },
+  // painel "Seu jogo" na Arena (atualiza a cada minuto)
+  meuJogoHTML(){
+    const L=this.liveState, s=this.meuSim(); if(!L||!s) return '';
+    const est=this.estatMeuJogo(s), eu=s.h===this.myTeam?0:1;
+    const th=this.teams[s.h], ta=this.teams[s.a];
+    const totP=Math.max(1,est.posse[0]+est.posse[1]), pos=[Math.round(est.posse[0]/totP*100)]; pos[1]=100-pos[0];
+    const barra=(rot,a,b,suf)=>{ const t=Math.max(1,a+b), pa=Math.round(a/t*100);
+      return `<div class="mj-est"><b>${a}${suf||''}</b><div class="mj-bar"><i style="width:${pa}%" class="${eu===0?'meu':''}"></i><i style="width:${100-pa}%" class="${eu===1?'meu':''}"></i></div><b>${b}${suf||''}</b><small>${rot}</small></div>`; };
+    const campo=eu===0?s.campoH:s.campoA;
+    const cans=[...campo].filter(c=>c.ref && !c.ref._expulso && (c.energia??100)<60).sort((x,y)=>x.energia-y.energia).slice(0,4);
+    const fad=cans.length?`<div class="mj-fad">🔋 ${cans.map(c=>`<span class="${c.energia<40?'crit':'baixa'}">${this.esc(this._nomeCurto(c.nome))} ${Math.round(c.energia)}%</span>`).join('')}${!L.done&&cans.some(c=>c.energia<40)?`<button class="btn sm" id="mjSub">Trocar</button>`:''}</div>`:'';
+    const narr=[...(s.narr||[])].reverse().slice(0,6);
+    return `<div class="mj-top">
+        <div class="mj-time ${eu===0?'eu':''}">${this.escudoHTML(th,34)}<span>${this.esc(th.nome)}</span></div>
+        <div class="mj-placar"><b>${s.gc}</b><span>×</span><b>${s.gf}</b></div>
+        <div class="mj-time fora ${eu===1?'eu':''}"><span>${this.esc(ta.nome)}</span>${this.escudoHTML(ta,34)}</div>
+      </div>
+      <div class="mj-grid">
+        <div class="mj-ests">${barra('Posse',pos[0],pos[1],'%')}${barra('Finalizações',est.fin[0],est.fin[1])}${barra('No alvo',est.alvo[0],est.alvo[1])}${barra('Escanteios',est.esc[0],est.esc[1])}${fad}</div>
+        <div class="mj-narr">${narr.length?narr.map((n,i)=>`<div class="nr nr-${n.tipo} ${n.time?(n.time===(eu===0?'casa':'fora')?'nr-meu':'nr-adv'):''} ${i===0?'novo':''}"><span class="nr-m">${n.m}'</span><span>${n.txt}</span></div>`).join(''):`<div class="nr"><span class="nr-m">0'</span><span>Bola rolando!</span></div>`}</div>
+      </div>`;
+  },
+  atualizarMeuJogo(){
+    const box=document.getElementById('meuJogo'); if(!box) return;
+    box.innerHTML=this.meuJogoHTML();
+    const b=document.getElementById('mjSub'); if(b) b.onclick=()=>this.pausarParaSub();
   },
 
   /* ---------- COLETIVA PÓS-JOGO (UI) ---------- */
