@@ -37,7 +37,7 @@ O que **já existe e funciona** em `app.js` (~5.150 linhas, monolito injetado no
 
 O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
 
-- ❌ **Assistências** — o motor só registra o autor do gol (o A2 pedia artilharia **e** assistências).
+- ✅ **Assistências (29/09/2026)** — `Motor.assistente()`: ~78% dos gols têm passe, ponderado por posição (meias/pontas criam mais) e passe+visão+cruzamento; +0,8 na nota da partida; painel 🅰️ na aba Estatísticas, J/G/A na ficha, "🅰️" no lance ao vivo. Save **v10** (`assist`/`assistTemp`; v9 carrega zerado). Gate: `harness_assistencias`.
 - ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
 - ❌ **Carreira longa como gate** (D3) e **áudio** (D4).
 - 🟡 **Layout das outras abas** (Elenco, Mercado, Campeonatos, Finanças) — cabem no celular sem rolagem horizontal, mas ainda não foram redesenhadas no padrão da página do clube.

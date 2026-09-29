@@ -615,6 +615,7 @@ const Rating = {
        ctx = {
          slot, role,          // onde jogou (adequação real)
          golsFeitos,          // gols do jogador na partida (_golsRodada)
+         assistencias,        // passes pra gol na partida (_assistRodada)
          golsSofridosTime,    // gols que o TIME dele levou (nota do GK/defesa)
          resultado,           // 'v' | 'e' | 'd' (do time do jogador)
          amarelos, expulso,   // disciplina na partida
@@ -647,6 +648,9 @@ const Rating = {
     // 3) gols marcados — peso alto, decisivo pra artilheiro virar nota alta
     const gols = ctx.golsFeitos||0;
     if(gols>0) nota += gols*1.3;
+    // 3b) assistências — menos que o gol, mas o garçom também sobe
+    const ast = ctx.assistencias||0;
+    if(ast>0) nota += ast*0.8;
 
     // 4) clean sheet / gols sofridos — pesa pro GK e zaga, leve pro resto
     const gsof = ctx.golsSofridosTime||0;
@@ -1575,7 +1579,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:9,   // v9: forma recente (5 últimas notas de jogador/time + V/E/D)
+  SCHEMA_VERSION:10,  // v9: forma recente · v10: assistências (assist/assistTemp)
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -2013,12 +2017,14 @@ const App={
       const fA=Motor.forcaCampo(s.campoA);
       const pH=Motor.chanceGol(fH,fA,cfgH.estilo,cfgA.estilo,true);
       const pA=Motor.chanceGol(fA,fH,cfgA.estilo,cfgH.estilo,false);
-      if(Math.random()<pH){ s.gc++; const art=this.artilheiro(s.campoH);
+      if(Math.random()<pH){ s.gc++; const art=this.artilheiro(s.campoH), ast=this.assistente(s.campoH,art);
         if(art&&art.ref) art.ref._golsRodada=(art.ref._golsRodada||0)+1;
-        s.evs.push({m,tipo:'gol',time:'casa',quem:art?art.nome:''}); }
-      if(Math.random()<pA){ s.gf++; const art=this.artilheiro(s.campoA);
+        if(ast&&ast.ref) ast.ref._assistRodada=(ast.ref._assistRodada||0)+1;
+        s.evs.push({m,tipo:'gol',time:'casa',quem:art?art.nome:'',assist:ast?ast.nome:''}); }
+      if(Math.random()<pA){ s.gf++; const art=this.artilheiro(s.campoA), ast=this.assistente(s.campoA,art);
         if(art&&art.ref) art.ref._golsRodada=(art.ref._golsRodada||0)+1;
-        s.evs.push({m,tipo:'gol',time:'fora',quem:art?art.nome:''}); }
+        if(ast&&ast.ref) ast.ref._assistRodada=(ast.ref._assistRodada||0)+1;
+        s.evs.push({m,tipo:'gol',time:'fora',quem:art?art.nome:'',assist:ast?ast.nome:''}); }
       // --- CARTÕES: atribuídos a um jogador real, com 2o amarelo e vermelho direto ---
       this.sortearCartao(s, s.campoH, 'casa', cart[cfgH.marcacao], m);
       this.sortearCartao(s, s.campoA, 'fora', cart[cfgA.marcacao], m);
@@ -2084,6 +2090,26 @@ const App={
       return Math.pow(xg, 2.2) * rend + 0.004;      // ^2.2 = concentra no ST
     });
     const tot=pesos.reduce((a,b)=>a+b,0);
+    let r=Math.random()*tot;
+    for(let i=0;i<pool.length;i++){ r-=pesos[i]; if(r<=0) return pool[i]; }
+    return pool[pool.length-1];
+  },
+
+  // Quem deu o passe: ~78% dos gols têm assistência. Pondera pela POSIÇÃO
+  // (meias/pontas criam mais, zagueiro/goleiro quase nunca) e por passe+visão+cruzamento.
+  CHANCE_ASSIST:0.78,
+  ASSIST_POS:{GK:0.03,DC:0.15,DL:0.5,DR:0.5,WBL:0.6,WBR:0.6,DM:0.4,MC:0.75,ML:0.85,MR:0.85,AMC:1.0,AML:0.95,AMR:0.95,ST:0.55},
+  assistente(campo, autor){
+    if(Math.random()>=this.CHANCE_ASSIST) return null;
+    const pool=campo.filter(c=>c!==autor && c.ref && !c.ref._expulso);
+    if(!pool.length) return null;
+    const pesos=pool.map(c=>{
+      const posFM = PESOS_POS[c.posicao] ? c.posicao : (SLOT_TO_POS[c.posicao]||'MC');
+      const a=c.ref.attrs||{};
+      const cria=((a.passing||50)+(a.vision||50)+(a.crossing||50))/150;   // ~1.0 pra um criador médio
+      return Math.pow(this.ASSIST_POS[posFM]??0.5, 1.6) * Math.pow(cria, 2) + 0.005;
+    });
+    const tot=pesos.reduce((x,y)=>x+y,0);
     let r=Math.random()*tot;
     for(let i=0;i<pool.length;i++){ r-=pesos[i]; if(r<=0) return pool[i]; }
     return pool[pool.length-1];
@@ -2156,7 +2182,7 @@ const App={
       const ev=row.querySelector('.lev');
       if(ultimo){
         const ic=ultimo.tipo==='gol'?'⚽':ultimo.tipo==='sub'?'⇄':'▮';
-        const txt=ultimo.tipo==='gol'?`${ultimo.quem||''} ${ultimo.m}'`
+        const txt=ultimo.tipo==='gol'?`${ultimo.quem||''} ${ultimo.m}'${ultimo.assist?` · 🅰️ ${String(ultimo.assist).split(' ').slice(-1)[0]}`:''}`
                  :ultimo.tipo==='sub'?`entra ${ultimo.quem} ${ultimo.m}'`
                  :`amarelo ${ultimo.m}'`;
         ev.innerHTML=`<span class="lev-ic">${ic}</span> ${txt}`;
@@ -2221,6 +2247,7 @@ const App={
         const nota=Rating.matchRating(c.ref, {
           slot:c.posicao, role:c.role,
           golsFeitos:c.ref._golsRodada||0,
+          assistencias:c.ref._assistRodada||0,
           golsSofridosTime:gsofTime,
           resultado:res,
           amarelos:c.ref._amarelosRodada||0,
@@ -2247,7 +2274,7 @@ const App={
         const meuCampo = (h===this.myTeam) ? campoH : campoA;
         let craque=null;
         meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota)){
-          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
+          craque={nome:c.ref.nome, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, assist:c.ref._assistRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
         this._craqueRodada=craque;
       }
       // A4: atualiza MORAL de todos os jogadores dos dois times (jogaram ou não)
@@ -2265,6 +2292,11 @@ const App={
           c.ref.gols=(c.ref.gols||0)+c.ref._golsRodada;              // carreira (acumula sempre)
           c.ref.golsTemp=(c.ref.golsTemp||0)+c.ref._golsRodada;      // temporada atual (zera todo ano)
           delete c.ref._golsRodada;
+        }
+        if(c.ref._assistRodada){
+          c.ref.assist=(c.ref.assist||0)+c.ref._assistRodada;         // carreira
+          c.ref.assistTemp=(c.ref.assistTemp||0)+c.ref._assistRodada; // temporada
+          delete c.ref._assistRodada;
         }
       }});
       // --- DISCIPLINA: consolida cartões e aplica suspensões ---
@@ -3851,11 +3883,11 @@ const App={
           <div class="ficha-line"><span>Pé</span><b>${sel.peDominante||'–'}${sel.peFraco?` (fraco ${sel.peFraco}★)`:''}</b></div>
           <div class="ficha-line"><span>Altura / Peso</span><b>${sel.altura?sel.altura.toFixed(2)+'m':'–'} / ${sel.peso?Math.round(sel.peso)+'kg':'–'}</b></div>
           <div class="ficha-line"><span>Contrato</span><b>${this.contratoTxt(sel.contratoMeses)}</b></div>
-          <div class="ficha-line"><span>Temporada (J/G)</span><b>${sel.jogosTemp||0} / ${sel.golsTemp||0}</b></div>
+          <div class="ficha-line"><span>Temporada (J/G/A)</span><b>${sel.jogosTemp||0} / ${sel.golsTemp||0} / ${sel.assistTemp||0}</b></div>
           <div class="ficha-line"><span>Nota média</span>${this.notaChip(this.notaMediaTemp(sel))}${sel._notaRodada?` <span style="color:var(--muted);font-size:.85em">(últ. ${this.notaChip(sel._notaRodada)})</span>`:''}</div>
           ${(()=>{ const ehRes=onzeNums&&!onzeNums.includes(sel.numero); const st=Rating.statusJogador(sel,ehRes); const m=Rating.moralDe(sel);
             return `<div class="ficha-line"><span>Moral</span><b style="color:${st.cor}">${st.emoji} ${st.txt}</b> <span style="color:var(--muted);font-size:.85em">(${Math.round(m)})</span></div>`; })()}
-          <div class="ficha-line"><span>Carreira (J/G)</span><b>${sel.jogos||0} / ${sel.gols||0}</b></div>
+          <div class="ficha-line"><span>Carreira (J/G/A)</span><b>${sel.jogos||0} / ${sel.gols||0} / ${sel.assist||0}</b></div>
           <div class="ficha-line"><span>Disciplina</span><b>🟨 ${sel.amarelos||0} · 🟥 ${sel.expulsoes||0}</b></div>
           ${this.indisponivel(sel)?`<div class="ficha-line"><span>Situação</span><b style="color:var(--loss)">${this.motivoIndisp(sel)}</b></div>`:''}
         </div>
@@ -4256,6 +4288,13 @@ const App={
       .sort((a,b)=>(b.p.golsTemp||0)-(a.p.golsTemp||0) || (b.p._somaNotas||0)-(a.p._somaNotas||0))
       .slice(0,n);
   },
+  // líderes de assistência da temporada (assistTemp > 0)
+  topAssistencias(n=10){
+    return this._jogadoresDaMinhaDivisao()
+      .filter(o=>(o.p.assistTemp||0)>0)
+      .sort((a,b)=>(b.p.assistTemp||0)-(a.p.assistTemp||0) || (b.p.golsTemp||0)-(a.p.golsTemp||0))
+      .slice(0,n);
+  },
   // melhores notas médias da temporada (mínimo de jogos pra evitar amostra pequena)
   topNotas(n=10, minJogos=3){
     return this._jogadoresDaMinhaDivisao()
@@ -4501,6 +4540,12 @@ const App={
         <span class="cmp-nome">${this.esc(o.p.nome)} <span style="color:var(--muted);font-size:.85em">${o.timeAbrev||''}</span>${flag(o.ti)}</span>
         <span class="cmp-pts">${o.p.golsTemp||0}</span>
       </div>`;
+      const asts=this.topAssistencias(10);
+      const linhaAst=(o,pos)=>`<div class="cmp-row ${o.ti===this.myTeam?'eu':''}">
+        <span class="cmp-pos">${pos+1}º</span>
+        <span class="cmp-nome">${this.esc(o.p.nome)} <span style="color:var(--muted);font-size:.85em">${o.timeAbrev||''}</span>${flag(o.ti)}</span>
+        <span class="cmp-pts">${o.p.assistTemp||0}</span>
+      </div>`;
       const linhaNota=(o,pos)=>`<div class="cmp-row ${o.ti===this.myTeam?'eu':''}">
         <span class="cmp-pos">${pos+1}º</span>
         <span class="cmp-nome">${this.esc(o.p.nome)} <span style="color:var(--muted);font-size:.85em">${o.timeAbrev||''}</span>${flag(o.ti)}</span>
@@ -4509,7 +4554,7 @@ const App={
       body.innerHTML=`
         ${craque?`<div class="cmp-nota" style="border-color:var(--lemon)">
           ⭐ <b>Craque da última rodada:</b> ${this.esc(craque.nome)} —
-          nota <b style="color:${this.corNota(craque.nota)}">${craque.nota.toFixed(1)}</b>${craque.gols>0?` · ${craque.gols} gol${craque.gols>1?'s':''}`:''}
+          nota <b style="color:${this.corNota(craque.nota)}">${craque.nota.toFixed(1)}</b>${craque.gols>0?` · ${craque.gols} gol${craque.gols>1?'s':''}`:''}${craque.assist>0?` · ${craque.assist} assist.`:''}
         </div>`:''}
         <div class="cmp-grupo meu" data-tut="objetivos" style="margin-bottom:12px">
           <div class="cmp-grupo-h">🎯 Objetivos da temporada</div>
@@ -4529,6 +4574,10 @@ const App={
           <div class="cmp-grupo meu">
             <div class="cmp-grupo-h">⚽ Artilharia · ${nomeDiv}</div>
             ${arts.length?arts.map(linhaArt).join(''):'<div class="cmp-nota">Ainda não há gols nesta temporada.</div>'}
+          </div>
+          <div class="cmp-grupo meu">
+            <div class="cmp-grupo-h">🅰️ Assistências · ${nomeDiv}</div>
+            ${asts.length?asts.map(linhaAst).join(''):'<div class="cmp-nota">Ainda não há assistências nesta temporada.</div>'}
           </div>
           <div class="cmp-grupo">
             <div class="cmp-grupo-h">📈 Melhores notas <span style="color:var(--muted);font-size:.8em">(mín. 3 jogos)</span></div>
@@ -5166,7 +5215,7 @@ const App={
     // 2) gols/jogos de CARREIRA acumulam; os da TEMPORADA zeram; disciplina/energia idem
     this.teams.forEach(t=>t.players.forEach(p=>{
       p.energia=100; delete p.lesionado;
-      p.golsTemp=0; p.jogosTemp=0;
+      p.golsTemp=0; p.jogosTemp=0; p.assistTemp=0;
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
       // A1: notas são por temporada — zeram junto com gols/jogos
       p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
@@ -5195,7 +5244,7 @@ const App={
   reiniciarTemporadaPara(ti){
     this.myTeam=ti; this.squadView=ti;
     this.teams.forEach(t=>t.players.forEach(p=>{
-      p.energia=100; delete p.lesionado; p.golsTemp=0; p.jogosTemp=0;
+      p.energia=100; delete p.lesionado; p.golsTemp=0; p.jogosTemp=0; p.assistTemp=0;
       p.amarelos=0; delete p.suspenso; delete p._motivoSusp;
       p._somaNotas=0; p._qtdNotas=0; delete p._melhorNota; delete p._notaRodada;
       p._ovBase=Rating.overallGlobal(p);   // item 4: base da tendência de overall
@@ -5221,6 +5270,7 @@ const App={
         numero:p.numero, energia:Math.round(p.energia), gols:p.gols||0,
         jogos:p.jogos||0, lesionado:p.lesionado||0,
         golsTemp:p.golsTemp||0, jogosTemp:p.jogosTemp||0,
+        assist:p.assist||0, assistTemp:p.assistTemp||0,             // v10
         amarelos:p.amarelos||0, expulsoes:p.expulsoes||0, suspenso:p.suspenso||0, motivoSusp:p._motivoSusp||'',
         somaNotas:p._somaNotas||0, qtdNotas:p._qtdNotas||0, melhorNota:p._melhorNota||0, notaRodada:p._notaRodada||0,
         moral:p.moral!=null?p.moral:65, semJogar:p._semJogar||0,   // A4
@@ -5423,6 +5473,7 @@ const App={
         const p=pool[pid], sp=s.jogadoresById[pid]; if(!p) continue;
         p.numero=sp.numero; p.energia=sp.energia; p.gols=sp.gols; p.jogos=sp.jogos;
         p.golsTemp=sp.golsTemp||0; p.jogosTemp=sp.jogosTemp||0;
+        p.assist=Math.max(0,+sp.assist||0); p.assistTemp=Math.max(0,+sp.assistTemp||0);   // v10 (v9 → 0)
         p.amarelos=sp.amarelos||0; p.expulsoes=sp.expulsoes||0;
         p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
         p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4

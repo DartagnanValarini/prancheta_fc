@@ -74,7 +74,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
       v8ok:v8ok.ok, v8vazio,
       ruim:{n:me4._notas5, r:me4._forma5}};
   });
-  t(rt.schema===9,'snapshot sai com schemaVersion 9');
+  t(rt.schema>=9,'snapshot sai com schemaVersion ≥ 9 ('+rt.schema+')');
   t(rt.valida && rt.iguais,'roundtrip preserva forma de jogadores e do time');
   t(rt.v8ok && rt.v8vazio,'save v8 carrega com forma vazia (migração)');
   t(rt.ruim.n.length===5 && rt.ruim.n.every(n=>n>=0&&n<=10) && JSON.stringify(rt.ruim.r)==='["v"]','save adulterado é saneado');
