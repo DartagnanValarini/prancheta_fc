@@ -289,7 +289,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ### Calendário e ambiente
 12. **Estadual como pré-temporada** (pulável) — testa o elenco e dá título extra ao time pequeno.
-13. **Humor da torcida → bilheteria** — vitória +, derrota −, clássico perdido pesa mais; torcida eufórica aumenta e revoltada reduz a bilheteria.
+13. **Humor da torcida → bilheteria** — **✅ FEITO (29/09/2026)**: humor 0–100 (neutro 60): vitória +4, derrota −5, goleada ±2/3 a mais, **clássico (mesma cidade) vale o dobro**, volta 3%/rodada pro neutro. A ocupação do estádio passa a depender principalmente da torcida (±25 p.p.) e um pouco da confiança da diretoria. 5 estados (Eufórica 🔥 … Revoltada 🤬) no cabeçalho do clube; salvo; clube novo começa neutro. Gate: `harness_torcida`. *Ideia original:* — vitória +, derrota −, clássico perdido pesa mais; torcida eufórica aumenta e revoltada reduz a bilheteria.
 14. **Botão "Selecionar descansados"** na escalação (escala priorizando energia). — **✅ FEITO (28/09/2026)** no §6.2: botão **🔋 Descansados** na Formação (e, desde 29/09, com a escalação por atribuição ótima).
 15. **Premiação por fase na copa** — cada fase avançada paga; copa vira fonte de caixa pro time pequeno.
 

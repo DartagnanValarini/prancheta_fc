@@ -1050,6 +1050,7 @@ const Menu={
     this.mostrarOferta();
   },
   async comecarCarreira(ti){
+    App.torcida=App.TORCIDA_NEUTRA;   // torcida é do clube: clube novo, humor neutro
     const novoJogo=!this._demissaoFlow;
     App.myTeam=ti; App.squadView=ti;
     App.slotAtual=this.slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
@@ -2337,6 +2338,8 @@ const App={
           const t=this.teams[this.myTeam]; t.saldo=(t.saldo||0)+renda;
           this.addExtrato('Bilheteria vs '+(this.teams[advTi]?.abrev||'?'), +renda);
         }
+        // --- TORCIDA: reage ao resultado (clássico pesa o dobro) ---
+        this.reagirTorcida({resultado, meusGols, golsAdv, advTi});
       }
       // --- MATCH RATING (A1): nota 0–10 de cada jogador em campo ---
       // Calculado ANTES de limpar _golsRodada, pois a nota lê os gols da partida.
@@ -2760,7 +2763,10 @@ const App={
     const preco=this.PRECO_INGRESSO[t.divisao]||15;
     // ocupação base 55%, sobe com confiança (usuário) e com o tamanho do adversário
     let ocup=0.55;
-    if(ti===this.myTeam && this.confianca!=null) ocup += (this.confianca-60)/100*0.35;
+    if(ti===this.myTeam){
+      ocup += (this.humorTorcida()-60)/100*0.5;                            // torcida enche (ou esvazia) o estádio
+      if(this.confianca!=null) ocup += (this.confianca-60)/100*0.12;      // diretoria confiante investe na divulgação
+    }
     if(advTi!=null){
       const fAdv=this.forcaBaseTime(advTi), fMe=this.forcaBaseTime(ti);
       if(fAdv>=fMe) ocup += 0.12;   // clássico/jogo grande enche mais
@@ -2768,6 +2774,34 @@ const App={
     ocup=Math.max(0.25,Math.min(1,ocup));
     return Math.round(cap*ocup*preco);
   },
+  /* ---------- HUMOR DA TORCIDA (§6.1 item 13) ----------
+     0–100 (neutra 60). Vitória +, derrota −; goleada pesa mais; CLÁSSICO
+     (rival da mesma cidade) vale o dobro. Volta devagar pro neutro.
+     Enche ou esvazia o estádio → bilheteria (rendaBilheteria). */
+  TORCIDA_NEUTRA:60,
+  humorTorcida(){ return this.torcida==null?this.TORCIDA_NEUTRA:this.torcida; },
+  ehClassico(a,b){ const A=this.teams[a], B=this.teams[b]; return !!(A&&B&&A.cidade&&B.cidade&&A.cidade===B.cidade); },
+  reagirTorcida({resultado, meusGols, golsAdv, advTi}){
+    let d = resultado==='v'?4 : resultado==='d'?-5 : 0;
+    const saldo=(meusGols||0)-(golsAdv||0);
+    if(saldo>=3) d+=2; else if(saldo<=-3) d-=3;
+    const classico=this.ehClassico(this.myTeam, advTi);
+    if(classico) d*=2;
+    let h=this.humorTorcida()+d;
+    h += (this.TORCIDA_NEUTRA-h)*0.03;
+    this.torcida=Math.max(0,Math.min(100,Math.round(h*10)/10));
+    this._ultimoTorcida={d:Math.round(d), classico};
+    return this.torcida;
+  },
+  estadoTorcida(h){
+    h=h==null?this.humorTorcida():h;
+    if(h>=80) return {txt:'Eufórica', ic:'🔥', cor:'var(--lemon)'};
+    if(h>=65) return {txt:'Animada', ic:'😃', cor:'var(--lemon)'};
+    if(h>=45) return {txt:'Desconfiada', ic:'😐', cor:'#e8c547'};
+    if(h>=30) return {txt:'Impaciente', ic:'😠', cor:'var(--loss)'};
+    return {txt:'Revoltada', ic:'🤬', cor:'var(--loss)'};
+  },
+
   // premiação por acesso (subir de divisão) e por título
   PREMIO_ACESSO:{A:0, B:15e6, C:6e6, D:2.5e6},  // prêmio ao CHEGAR nessa divisão
   premiarAcesso(divAlcancada){
@@ -3282,6 +3316,7 @@ const App={
       <div class="ch-right">
         <div class="ch-kpi"><small>Em caixa</small><b>${this.fmtReais(t.saldo||0)}</b></div>
         <div class="ch-kpi"><small>Forma</small>${this.formaHTML(t._forma5)}</div>
+        ${(()=>{ const e=this.estadoTorcida(); return `<div class="ch-kpi" title="Humor da torcida: enche ou esvazia o estádio (bilheteria)"><small>Torcida</small><b style="color:${e.cor}">${e.ic} ${Math.round(this.humorTorcida())}</b></div>`; })()}
         <button class="btn sm primary" id="btnSalvarHead">💾 Salvar</button>
       </div>`;
     const bs=document.getElementById('btnSalvarHead'); if(bs) bs.onclick=()=>this.salvarSupabase(false);
@@ -6198,6 +6233,7 @@ const App={
       confianca:this.confianca!=null?this.confianca:this.CONF_INICIAL,
       demitido:!!this.demitido,
       histConf:this.histConf||[], ultimato:this.ultimato||null, reuniaoFeita:!!this._reuniaoFeita,   // reunião com a diretoria
+      torcida:this.humorTorcida(),                                   // humor da torcida
       emprestimo:this.emprestimo||null,
       leiloes:this.leiloes||[], ofertasRecebidas:this.ofertasRecebidas||[],   // mercado: leilões e propostas pendentes
       // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
@@ -6352,6 +6388,7 @@ const App={
     this.histConf = Array.isArray(s.histConf) ? s.histConf.filter(h=>h&&isFinite(+h.d)).slice(-12).map(h=>({t:+h.t||1,r:+h.r||0,d:+h.d,m:String(h.m||'').slice(0,80)})) : [];
     this.ultimato = (s.ultimato && isFinite(+s.ultimato.rodadaLimite)) ? {rodadaLimite:+s.ultimato.rodadaLimite, limiar:Math.max(0,Math.min(100,+s.ultimato.limiar||0)), temporada:+s.ultimato.temporada||1} : null;
     this._reuniaoFeita = !!s.reuniaoFeita;
+    this.torcida = isFinite(+s.torcida) ? Math.max(0,Math.min(100,+s.torcida)) : this.TORCIDA_NEUTRA;
     this.emprestimo = s.emprestimo||null;
     this.leiloes = this.sanearLeiloes(s.leiloes);
     this.ofertasRecebidas = Array.isArray(s.ofertasRecebidas) ? s.ofertasRecebidas.filter(o=>o && isFinite(+o.pid) && this.teams[+o.de] && +o.valor>0)
