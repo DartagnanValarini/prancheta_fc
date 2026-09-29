@@ -63,6 +63,24 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   const tit=await page.$eval('#flkModal .flkm-title',e=>e.textContent);
   const meu=await page.evaluate(pid=>App.timeDoJogador(pid)===App.myTeam,pid);
   t(tit==='✅ Negócio fechado' && meu,'oferta 2% acima do preço fecha na hora e o jogador vem pro seu time');
+  console.log('\n[4] filtros do mercado');
+  const f=await page.evaluate(()=>{
+    const t=App.teams[App.myTeam]; t.saldo=3e6; App.mercadoFiltro=null; App.renderMercado();
+    const linhas=()=>[...document.querySelectorAll('#tab-mercado [data-negociar]')].map(b=>{ const pid=+b.dataset.negociar, ti=App.timeDoJogador(pid);
+      const p=App.teams[ti].players.find(x=>x.pid===pid); return {preco:App.precoPedido(p), setor:p.setorNat, div:App.teams[ti].divisao, idade:p.idade}; });
+    const set=(k,v)=>{ const sel=document.querySelector(`#tab-mercado [data-mf="${k}"]`); sel.value=v; sel.dispatchEvent(new Event('change')); };
+    const r={};
+    r.cabe=linhas(); set('caixa','metade'); r.metade=linhas();
+    set('caixa',''); set('setor','DEF'); set('div','B'); r.defB=linhas();
+    set('setor',''); set('div',''); set('idade','jovem'); set('ord','barato'); r.jovBarato=linhas();
+    t.saldo=1; set('idade',''); set('caixa','cabe'); r.vazio={n:linhas().length, msg:/Nenhum jogador/.test(document.getElementById('tab-mercado').innerText)};
+    return r;
+  });
+  t(f.cabe.length>0 && f.cabe.every(x=>x.preco<=3e6),`padrão "cabe no caixa": ${f.cabe.length} jogadores, todos com preço pedido ≤ caixa`);
+  t(f.metade.length>0 && f.metade.every(x=>x.preco<=1.5e6),'"até metade do caixa" respeita a metade');
+  t(f.defB.length>0 && f.defB.every(x=>x.setor==='DEF'&&x.div==='B'),'setor + série filtram juntos');
+  t(f.jovBarato.every(x=>x.idade<=23) && f.jovBarato.every((x,k,a)=>!k||a[k-1].preco<=x.preco),'idade até 23 + ordenar pelo mais barato');
+  t(f.vazio.n===0 && f.vazio.msg,'sem resultado: mensagem explicando');
   t(erros.filter(e=>!/ERR_FAILED/.test(e)).length===0,'sem erros de JS');
   await browser.close();
   console.log(`\n=== ${ok} ok, ${falhas} falhas ===`);

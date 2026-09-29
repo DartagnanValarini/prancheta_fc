@@ -284,7 +284,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 7. **Impacto antes de aceitar proposta recebida** — caixa depois, folha depois, quanto cai a força do setor, provável substituto no elenco.
 8. **Renovação de contrato com pedido do jogador** — no fim da temporada, cada contrato vencendo pede salário + prazo; aceitar / contrapropor / dispensar, com a projeção "o caixa dura ~X meses". (Hoje temos contrato, não temos renovação.)
 9. **Aposentadoria de veteranos** — chance de parar por idade; renova os elencos da máquina e alimenta o risco do item 6.
-10. **Filtro "cabe no caixa" / "até metade do caixa"** no mercado.
+10. **Filtro "cabe no caixa" / "até metade do caixa"** no mercado. — **✅ FEITO (29/09/2026)**: filtros de caixa (padrão "cabe no caixa"), setor, série, idade (até 23 / 24–29 / 30+) e ordenação (força, mais barato, custo-benefício, mais jovem); a coluna mostra o **preço que o clube pede** (`precoPedido` = valor × apego, o mesmo da negociação) colorido contra o seu caixa; até 60 resultados com contagem; mensagem quando não há resultado. Gate: `harness_mercado` [4].
 11. **Leilão** quando vários clubes querem o mesmo jogador — mais complexo, fica por último.
 
 ### Calendário e ambiente

@@ -2920,13 +2920,15 @@ const App={
 
   // IA decide sobre a SUA oferta de compra por um jogador do time 'ti'.
   // retorna {decisao:'aceita'|'recusa'|'contra', contra?:valor, fala:texto}
+  // preço que o clube REALMENTE pede: valor de mercado × apego (jovem o clube segura mais)
+  precoPedido(p){
+    const vm=this.valorMercadoReais(p);
+    const apego = p.idade<=21 ? 1.25 : p.idade<=26 ? 1.1 : 0.95;
+    return vm*apego;
+  },
   avaliarOfertaCompra(pid, oferta){
     const p=this.teams[this.timeDoJogador(pid)].players.find(x=>x.pid===pid);
-    const vm=this.valorMercadoReais(p);
-    const razao=oferta/vm;
-    // jogador jovem com potencial (idade baixa) o clube segura mais
-    const apego = p.idade<=21 ? 1.25 : p.idade<=26 ? 1.1 : 0.95;
-    const alvo=vm*apego;                       // preço que o clube realmente quer
+    const alvo=this.precoPedido(p);            // preço que o clube realmente quer
     // regra monotônica: oferecer MAIS nunca pode dar resultado PIOR.
     // (antes aceitava só com alvo+5%; entre alvo e alvo+5% a contraproposta —
     //  média entre oferta e alvo — saía ABAIXO do que o jogador ofereceu)
@@ -4185,14 +4187,27 @@ const App={
     const i=this.myTeam, t=this.teams[i];
     const saldo=t.saldo||0;
     const ofertas=(this.ofertasRecebidas||[]);
-    // outros times: lista de jogadores à venda OU todos (marca quem está à venda)
+    // outros times: filtros (caixa / setor / divisão / idade) + ordenação
+    const F=this.mercadoFiltro||(this.mercadoFiltro={caixa:'cabe', setor:'', div:'', idade:'', ord:'forca'});
     const alvos=[];
     this.teams.forEach((tm,ti)=>{ if(ti===i) return;
-      tm.players.forEach(p=>alvos.push({p, ti, tm}));
+      tm.players.forEach(p=>{
+        if(F.setor && p.setorNat!==F.setor) return;
+        if(F.div && tm.divisao!==F.div) return;
+        if(F.idade==='jovem' && !(p.idade<=23)) return;
+        if(F.idade==='auge' && !(p.idade>=24 && p.idade<=29)) return;
+        if(F.idade==='veterano' && !(p.idade>=30)) return;
+        const preco=this.precoPedido(p);
+        if(F.caixa==='cabe' && preco>saldo) return;
+        if(F.caixa==='metade' && preco>saldo/2) return;
+        alvos.push({p, ti, tm, preco, ov:Motor.melhorGeral(p).ov});
+      });
     });
-    // ordena alvos: à venda primeiro, depois por overall desc
-    alvos.sort((a,b)=>(b.p.aVenda-a.p.aVenda)||(Motor.melhorGeral(b.p).ov-Motor.melhorGeral(a.p).ov));
-    const topAlvos=alvos.slice(0,40);
+    const ORD={forca:(a,b)=>b.ov-a.ov||a.preco-b.preco, barato:(a,b)=>a.preco-b.preco||b.ov-a.ov,
+      custo:(a,b)=>(b.ov/Math.max(1,b.preco/1e6))-(a.ov/Math.max(1,a.preco/1e6)), jovem:(a,b)=>a.p.idade-b.p.idade||b.ov-a.ov};
+    alvos.sort((a,b)=>(b.p.aVenda-a.p.aVenda)||(ORD[F.ord]||ORD.forca)(a,b));
+    const topAlvos=alvos.slice(0,60);
+    const opt=(k,v,l)=>`<option value="${v}" ${F[k]===v?'selected':''}>${l}</option>`;
 
     el.innerHTML=`
       <div class="fin-topbar">
@@ -4236,15 +4251,23 @@ const App={
         </div>
         <div class="panel">
           <div class="ptitle">Mercado <span class="lbl">outros clubes</span></div>
+          <div class="mk-filtros-mercado">
+            <select class="mk-sel" data-mf="caixa" aria-label="Caixa">${opt('caixa','cabe','💰 Cabe no caixa')}${opt('caixa','metade','💰 Até metade do caixa')}${opt('caixa','','💰 Qualquer preço')}</select>
+            <select class="mk-sel" data-mf="setor" aria-label="Setor">${opt('setor','','Todos setores')}${opt('setor','GK','Goleiros')}${opt('setor','DEF','Defesa')}${opt('setor','MEI','Meio')}${opt('setor','ATQ','Ataque')}</select>
+            <select class="mk-sel" data-mf="div" aria-label="Divisão">${opt('div','','Todas as séries')}${['A','B','C','D'].map(d=>opt('div',d,'Série '+d)).join('')}</select>
+            <select class="mk-sel" data-mf="idade" aria-label="Idade">${opt('idade','','Qualquer idade')}${opt('idade','jovem','Até 23')}${opt('idade','auge','24 a 29')}${opt('idade','veterano','30+')}</select>
+            <select class="mk-sel" data-mf="ord" aria-label="Ordenar">${opt('ord','forca','Ordenar: força')}${opt('ord','barato','Ordenar: mais barato')}${opt('ord','custo','Ordenar: custo-benefício')}${opt('ord','jovem','Ordenar: mais jovem')}</select>
+            <span class="mk-count">${alvos.length>topAlvos.length?`${topAlvos.length} de ${alvos.length}`:alvos.length} jogador${alvos.length===1?'':'es'}</span>
+          </div>
           <div class="mk-tablewrap" style="height:360px">
-            <table class="mk-table"><colgroup><col style="width:auto"><col style="width:62px"><col style="width:44px"><col style="width:88px"><col style="width:80px"></colgroup>
-              <thead><tr><th class="l">Jogador</th><th>Pos</th><th>OVR</th><th>Valor</th><th></th></tr></thead>
-              <tbody>${topAlvos.map(({p,ti,tm})=>{
+            <table class="mk-table"><colgroup><col style="width:auto"><col style="width:62px"><col style="width:44px"><col style="width:96px"><col style="width:80px"></colgroup>
+              <thead><tr><th class="l">Jogador</th><th>Pos</th><th>OVR</th><th>Pedem</th><th></th></tr></thead>
+              <tbody>${topAlvos.length?'':`<tr><td colspan="5" class="mk-vazio">Nenhum jogador com esses filtros${F.caixa?' dentro do seu caixa':''}. Tente outra série, setor ou "Qualquer preço".</td></tr>`}${topAlvos.map(({p,ti,tm,preco})=>{
                 const mg=Motor.melhorGeral(p); const ov=mg.ov;
-                return `<tr class="mk-row"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · ${p.idade}a</span></td>
+                return `<tr class="mk-row"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · S${tm.divisao} · ${p.idade}a</span></td>
                   <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
                   <td class="mk-f">${ov}${Rating.setaTendencia(p)}</td>
-                  <td class="mk-money">${this.fmtM(p.valor)}</td>
+                  <td class="mk-money" style="color:${preco>saldo?'var(--loss)':preco>saldo/2?'#e8c547':'var(--lemon)'}" title="Preço pedido pelo clube">${this.fmtReais(preco)}</td>
                   <td><button class="mini-btn" data-negociar="${p.pid}">Negociar</button></td></tr>`;
               }).join('')}</tbody>
             </table>
@@ -4267,6 +4290,8 @@ const App={
     el.querySelectorAll('[data-oferta-nao]').forEach(b=>b.onclick=()=>this.aceitarOfertaUI(+b.dataset.ofertaNao,false));
     // handlers: negociar compra
     el.querySelectorAll('[data-negociar]').forEach(b=>b.onclick=()=>this.negociarCompraUI(+b.dataset.negociar));
+    // handlers: filtros do mercado
+    el.querySelectorAll('[data-mf]').forEach(sel=>sel.onchange=()=>{ this.mercadoFiltro[sel.dataset.mf]=sel.value; this.renderMercado(); });
   },
 
   // fluxo de negociação de COMPRA (MVP com prompt; refino visual depois)
