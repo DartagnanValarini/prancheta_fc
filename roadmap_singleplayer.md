@@ -17,31 +17,32 @@
 
 ## 0. Onde estamos hoje (inventário real do código — auditado)
 
-O que **já existe e funciona** em `app.js` (~5.150 linhas, monolito injetado no `prancheta_fc.html`) — *inventário revisado em 28/09/2026*:
+> **Varredura de 05/10/2026** (código + HTML + docs do repo e do Project, cruzados com este roadmap). `app.js` tem **~7.200 linhas** (monolito injetado no `prancheta_fc.html` — conferido: o script do HTML é **idêntico** ao `app.js`), `SCHEMA_VERSION` **12**, `GAME_VERSION` **0.9.0**. Último commit de código: 29/09/2026.
+> **Regressão completa verde:** 35 harnesses, nenhuma falha consistente (ver "Estado dos testes" no fim desta seção), **incluindo o gate de carreira longa** (12 temporadas, 13/13).
 
-- **Motor de partida** minuto-a-minuto calibrado (2,43 gols/jogo, mando percentual). Harnesses de Node como rede (`harness_fase0`, `harness_calibracao`).
-- **Camada `Rating`** unificada (`overallGlobal`/`overallPosicao`/`rendimento`).
-- **Evolução** por potencial oculto (`growthFactor`, `potential`, âncora fixa) + fator de posição (natural/treinada/improvisada 100/70/30%).
-- **Energia, lesões, suspensões** (`checarLesao`, `disp`, `indisponivel`, decremento de suspensão).
-- **Competição** 4 séries A/B/C/D, config data-driven (`FORMATO_DIVISOES`, `formatoDe`), acesso/rebaixamento, mata-mata.
-- **Finanças:** saldo, extrato, empréstimo com parcelas, premiação por acesso (`PREMIO_ACESSO`), receitas (patrocínio/bilheteria).
-- **Mercado:** `tickMercado`, ofertas, `executarTransferencia` (valida saldo), valor de mercado, contratos.
-- **Save robusto:** `SaveSchema` v9, `snapshot`/`validateSnapshot`/`aplicarSnapshot`, checksum djb2 (corrupção) **+ assinatura HMAC-SHA256 (C1, anti-cheat)**, export/import backup. **Dois modos:** convidado (localStorage, **comprimido** — ver §6.3) e logado (Supabase `game_save` por user+slot). 3 slots.
-- **UI completa:** 8 abas (Arena, Escala, Elenco, Competições, Mercado, Finanças, Ranking, Dados) + overlay de substituição + tela de Configurações. Design system FLK! Studios.
-- **Bloco A inteiro (✅):** Match Rating por jogo (`Rating.matchRating`, craque da rodada, média da temporada), estatísticas (artilharia ao vivo, histórico do clube com gráficos de saldo/overall), objetivos por divisão (`Objetivos`, principal + 3 secundários com prêmio) e moral 0–100 (`fatorMoral` no rendimento, força e valor; status na ficha). Harnesses `harness_matchrating`, `harness_a2/a3/a4`.
-- **Bloco B parcial:** `mostrarAnuncio()` como ponto único (modal stub), gancho "dobrar prêmio" dos objetivos, compra remove-ads ligada ao `entitlement` (stub no servidor). `harness_blocob`.
-- **Bloco C (✅):** assinatura HMAC do save, posse verificada no servidor e aba Ranking com selo de suspeito.
-- **D1 Onboarding (✅ 28/09/2026):** entrada "Jogar agora", boas-vindas do presidente, tour guiado e fim das telas "Conecte o Supabase". Gate: `harness_d1_onboarding` (Playwright).
-- **Página do clube §6.2 (✅ 28/09/2026):** menu lateral recolhível / barra inferior no celular, cabeçalho do clube, Formação em 2 colunas com campo vertical de camisas. Gate: `harness_layout` (Playwright).
-- **Forma recente §6.1 item 5 (✅ 28/09/2026):** 5 últimas notas de jogador e time + 5 últimos resultados, no save v9. Gate: `harness_forma`.
+**Pronto e testado:**
 
-O que **NÃO existe ainda** (buracos entre "funciona" e "lançável e bom"):
+- **Motor de partida** minuto-a-minuto calibrado (2,43 gols/jogo, mando percentual) + **assistências** (`Motor.assistente()`, save v10). Gates `harness_fase0`, `harness_calibracao`, `harness_assistencias`.
+- **Camada `Rating`** unificada, **evolução** por potencial oculto, fator de posição (natural/treinada/improvisada 100/70/30%), seta de tendência do overall, **idade que avança + aposentadoria + garotos da base** (save v11).
+- **Energia, lesões, suspensões**; escalação automática por **atribuição ótima** (`Escalacao`, também na IA).
+- **Competição:** as **4 séries do Brasileiro (A/B/C/D)** data-driven (`FORMATO_DIVISOES`: A/B/C pontos corridos, D com 16 grupos + mata-mata), acesso/rebaixamento, **estadual de pré-temporada** opcional, premiação por fase na Série D. *Não existe copa nacional* (§6.1 item 16).
+- **Finanças:** saldo, extrato, empréstimo, premiação por acesso, patrocínio, **bilheteria movida pelo humor da torcida**, contador de caixa.
+- **Mercado:** filtros (cabe no caixa…), **negociação em 3 etapas**, propostas recebidas com modal de decisão, **leilão**, **renovação de contratos** na virada.
+- **Gestão humana (Bloco A inteiro ✅):** Match Rating, estatísticas, objetivos por divisão, moral 0–100, forma recente (5 notas), **coletiva pós-jogo**, **reunião com a diretoria** + confiança explicada, **recado do presidente** a cada rodada, **balanço de fim de temporada**, **pedir demissão**.
+- **Save:** `SaveSchema` **v12 enxuto** (~1,1 MB → 1,6 MB após 12 temporadas), checksum djb2 + **assinatura HMAC (C1)**, convidado comprimido no localStorage (~0,5 M caracteres) e logado no Supabase; 3 slots; backup/restore.
+- **Bloco C ✅:** posse do remove-ads verificada no servidor, ranking com selo de suspeito.
+- **Bloco D ✅ inteiro:** D1 onboarding, D2 partida imersiva (painel *Seu jogo*), D3 estabilidade (save enxuto, gate de carreira longa, erros amigáveis), D4 áudio sintetizado.
+- **UI:** página do clube (§6.2) com menu lateral / barra inferior no celular — **Formação · Rodada · Elenco · Mercado · Campeonatos · Finanças · Ranking · Dados** — todas as abas redesenhadas no padrão FLK, modal padrão (§6.3) sem nenhum `alert/confirm/prompt`, **⚙️ Configurações** (velocidade da partida 0,5×–3×, som, salvamento automático, anúncios / remover anúncios, coletiva e recado do presidente liga-desliga, rever tutorial, pedir demissão).
 
-- ✅ **Assistências (29/09/2026)** — `Motor.assistente()`: ~78% dos gols têm passe, ponderado por posição (meias/pontas criam mais) e passe+visão+cruzamento; +0,8 na nota da partida; painel 🅰️ na aba Estatísticas, J/G/A na ficha, "🅰️" no lance ao vivo. Save **v10** (`assist`/`assistTemp`; v9 carrega zerado). Gate: `harness_assistencias`.
-- ❌ **Partida imersiva** (D2: comentários por atributo, feedback de fadiga, escanteios/finalizações).
-- ✅ **Carreira longa como gate** (D3) e ✅ **Áudio** (D4) feitos em 29/09/2026.
-- ✅ **Layout das outras abas** — redesenhadas no padrão FLK em 29/09/2026 (ver §6.2 "Redesenho das outras abas").
-- ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E).
+**O que ainda NÃO existe / está pela metade** (buracos entre "funciona" e "lançável e bom"):
+
+- 🟡 **Bloco B só em stub:** `mostrarAnuncio()` mostra um modal placeholder ("o anúncio real entra com o empacotamento"); a compra remove-ads concede sem validar pagamento. Também **não feito**: detectar a superfície (web × app) dentro do `mostrarAnuncio()` (§5), os outros bônus do B1 (energia, scout extra) e o **campo reservado de "itens do usuário"** no save pra cosméticos.
+- 🟡 **§6.1 item 7 — impacto antes de aceitar proposta:** falta *força do setor depois* e *provável substituto*.
+- ⬜ **Copa nacional com clubes das 4 séries** (§6.1 item 16) — torneio mata-mata *paralelo* ao Brasileiro (as 4 séries em si já existem).
+- ⬜ **Ideias dos concorrentes ainda não triadas** (estavam só na análise, não neste roadmap) — ver §6.1 "A triar".
+- ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E) — de propósito pra depois do teste com pessoas.
+
+**Estado dos testes (05/10/2026):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa.
 
 ---
 
@@ -88,22 +89,24 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ---
 
-### 🟡 BLOCO B — Rentabilização: anúncios + remover anúncios (DECIDIDO)
+### 🟡 BLOCO B — Rentabilização: anúncios + remover anúncios (DECIDIDO · 🟡 SÓ STUB — o real entra com o Bloco E)
 *Como o jogo ganha dinheiro sem trair o jogador.*
 
 > **Modelo cravado:** anúncios no jogo grátis **+** compra única (dinheiro real) que **remove os anúncios**. Nada de pay-to-win — e como o que se vende é *ausência de ads* (não vantagem no jogo), o modelo é limpo por construção.
 >
-> **Cosméticos ficam anotados pra depois** (ex.: importar um logo/escudo do clube). Fora do escopo atual, mas o save deve reservar um campo de "itens do usuário" pra não travar essa porta no futuro.
+> **Cosméticos ficam anotados pra depois** (ex.: importar um logo/escudo do clube). Fora do escopo atual, mas o save deve reservar um campo de "itens do usuário" pra não travar essa porta no futuro. *(05/10/2026: esse campo **ainda não existe** no snapshot — fazer no próximo bump de schema.)*
 
 **B1. Anúncios recompensados (opt-in) — o formato principal.**
 - O jogador **escolhe** ver um ad pra ganhar bônus: **dobrar o prêmio** de um objetivo/rodada, acelerar recuperação de energia, um scout extra. Nunca forçado, **nunca no meio da partida nem entre rodadas** (mataria o "só mais uma rodada").
 - Interstitial leve só em transição de temporada, se houver.
 - *Pronto quando:* existe ao menos um ponto de "assistir ad → bônus" opt-in, e ele some pra quem comprou o remove-ads.
+- **Estado (05/10/2026):** 🟡 o ponto existe ("dobrar prêmio" dos objetivos, `assistirAnuncioBonus` → `mostrarAnuncio()`) e some pra quem tem `adFree` — mas o `mostrarAnuncio()` ainda é **modal placeholder**, sem SDK e sem detectar web × app (§5). Os outros bônus (energia, scout extra) **não foram feitos**. Gate: `harness_blocob`.
 
 **B2. Compra única "Remover anúncios".**
 - Um pagamento (sem assinatura) desliga todos os ads. Modelo honesto, casa com público de manager clássico.
 - **Flag de posse** guardada no servidor (não só no cliente) — senão o próprio remove-ads vira o primeiro alvo de cheat. É a compra que a Via 1 (Bloco C) precisa validar de fato.
 - *Pronto quando:* comprar remove os ads e a posse persiste verificada pelo servidor.
+- **Estado (05/10/2026):** 🟡 fluxo completo de ponta a ponta com **stub** (`comprarRemoverAnuncios` → Edge Function `entitlement` POST, que concede sem cobrar); a posse já é verificada no servidor no boot (C2). Falta a cobrança real (Play Billing / checkout web) — Bloco E.
 
 **B3. Empacotamento (o que os ads/compra exigem).**
 - Ads nativos + compra in-app exigem o jogo como **app**: PWA instalável no mínimo; **Capacitor/TWA** pra publicar na Play Store (onde ficam AdMob + Play Billing).
@@ -148,11 +151,11 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 > **Bloco C fechado.** Falta só o que depende de outros blocos: a validação de compra REAL (Play Billing / checkout web) no POST do `entitlement` — hoje stub — que entra junto do empacotamento (Bloco B2 real + E). O ranking e o anti-cheat já estão de pé e testados. **Nota de teste manual:** as Edge Functions não puderam ser exercitadas por HTTP do meu ambiente (rede do sandbox bloqueia o host do Supabase); validei a lógica de plausibilidade isolada (8/8) e confirmei que ambas as funções estão ACTIVE com verify_jwt e o RLS correto. Vale um teste rápido no navegador: comprar remove-ads logado, recarregar (deve continuar sem ads), e terminar uma temporada pra aparecer no ranking.
 >
-> **Próximo grande passo (rota):** com A, B (parcial), C, D1, §6.2 e a forma recente prontos, seguir pros quick wins do §6.1 (coletiva, reunião com a diretoria, contador de caixa, diagnóstico de fim de temporada) e **assistências**, depois D2–D4 e o empacotamento (E) que destrava a compra real.
+> ~~**Próximo grande passo (rota):** quick wins do §6.1, assistências, D2–D4 e o empacotamento (E).~~ — **feito até o D4 em 29/09/2026.** Próximo passo atual: ver §3 "Onde estamos na rota".
 
 ---
 
-### 🔵 BLOCO D — Polimento de lançamento (de "projeto" a "produto")
+### 🔵 BLOCO D — Polimento de lançamento (de "projeto" a "produto") — ✅ CONCLUÍDO (29/09/2026)
 *Acabamento, não sistema novo. É o que faz o jogo parecer pronto.*
 
 **D1. Onboarding / primeira sessão. — ✅ FEITO (28/09/2026)**
@@ -168,20 +171,20 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - **Gate:** `harness_d1_onboarding.js` (Playwright + Chromium, com `ui_test/fake_supabase.js` gerando ligas sintéticas offline): 31/31 — fluxo completo no desktop, saídas "Já sei jogar"/"Pular", 2ª carreira, "Rever tutorial", bolhas dentro da tela no celular (390×844) e nenhuma tela "Conecte o Supabase".
 - **Pendências anotadas:** (1) ~~cor das bolinhas por nível absoluto~~ — resolvido no §6.2: no campo novo a borda do número indica **adequação à posição** (natural/treinada/improvisada). (2) ~~selo "SUPABASE" no cabeçalho~~ — removido com o cabeçalho novo; a aba Dados (ferramentas de dev) continua no menu.
 
-**D2. Partida mais imersiva.**
+**D2. Partida mais imersiva. — ✅ FEITO (29/09/2026)**
 - Comentários dinâmicos por atributo ("golaço de fora" com `long_shots` alto; "de cabeça" com `heading`), feedback de fadiga (piscar vermelho < 40% energia), finalizações/escanteios/posse na tela.
 - Sobe de "bom" pra "gostoso de assistir".
 - **✅ FEITO (29/09/2026)**: painel **Seu jogo** no topo da Arena ao vivo: placar grande com escudos, barras de **posse / finalizações / no alvo / escanteios** (≈ 11 chutes, 5 no alvo e 4–5 escanteios por time; o mais forte tem mais posse em ~3 de 4 jogos; estilo ofensivo/defensivo mexe ±4 p.p.), **narração lance a lance** (gols, defesas, bolas na trave, cartões, trocas, escanteios, apito). O texto do gol depende de **quem fez**: cabeceador + cruzamento → de cabeça; bom de longe → de fora da área; driblador → driblou e bateu; velocista → arrancada. **Fadiga**: titular abaixo de 60% em amarelo, abaixo de 40% piscando em vermelho, com botão **Trocar**. É camada de TV: o motor de gols não muda. Gate: `harness_d2`.
 
-**D3. Estabilidade e bordas.**
+**D3. Estabilidade e bordas. — ✅ FEITO (29/09/2026)**
 - Carreira longa (10+ temporadas) sem quebra de save. Telas de vazio decentes, erro amigável. Novo harness "carreira longa" como gate de release, junto dos existentes.
 - **✅ FEITO (29/09/2026)**:
   - **Save enxuto (v12)**: jogador do banco grava só o que **evoluiu** (`ev`: atributo por índice → valor decimal) + `an` (ancorado); teto, overall inicial e growth são **recalculados no load** a partir dos atributos do banco (mesma conta, determinística). Campos no valor padrão são omitidos. Garotos da base guardam os atributos de quando subiram (lista compacta) + evolução. **8,1 MB → 1,1 MB** no início; **1,6 MB após 12 temporadas**; convidado grava **0,5 M caracteres** comprimido. Saves ≤ v11 (formato completo) continuam carregando e são regravados enxutos. Gate: `harness_save_enxuto`.
-  - **Gate de carreira longa**: `harness_carreira_longa` joga **12 temporadas** pelo fluxo real (rodadas → balanço → fim de carreira → renovações → virada) e confere a cada virada: ninguém em dois clubes, elencos ≥ 16, números finitos, séries com o mesmo tamanho, idade média estável (~27), save < 3 MB que volta **idêntico**, load < 3 s (~0,8 s); no fim salva como convidado, recarrega a página e confere tudo igual. Demora ~40 min — roda antes de release, fora da regressão rápida.
+  - **Gate de carreira longa**: `harness_carreira_longa` joga **12 temporadas** pelo fluxo real (rodadas → balanço → fim de carreira → renovações → virada) e confere a cada virada: ninguém em dois clubes, elencos ≥ 16, números finitos, séries com o mesmo tamanho, idade média estável (~27), save < 3 MB que volta **idêntico**, load < 3 s (~0,8 s); no fim salva como convidado, recarrega a página e confere tudo igual. Demorava ~40 min (em 05/10/2026 rodou em ~4,6 min, 13/13) — roda antes de release, fora da regressão rápida.
   - **Erros amigáveis** (`Erros`): erro inesperado → modal "😵 Opa, o jogo tropeçou" (carreira segura; Continuar / Salvar e ir ao menu / Copiar detalhes; no máximo 1 a cada 15 s); aba que falha ao desenhar vira cartão "Essa tela não abriu" com **Tentar de novo** e as outras seguem; falha de rede ao carregar explica em português com **Tentar de novo**. Últimos 20 erros ficam em `Erros.log`. Gate: `harness_erros`.
   - **Desempenho**: o Mercado (varre ~3 mil jogadores, ~300 ms) só desenha com a aba aberta — "pular" rodada ficou ~0,6 s mais rápido.
 
-**D4. Áudio e identidade (alto impacto percebido, baixo custo).**
+**D4. Áudio e identidade (alto impacto percebido, baixo custo). — ✅ FEITO (29/09/2026)**
 - SFX mínimos (gol, apito), música de menu. Eleva muito a percepção de acabamento.
 - **✅ FEITO (29/09/2026)**: módulo `Som`, tudo **sintetizado em WebAudio** (nenhum arquivo de áudio, zero peso no HTML): apito de início / intervalo (2) / fim (3), **gol** (torcida explodindo + arpejo), **gol sofrido** (lamento grave), **cartão** do meu time, **caixa** (venda, premiação por fase), **fanfarra** (título estadual, título da Série D, acesso), murmúrio de torcida em loop durante a partida e **música de menu** (loop Am–F–C–G, 96 bpm). Só o **meu jogo** faz som; "pular" não dispara rajada de gols. O contexto de áudio nasce no 1º toque (regra de autoplay). **Configurações → 🔊 Som**: efeitos e música em Mudo/Baixo/Médio/Alto, salvos **no aparelho** (não no save). Gate: `harness_som`.
 
@@ -200,24 +203,26 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 ## 3. Rota recomendada (ordem de ataque)
 
 **Primeiro — provar que engaja (Bloco A):**
-1. **Match Rating (A1)** — destrava tudo, dá dopamina imediata, e é o insumo do score de ranking.
-2. **Estatísticas visíveis (A2)** — quase de graça depois do A1.
-3. **Objetivos por divisão (A3)** — motor do retorno diário, e o gancho natural dos ads recompensados.
-4. **Moral/forma (A4)** — fecha a gestão humana.
+1. ✅ **Match Rating (A1)** — destrava tudo, dá dopamina imediata, e é o insumo do score de ranking.
+2. ✅ **Estatísticas visíveis (A2)** — quase de graça depois do A1.
+3. ✅ **Objetivos por divisão (A3)** — motor do retorno diário, e o gancho natural dos ads recompensados.
+4. ✅ **Moral/forma (A4)** — fecha a gestão humana.
 
-> **Checkpoint:** com A pronto, testar com 5–10 pessoas. Se **não** engajar aqui, nem ads nem ranking salvam — melhor descobrir agora, barato.
+> **Checkpoint:** com A pronto, testar com 5–10 pessoas. Se **não** engajar aqui, nem ads nem ranking salvam — melhor descobrir agora, barato. *(Substituído em 09/2026: decidido fazer todo o roadmap, menos lançamento/empacotamento, **antes** do teste com pessoas, porque arrumar testers leva tempo.)*
 
 **Segundo — o servidor mínimo + honestidade (Blocos B e C juntos, compartilham infra):**
-5. **C1** (assinar o save) — barra o cheat trivial, custo baixo.
-6. **Supabase:** tabelas `entitlement` + `ranking`, Edge Functions, RLS/constraints (a fronteira estreita da Via 1).
-7. **B2 + C2** (comprar remove-ads + posse verificada no servidor) — a única compra, a única coisa que precisa de autoridade real.
-8. **C3** (ranking que sinaliza o suspeito) — plausibilidade server-side + selo público.
-9. **B1** (ads recompensados opt-in) — plugado nos objetivos do A3.
+5. ✅ **C1** (assinar o save) — barra o cheat trivial, custo baixo.
+6. ✅ **Supabase:** tabelas `entitlement` + `ranking`, Edge Functions, RLS/constraints (a fronteira estreita da Via 1).
+7. 🟡 **B2 + C2** (C2 ✅; B2 só stub) — (comprar remove-ads + posse verificada no servidor) — a única compra, a única coisa que precisa de autoridade real.
+8. ✅ **C3** (ranking que sinaliza o suspeito) — plausibilidade server-side + selo público.
+9. 🟡 **B1** (ads recompensados opt-in — gancho pronto, ad real não) — plugado nos objetivos do A3.
 
 **Terceiro — virar produto (Blocos D e E):**
-10. **Onboarding (D1)** — a maior alavanca de retenção.
-11. **Imersão (D2)** + **estabilidade (D3)** + **áudio (D4)**.
-12. **Empacotar e publicar (E)** conforme a plataforma decidida.
+10. ✅ **Onboarding (D1)** — a maior alavanca de retenção.
+11. ✅ **Imersão (D2)** + **estabilidade (D3)** + **áudio (D4)**.
+12. ⬜ **Empacotar e publicar (E)** conforme a plataforma decidida.
+
+**Onde estamos na rota (05/10/2026):** tudo que vem antes do teste com pessoas está feito, **exceto**: §6.1 item 7 (impacto da proposta, parcial), a reserva do campo de cosméticos no save e as ideias de concorrentes que nunca foram triadas (§6.1 "A triar"). A Copa nacional (§6.1 item 16) está marcada como *futuro* — decidir se entra antes do teste. Pro teste, falta também **um link pros testers**: hospedar a versão web (§5) — o único pedaço do Bloco E que faz sentido antes do teste.
 
 ---
 
@@ -257,10 +262,10 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no polimento (Bloco D) ou como quick wins.
 
-- **⚙️ Botão de Configurações** — uma tela/aba de ajustes do jogador. Candidatos: velocidade da simulação (relógio da partida), frequência do save (auto-save a cada X rodadas / manual), talvez volume de áudio (quando entrar D4), e futuramente o toggle de "remover anúncios" (Bloco B). É o lar natural de várias preferências que hoje não têm onde morar. Baixo/médio esforço; alto valor percebido.
-- **📊 Estabilidade da contagem de jogos/pontos na tabela** — investigar a fundo o relato de "2 jogos / 6 pontos após a rodada 1". O motor conta certo em teste isolado (1 jogo por rodada); suspeita principal é save criado com código antigo carregando valor já dobrado, ou caminho de UII específico. Já removida a soma condicional `+1` na exibição e adicionada guarda de idempotência em `encerrarRodada`. **Confirmar com jogo novo** e, se persistir, capturar o caminho exato.
-- **🎯 Ficha/consistência do campo** — as posições das bolinhas no campo (vazio vs. escalado) já foram fixadas com altura de slot constante; validar em todas as formações no reteste.
-- **🖥️ Responsividade do sticky** — a barra de abas fixa foi calibrada pra colar abaixo do header; validar em telas estreitas (mobile) onde o header/abas podem quebrar em mais linhas e exigir ajuste dos offsets. *(A casca do §6.2 trocou as abas do topo por menu lateral / barra inferior — item provavelmente resolvido; confirmar no reteste.)*
+- **⚙️ Botão de Configurações — ✅ FEITO** (conferido no código em 05/10/2026): ⚙️ no menu lateral, com velocidade da partida (0,5×–3×), som, salvamento automático, anúncios / remover anúncios, coletiva e recado liga-desliga, rever tutorial e pedir demissão. *Pedido original:* — uma tela/aba de ajustes do jogador. Candidatos: velocidade da simulação (relógio da partida), frequência do save (auto-save a cada X rodadas / manual), talvez volume de áudio (quando entrar D4), e futuramente o toggle de "remover anúncios" (Bloco B). É o lar natural de várias preferências que hoje não têm onde morar. Baixo/médio esforço; alto valor percebido.
+- **📊 Estabilidade da contagem de jogos/pontos na tabela** — investigar a fundo o relato de "2 jogos / 6 pontos após a rodada 1". O motor conta certo em teste isolado (1 jogo por rodada); suspeita principal é save criado com código antigo carregando valor já dobrado, ou caminho de UII específico. Já removida a soma condicional `+1` na exibição e adicionada guarda de idempotência em `encerrarRodada`. **Confirmar com jogo novo** e, se persistir, capturar o caminho exato. — **✅ Fechado (05/10/2026):** `harness_contagem` (2 rodadas = 2 jogos, pontos não dobram) passa, e a carreira longa (12 temporadas pelo fluxo real) confere a tabela a cada virada. Reabrir só se algum tester reproduzir.
+- **🎯 Ficha/consistência do campo** — as posições das bolinhas no campo (vazio vs. escalado) já foram fixadas com altura de slot constante; validar em todas as formações no reteste. — **✅ Fechado:** `harness_layout` confere as 9 formações sem camisa fora do campo ou sobreposta, no desktop e a 390 px.
+- **🖥️ Responsividade do sticky** — a barra de abas fixa foi calibrada pra colar abaixo do header; validar em telas estreitas (mobile) onde o header/abas podem quebrar em mais linhas e exigir ajuste dos offsets. *(A casca do §6.2 trocou as abas do topo por menu lateral / barra inferior — item provavelmente resolvido; confirmar no reteste.)* — **✅ Fechado:** a barra de abas fixa não existe mais; `harness_layout`/`harness_visual` conferem todas as abas sem rolagem lateral a 390 px.
 - **🚪 Botão "Pedir demissão" — ✅ FEITO (29/09/2026)**: botão no card *Segurança no cargo* e em ⚙️ Configurações → modal padrão (clube, confiança, carreira) → "Pedir demissão" cai no fluxo de livre no mercado (propostas de clubes das séries de baixo, mesmo save); carreira (títulos/acessos) continua; bloqueado com partida em andamento. Decidido: **sem custo extra**. Gate: `harness_presidente`. *Pedido original:* — o treinador pode sair do clube por vontade própria. Confirmação no **modal padrão (§6.3)** mostrando clube, temporada, confiança e o que acontece depois; ao confirmar, cai no fluxo que já existe de "livre no mercado" (`procurarNovoClube`, mesmo slot). Onde colocar o botão: no card **Segurança no cargo** e/ou em ⚙️ Configurações. *A decidir:* se pedir demissão tem algum custo (ex.: pesa no ranking de treinadores ou só pode a partir de certa rodada).
 - **🤵 Recado do presidente a cada rodada — ✅ FEITO (29/09/2026)**: último modal da fila pós-rodada (depois de desfalques, coletiva, reunião, propostas e leilões), no cartão das boas-vindas: próximo adversário, fala do presidente, meta da diretoria com a posição na tabela, caixa e confiança; "Ir para a formação ▸". Toda rodada por padrão, desliga em ⚙️ Configurações; não aparece no 1º jogo do tutorial nem com a temporada encerrada. Gate: `harness_presidente`. *Pedido original:* — um modal **no estilo das boas-vindas** (o mesmo cartão do §6.3) a cada rodada, que leva direto pra tela de **Formação**, com: **frase do presidente** (sobre o próximo jogo — já existe em `falaPresidenteAtual()`), **meta da diretoria** (objetivo principal do A3), **caixa** e **confiança**. Entra na **fila** de avisos pós-rodada (depois de desfalques e propostas), pra nunca empilhar dois modais. *A decidir:* aparecer antes de toda rodada ou só quando algo mudou; e se vale um "não mostrar de novo" nas Configurações pra quem joga rápido.
 
@@ -275,7 +280,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 ### Encaixam no Bloco A (loop que engaja)
 1. **Coletiva pós-jogo** *(A4)* — **✅ FEITO (29/09/2026)**: módulo `Coletiva` (3 perguntas — jogo / elenco [craque ou insatisfeito] / clube [tabela e meta]), repórter com veículo, respostas por perfil com **selos de efeito** (moral do elenco, moral do jogador citado, cargo) no modal padrão; nenhuma resposta domina as outras (troca real moral × cargo, cargo ≤ ±2 por resposta); "Pular a coletiva"; liga/desliga em ⚙️ Configurações (vai pro save). Entra na fila pós-rodada depois dos desfalques. Gate: `harness_coletiva`. *Ideia original:* — 3 perguntas de um repórter (o jogo / o elenco / o clube), 2–3 respostas por perfil (Protetor, Direto, Técnico…). Cada resposta mexe em **moral** e **confiança da diretoria**, com o efeito visível antes de escolher ("moral +4 · diretoria +2"). Pulável. Esforço baixo (textos + 2 variáveis que já existem).
 2. **Reunião com a diretoria antes da demissão** *(A3/A4)* — **✅ FEITO (29/09/2026)**: quando a confiança cai até a **zona de alerta (corte + 15)**, o presidente chama uma reunião **obrigatória** antes da demissão, uma vez por crise. Pergunta 1 ("por que piorou?"): a diretoria **confere a desculpa contra os fatos** — força do elenco na chave/série, nota média recente do time — e mostra o fato antes de você responder (+4/+3 se for verdade, −3 se não; assumir a culpa +1). Pergunta 2 (o plano): **pedir 3 rodadas** (+6 agora, mas se no fim do prazo estiver abaixo do alerta é demissão), **pedir reforços** (verba de R$ 1–8 M por série, cargo −2) ou manter. **Fórmula visível:** toda mudança de confiança vai pro histórico com o motivo (`mudarConfianca`), e o card Segurança no cargo tem "ⓘ Entenda" com a tabela resultado × expectativa e as últimas mudanças. Histórico, ultimato e crise vão pro save. Gate: `harness_reuniao`. *Ideia original:* — quando a confiança cruza um limite, evento com 2 perguntas ("por que piorou?" / "qual o plano?"); a escolha dá fôlego ou piora. Mostrar a **fórmula da confiança** na tela (ex.: X% posição + Y% moral) pra o jogador saber o que corrigir. Hoje a demissão chega sem aviso.
-3. **Contador na compra e na renovação** *(Mercado/Finanças)* — **✅ na compra (29/09/2026)** (ver item 6); na renovação entra com o item 8. — card com 3 números: **caixa depois**, **variação por rodada** e **projeção de fim de temporada**, + uma frase ("Cabe hoje, não cabe amanhã"). Não proíbe, só mostra a consequência. Só UI sobre números que já calculamos.
+3. **Contador na compra e na renovação** *(Mercado/Finanças)* — **✅ FEITO (29/09/2026)**: na compra (item 6) e na renovação (item 8, com "quantos meses o caixa dura"). — card com 3 números: **caixa depois**, **variação por rodada** e **projeção de fim de temporada**, + uma frase ("Cabe hoje, não cabe amanhã"). Não proíbe, só mostra a consequência. Só UI sobre números que já calculamos.
 4. **Diagnóstico de fim de temporada** *(onboarding disfarçado)* — **✅ FEITO (29/09/2026)**: "Nova temporada" (na Rodada ou no pódio) abre o **📋 Balanço da temporada** antes de virar: campanha (pts, V/E/D, gols, posição), **3 lições tiradas dos números** (defesa/ataque vs média da tabela, energia do time titular, vestiário, idade dos titulares, caixa, expulsões, contratos vencendo, objetivos, destaque — ordenadas por gravidade; lição de gols só com ≥ 3 jogos) e **o que muda agora** (divisão seguinte, meta da diretoria com efeito no cargo e prêmio, folha, contratos vencendo). Gate: `harness_diagnostico` (temporada inteira + cenários forçados). *Ideia original:* — tela de fechamento com o resultado + 3 dicas tiradas da temporada ("a defesa levou 115 gols — reforce zaga e gol", "elenco terminou esgotado", "caiu cedo na copa") + bloco "O que muda agora" (divisão, folha, cargo).
 5. **Forma recente: últimas 5 notas — jogador E time** *(A1/A2)* — **✅ FEITO (28/09/2026)**
    - *Como ficou:* módulo `Forma` (FIFO de 5). Jogador: `p._notas5`; time: `t._notas5` (média de quem recebeu nota na partida) e `t._forma5` (V/E/D). Save **v9** (`jogadoresById[pid].notas5` + `formaTimes`); save v8 carrega com listas vazias e dado adulterado é saneado (clamp 0–10, máx. 5). Aparece na coluna **Nota** do elenco (média das 5, com as notas no tooltip), nas camisas do campo e na **Forma** do cabeçalho. `harness_forma` 16/16.
@@ -300,6 +305,17 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 14. **Botão "Selecionar descansados"** na escalação (escala priorizando energia). — **✅ FEITO (28/09/2026)** no §6.2: botão **🔋 Descansados** na Formação (e, desde 29/09, com a escalação por atribuição ótima).
 15. **Premiação por fase** — **✅ FEITO (29/09/2026)** no mata-mata da **Série D** (não temos copa nacional ainda): classificar pra 2ª fase R$ 150 mil; passar da 2ª fase 200 mil, 3ª fase 300 mil, oitavas 400 mil, quartas 600 mil, semi 1 M, título 2 M. Aviso **💰 Premiação por fase** na fila do fim da rodada. Também vale no estadual (item 12). Gate: `harness_estadual` [6].
 16. **Copa nacional com as 4 séries** — *futuro*: mata-mata paralelo ao Brasileiro (datas no meio de semana, energia, premiação por fase igual ao item 15). Projeto à parte: mexe no calendário e na fadiga.
+
+### A triar (vindas da análise de concorrentes, nunca entraram aqui — varredura 05/10/2026)
+> Estavam na tabela "Copiar/adaptar" e no §4 de `docs/concorrentes/analise_retrofoot_browserfoot.md`, mas não neste roadmap. Conferido no código: **nenhuma existe ainda**. Decidir o que entra antes do teste com pessoas.
+17. **Teste de balanceamento econômico** — harness de 10 temporadas com IA "gananciosa" medindo caixa e força (a lição do Browserfoot: economia quebrada deixa o jogo fácil). Junto: **teto de preço coerente** e **craque recusando clube pequeno**. O gate de carreira longa confere números válidos, não equilíbrio. *Esforço médio.*
+18. **Botão Compartilhar resultado** (Web Share API / copiar texto) — aquisição barata, casa com o teste com pessoas. *Esforço baixo.*
+19. **Ranking com recortes dia / semana / mês / sempre** — quem está começando aparece; evita o ranking que premia só volume. *Baixo (views no Supabase).*
+20. **Barra de pressão** sob o placar da partida (complemento do D2). *Baixo-médio.*
+21. **Feedback em troca de recompensa** (ex.: X dias sem anúncio por responder um questionário) — útil justamente no teste com pessoas. *Baixo.*
+22. **Fim de temporada ilustrado** (confete no título, clima pesado no rebaixamento) e **cerimônia de sorteio** — momentos em tela cheia. *Médio.*
+23. **Banner de dica por aba**, fechável (onboarding barato, do Browserfoot). *Baixo.*
+24. **Clubes pelo apelido da torcida** — decisão de base de dados, não de código; avaliar junto dos escudos gerados (Reservado pra depois).
 
 ### Decidido NÃO fazer (por ora)
 - **Futebol feminino** — fora do escopo por enquanto.
@@ -382,7 +398,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 **Gate:** `harness_modais.js` 30/30 (inclui checagem de que o `app.js` não tem nenhum `alert`/`confirm`/`prompt`).
 
 **🐞 Achado junto (29/09/2026) — save do convidado não cabia:** o snapshot tem **~8 MB** (atributos dos ~3 mil jogadores: `attrs`, `attrsDec`, `capAttr`) e a cota do localStorage é **~5 M caracteres**, então o save do convidado **falhava sempre, em silêncio**. Com o D1 isso virou o caminho padrão ("Jogar agora"). Correção: o convidado grava **comprimido** (gzip nativo do navegador + base64, campo `estadoZ`, ~1,7 M caracteres; envelope antigo com `estado` continua sendo lido) e uma falha de gravação agora **avisa** o jogador uma vez por sessão. Gate: `harness_save_convidado.js` 11/11.
-- **Pendente (D3):** o save **logado** manda os mesmos ~8 MB pro Supabase a cada auto-save. Funciona, mas é pesado — vale **enxugar o snapshot** (guardar só o que mudou em relação ao banco; `capAttr` e parte de `attrsDec` dá pra re-derivar) antes do lançamento. Não testado daqui se há limite de tamanho de requisição no Supabase.
+- **~~Pendente (D3)~~ — ✅ resolvido pelo save enxuto v12 (D3, 29/09/2026: ~1,1–1,6 MB).** O save **logado** mandava os mesmos ~8 MB pro Supabase a cada auto-save. Funciona, mas é pesado — vale **enxugar o snapshot** (guardar só o que mudou em relação ao banco; `capAttr` e parte de `attrsDec` dá pra re-derivar) antes do lançamento. Não testado daqui se há limite de tamanho de requisição no Supabase.
 
 ---
 
