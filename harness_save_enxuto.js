@@ -43,7 +43,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
       adultBarrado:!vAd.ok, semCampos:!('capAttr' in j0) && !('attrsDec' in j0) && !('attrs' in j0),
       gerLean:snap.gerados.every(g=>g.base && !g.attrs), schema:snap.schemaVersion};
   });
-  t(r.schema===12,'save v12');
+  t(r.schema>=12,'save v12+ (schema '+r.schema+')');
   t(r.tam<r.tamCheio/3,`enxuto: ${(r.tam/1e6).toFixed(2)} MB contra ${(r.tamCheio/1e6).toFixed(2)} MB no formato completo`);
   t(r.semCampos,'jogador do banco não grava attrs/attrsDec/capAttr (só o que evoluiu)');
   t(r.gerLean,'garoto da base guarda os atributos de quando subiu + evolução');

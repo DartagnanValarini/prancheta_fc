@@ -17,8 +17,8 @@
 
 ## 0. Onde estamos hoje (inventário real do código — auditado)
 
-> **Varredura de 05/10/2026** (código + HTML + docs do repo e do Project, cruzados com este roadmap). `app.js` tem **~7.200 linhas** (monolito injetado no `prancheta_fc.html` — conferido: o script do HTML é **idêntico** ao `app.js`), `SCHEMA_VERSION` **12**, `GAME_VERSION` **0.9.0**. Último commit de código: 29/09/2026.
-> **Regressão completa verde:** 35 harnesses, nenhuma falha consistente (ver "Estado dos testes" no fim desta seção), **incluindo o gate de carreira longa** (12 temporadas, 13/13).
+> **Varredura de 05/10/2026** (código + HTML + docs do repo e do Project, cruzados com este roadmap). `app.js` tem **~7.200 linhas** (monolito injetado no `prancheta_fc.html` — conferido: o script do HTML é **idêntico** ao `app.js`), `SCHEMA_VERSION` **13** (desde 05/10/2026), `GAME_VERSION` **0.9.0**.
+> **Regressão completa verde:** 37 harnesses (2 novos em 05/10), nenhuma falha consistente (ver "Estado dos testes" no fim desta seção), **incluindo o gate de carreira longa** (12 temporadas, 13/13).
 
 **Pronto e testado:**
 
@@ -31,18 +31,21 @@
 - **Gestão humana (Bloco A inteiro ✅):** Match Rating, estatísticas, objetivos por divisão, moral 0–100, forma recente (5 notas), **coletiva pós-jogo**, **reunião com a diretoria** + confiança explicada, **recado do presidente** a cada rodada, **balanço de fim de temporada**, **pedir demissão**.
 - **Save:** `SaveSchema` **v12 enxuto** (~1,1 MB → 1,6 MB após 12 temporadas), checksum djb2 + **assinatura HMAC (C1)**, convidado comprimido no localStorage (~0,5 M caracteres) e logado no Supabase; 3 slots; backup/restore.
 - **Bloco C ✅:** posse do remove-ads verificada no servidor, ranking com selo de suspeito.
+- **Carreira nova zerada (05/10/2026):** 🐞 começar uma 2ª carreira na mesma sessão (Menu principal → slot vazio) herdava temporada, **títulos/acessos (inflando o score do ranking)**, histórico, leilões, propostas, extrato e diretoria da anterior. `zerarCarreira()` agora roda ao assumir o clube num slot novo (não na demissão, onde a carreira continua); opções do jogador ficam. Gate: `harness_itens_carreira`.
 - **Bloco D ✅ inteiro:** D1 onboarding, D2 partida imersiva (painel *Seu jogo*), D3 estabilidade (save enxuto, gate de carreira longa, erros amigáveis), D4 áudio sintetizado.
 - **UI:** página do clube (§6.2) com menu lateral / barra inferior no celular — **Formação · Rodada · Elenco · Mercado · Campeonatos · Finanças · Ranking · Dados** — todas as abas redesenhadas no padrão FLK, modal padrão (§6.3) sem nenhum `alert/confirm/prompt`, **⚙️ Configurações** (velocidade da partida 0,5×–3×, som, salvamento automático, anúncios / remover anúncios, coletiva e recado do presidente liga-desliga, rever tutorial, pedir demissão).
 
 **O que ainda NÃO existe / está pela metade** (buracos entre "funciona" e "lançável e bom"):
 
-- 🟡 **Bloco B só em stub:** `mostrarAnuncio()` mostra um modal placeholder ("o anúncio real entra com o empacotamento"); a compra remove-ads concede sem validar pagamento. Também **não feito**: detectar a superfície (web × app) dentro do `mostrarAnuncio()` (§5), os outros bônus do B1 (energia, scout extra) e o **campo reservado de "itens do usuário"** no save pra cosméticos.
-- 🟡 **§6.1 item 7 — impacto antes de aceitar proposta:** falta *força do setor depois* e *provável substituto*.
-- ⬜ **Copa nacional com clubes das 4 séries** (§6.1 item 16) — torneio mata-mata *paralelo* ao Brasileiro (as 4 séries em si já existem).
-- ⬜ **Ideias dos concorrentes ainda não triadas** (estavam só na análise, não neste roadmap) — ver §6.1 "A triar".
+- 🟡 **Bloco B só em stub:** `mostrarAnuncio()` mostra um modal placeholder ("o anúncio real entra com o empacotamento"); a compra remove-ads concede sem validar pagamento. Também **não feito**: detectar a superfície (web × app) dentro do `mostrarAnuncio()` (§5) e os outros bônus do B1 (energia, scout extra). *(O campo reservado de cosméticos no save foi feito em 05/10 — save v13.)*
+- ⬜ **Pré-teste, triado em 05/10/2026:** teste de balanceamento econômico (§6.1 item 17) e barra de pressão (item 20).
+- ⬜ **Hospedagem web pros testers:** arquivos prontos (`index.html`, manifest, ícones — instalável); falta **ligar o GitHub Pages** (§5 "Hospedagem").
+- ⬜ **Pós-teste** (triado em 05/10/2026): Copa nacional com clubes das 4 séries (item 16 — torneio *paralelo* ao Brasileiro; as 4 séries em si já existem), ranking por período, fim de temporada ilustrado, banner de dica por aba, compartilhar, feedback por recompensa.
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E) — de propósito pra depois do teste com pessoas.
 
-**Estado dos testes (05/10/2026):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa.
+**Estado dos testes (05/10/2026):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa. ⚠️ `harness_estadual` [6] também falhava às vezes: o aviso de premiação podia vir **depois** de outro aviso na fila (proposta, desfalque…) — o teste agora percorre a fila (05/10). `harness_save_enxuto` aceita schema ≥ 12.
+
+**05/10/2026 (tarde):** item 7 do §6.1 ✅ (`harness_impacto` 18/18), campo de cosméticos no save v13 + **bug da 2ª carreira** corrigido (`harness_itens_carreira` 13/13), arquivos de hospedagem/PWA prontos, triagem do §6.1 feita.
 
 ---
 
@@ -94,7 +97,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 > **Modelo cravado:** anúncios no jogo grátis **+** compra única (dinheiro real) que **remove os anúncios**. Nada de pay-to-win — e como o que se vende é *ausência de ads* (não vantagem no jogo), o modelo é limpo por construção.
 >
-> **Cosméticos ficam anotados pra depois** (ex.: importar um logo/escudo do clube). Fora do escopo atual, mas o save deve reservar um campo de "itens do usuário" pra não travar essa porta no futuro. *(05/10/2026: esse campo **ainda não existe** no snapshot — fazer no próximo bump de schema.)*
+> **Cosméticos ficam anotados pra depois** (ex.: importar um logo/escudo do clube). Fora do escopo atual, mas o save deve reservar um campo de "itens do usuário" pra não travar essa porta no futuro. *(✅ 05/10/2026: save **v13** tem `itensUsuario` = `{v:1, itens:[{id,tipo,origem,em}], equipados:{tipo:id}}`, tipos `escudo/tema/kit/placa`, saneado no load. Regra pra quando entrar: **posse de item pago mora no servidor** (como o remove-ads); o save guarda só o equipado na carreira e itens ganhos jogando.)*
 
 **B1. Anúncios recompensados (opt-in) — o formato principal.**
 - O jogador **escolhe** ver um ad pra ganhar bônus: **dobrar o prêmio** de um objetivo/rodada, acelerar recuperação de energia, um scout extra. Nunca forçado, **nunca no meio da partida nem entre rodadas** (mataria o "só mais uma rodada").
@@ -222,7 +225,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 11. ✅ **Imersão (D2)** + **estabilidade (D3)** + **áudio (D4)**.
 12. ⬜ **Empacotar e publicar (E)** conforme a plataforma decidida.
 
-**Onde estamos na rota (05/10/2026):** tudo que vem antes do teste com pessoas está feito, **exceto**: §6.1 item 7 (impacto da proposta, parcial), a reserva do campo de cosméticos no save e as ideias de concorrentes que nunca foram triadas (§6.1 "A triar"). A Copa nacional (§6.1 item 16) está marcada como *futuro* — decidir se entra antes do teste. Pro teste, falta também **um link pros testers**: hospedar a versão web (§5) — o único pedaço do Bloco E que faz sentido antes do teste.
+**Onde estamos na rota (05/10/2026, atualizado à tarde):** item 7, campo de cosméticos e triagem ✅. **Falta antes do teste com pessoas:** (1) §6.1 item 17 — balanceamento econômico; (2) item 20 — barra de pressão; (3) **ligar o GitHub Pages** pra ter o link (arquivos prontos, §5 "Hospedagem"). O resto do §6.1 ficou pra depois do teste.
 
 ---
 
@@ -253,6 +256,13 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 **Como o código decide:** `mostrarAnuncio()` já é o ponto único de integração. Ele detecta a superfície (navegador vs. dentro do app) e chama a rede certa: no app → AdMob recompensado; na web → AdSense (ou concede a recompensa de outra forma, já que banner não é recompensado). Troca cirúrgica num só lugar; o resto do jogo não muda.
 
 **Decidido (09/2026):** na versão web, o bônus "dobrar prêmio" **continua existindo e é concedido sem anúncio** (opção b — web como vitrine generosa), já que o AdSense não tem formato recompensado. A alternativa descartada era deixar o bônus exclusivo do app, pra criar funil web→app.
+
+**Hospedagem da versão web (05/10/2026 — arquivos prontos, falta ligar):**
+- Repo público → **GitHub Pages** na branch `main`, pasta raiz. Link: `https://dartagnanvalarini.github.io/prancheta_fc/` (o `index.html` abre o `prancheta_fc.html`, mantendo `?query`/`#hash`).
+- **PWA instalável:** `manifest.webmanifest` + `icons/` (192, 512, maskable, apple-touch), tags no `<head>`. Conferido no Chromium: zero erros de instalação/manifest. **Sem service worker de propósito** — o jogo precisa do Supabase pra carregar os clubes, e cache de HTML atrasaria correções pros testers.
+- **Ligar (1 clique, a API de Pages não é acessível daqui):** GitHub → repo → Settings → Pages → *Deploy from a branch* → `main` / `/ (root)` → Save.
+- **Supabase Auth:** quem criar conta recebe link de confirmação; o cadastro agora pede `emailRedirectTo` = endereço onde o jogo está. Adicionar o link do Pages em **Authentication → URL Configuration** (Site URL e/ou Redirect URLs), senão o link de confirmação cai no endereço padrão. Jogar como convidado não depende disso.
+- `ui_test/abrir.js` agora serve os arquivos do repo (manifest, ícones) em vez de devolver o HTML pra tudo.
 
 **O que vale pras DUAS versões:** o servidor (Bloco C) — a compra de "remover anúncios" precisa ser validada no servidor tanto na web quanto no app, senão é o primeiro alvo de cheat. Por isso o Bloco C vem antes do empacotamento: protege a compra e destrava o ranking, independente da superfície.
 
@@ -293,7 +303,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 ### Mercado
 > **🐞 Corrigido (29/09/2026) — negociação de compra incoerente:** o clube só aceitava com **5% acima** do preço pedido; entre o preço e +5% a contraproposta (média entre oferta e preço) saía **abaixo** do que o jogador ofereceu (caso real: ofereceu R$ 9,0 M, ouviu "só sai por R$ 8,8 M"). Regra nova (`avaliarOfertaCompra`): oferta ≥ preço **fecha**; abaixo de 60% é recusada; no meio, contraproposta **sempre acima da oferta e no máximo o preço**, arredondada pra cima em R$ 100 mil. O clube **lembra a contraproposta na rodada**: oferecer esse valor fecha, e subir a oferta nunca faz ele pedir mais. Gate: `harness_mercado.js` (varre ~36 mil ofertas: oferecer mais nunca piora o resultado).
 6. **Negociação em 3 etapas** — **✅ FEITO (29/09/2026)**: (1) **taxa** com o clube, com o preço pedido e o **piso explícito** (60% — abaixo recusa direto); contraproposta aparece na própria etapa e oferecer esse valor fecha; (2) **salário** com o jogador — ele diz um mínimo (salário atual + 10%), mas o real pode ser até 12% maior e o empresário contrapropõe; (3) **fechar** com resumo, **prazo do contrato (1–4 anos)** e **risco de aposentadoria** pra veteranos (33+: 10% → 85%). Em todas as etapas o **🧮 contador** projeta *caixa depois*, *por rodada* (patrocínio/4 + bilheteria/2 − folha/4 − parcela) e *fim da temporada*, com uma frase ("Cabe hoje, não cabe amanhã…"), atualizando ao digitar. O jogador chega com o salário e o prazo acertados. Gate: `harness_negociacao`. *Ideia original:* — (1) **taxa** com o clube, com piso ("abaixo de X eles recusam direto"); (2) **salário** com o jogador, que pode contrapropor; (3) **fechar**, com aviso de risco quando houver (ex.: chance de aposentadoria do veterano). Cada etapa com o card do contador (item 3).
-7. **Impacto antes de aceitar proposta recebida** — **🟡 PARCIAL (29/09/2026)**: o modal de venda/leilão já mostra oferta × valor, caixa depois e aviso de titular; falta *força do setor depois* e *provável substituto*. — caixa depois, folha depois, quanto cai a força do setor, provável substituto no elenco.
+7. **Impacto antes de aceitar proposta recebida** — **✅ FEITO (05/10/2026)**: os modais de **proposta recebida** e de **leilão** ganharam o bloco **Impacto no time** (`impactoVenda`/`impactoVendaHTML`): **força do setor** dele e **força do time** antes → depois (melhor escalação possível na formação atual, com e sem o jogador — a mesma conta da escalação automática, então vender nunca "melhora" o time), **folha depois** e **provável substituto** (quem entra no onze ideal, com "adaptado"/"improvisado" se for fora da posição; "não muda o onze" pra reserva; "sobra vaga" com elenco curto). Só leitura: não mexe na escalação. Gate: `harness_impacto` (inclui varredura de 800 vendas em 40 clubes e o modal a 390 px). *Antes:* oferta × valor, caixa depois e aviso de titular. — caixa depois, folha depois, quanto cai a força do setor, provável substituto no elenco.
 8. **Renovação de contrato com pedido do jogador** — **✅ FEITO (29/09/2026)**: contratos agora **correm** (−12 meses a cada virada; a IA renova os dela com +24). Depois do balanço, quem está no **último ano** entra na **📝 Janela de renovações** (obrigatória): cada um pede salário e prazo conforme a temporada (nota ≥ 7 → +35%, ≥ 6,5 → +20%, ≥ 6 → +10%), idade (32+ aceita −10%, prazo 1 ano) e moral (insatisfeito +15% e *exigente*). Renovar pelo pedido, **contrapropor** (contente topa até −10%, exigente só −3%) ou **dispensar** (sai de graça pro clube da série com menor elenco). O **contador** mostra folha nova, saldo por mês e **quantos meses o caixa dura**. "Renovar todos pelo pedido" pra quem joga rápido. Gate: `harness_renovacao`. *Ideia original:* — no fim da temporada, cada contrato vencendo pede salário + prazo; aceitar / contrapropor / dispensar, com a projeção "o caixa dura ~X meses". (Hoje temos contrato, não temos renovação.)
 9. **Aposentadoria de veteranos** — **✅ FEITO (29/09/2026)**: a **idade agora avança** (+1 por temporada, salva). Na virada, cada jogador de 33+ pode parar (10% aos 33, 25% aos 34, 45% aos 35, 65% aos 36, 85% aos 37+ — o mesmo risco mostrado na etapa 3 da compra). Os meus que vão parar são anunciados no **👴 Fim de carreira** antes da janela de renovações (e não entram nela), com os nomes fortes da liga que também param. Cada aposentado abre vaga pra um **🌱 garoto da base** do clube: 18–19 anos, mesmo setor, modelado num jogador da mesma série (−18% + ruído) com potencial acima — nenhum elenco encolhe. Garotos gerados vão **por inteiro** pro save (**v11**: `gerados` + `idade`), com pid negativo. Gate: `harness_aposentadoria`. *Ideia original:* — chance de parar por idade; renova os elencos da máquina e alimenta o risco do item 6.
 10. **Filtro "cabe no caixa" / "até metade do caixa"** no mercado. — **✅ FEITO (29/09/2026)**: filtros de caixa (padrão "cabe no caixa"), setor, série, idade (até 23 / 24–29 / 30+) e ordenação (força, mais barato, custo-benefício, mais jovem); a coluna mostra o **preço que o clube pede** (`precoPedido` = valor × apego, o mesmo da negociação) colorido contra o seu caixa; até 60 resultados com contagem; mensagem quando não há resultado. Gate: `harness_mercado` [4].
@@ -304,17 +314,18 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 13. **Humor da torcida → bilheteria** — **✅ FEITO (29/09/2026)**: humor 0–100 (neutro 60): vitória +4, derrota −5, goleada ±2/3 a mais, **clássico (mesma cidade) vale o dobro**, volta 3%/rodada pro neutro. A ocupação do estádio passa a depender principalmente da torcida (±25 p.p.) e um pouco da confiança da diretoria. 5 estados (Eufórica 🔥 … Revoltada 🤬) no cabeçalho do clube; salvo; clube novo começa neutro. Gate: `harness_torcida`. *Ideia original:* — vitória +, derrota −, clássico perdido pesa mais; torcida eufórica aumenta e revoltada reduz a bilheteria.
 14. **Botão "Selecionar descansados"** na escalação (escala priorizando energia). — **✅ FEITO (28/09/2026)** no §6.2: botão **🔋 Descansados** na Formação (e, desde 29/09, com a escalação por atribuição ótima).
 15. **Premiação por fase** — **✅ FEITO (29/09/2026)** no mata-mata da **Série D** (não temos copa nacional ainda): classificar pra 2ª fase R$ 150 mil; passar da 2ª fase 200 mil, 3ª fase 300 mil, oitavas 400 mil, quartas 600 mil, semi 1 M, título 2 M. Aviso **💰 Premiação por fase** na fila do fim da rodada. Também vale no estadual (item 12). Gate: `harness_estadual` [6].
-16. **Copa nacional com as 4 séries** — *futuro*: mata-mata paralelo ao Brasileiro (datas no meio de semana, energia, premiação por fase igual ao item 15). Projeto à parte: mexe no calendário e na fadiga.
+16. **Copa nacional com clubes das 4 séries** — 🅿️ **PÓS-TESTE** (triado em 05/10/2026). *Não confundir com as 4 séries do Brasileiro, que já existem:* é um mata-mata paralelo ao Brasileiro (datas no meio de semana, energia, premiação por fase igual ao item 15). Projeto à parte: mexe no calendário e na fadiga.
 
-### A triar (vindas da análise de concorrentes, nunca entraram aqui — varredura 05/10/2026)
-> Estavam na tabela "Copiar/adaptar" e no §4 de `docs/concorrentes/analise_retrofoot_browserfoot.md`, mas não neste roadmap. Conferido no código: **nenhuma existe ainda**. Decidir o que entra antes do teste com pessoas.
-17. **Teste de balanceamento econômico** — harness de 10 temporadas com IA "gananciosa" medindo caixa e força (a lição do Browserfoot: economia quebrada deixa o jogo fácil). Junto: **teto de preço coerente** e **craque recusando clube pequeno**. O gate de carreira longa confere números válidos, não equilíbrio. *Esforço médio.*
-18. **Botão Compartilhar resultado** (Web Share API / copiar texto) — aquisição barata, casa com o teste com pessoas. *Esforço baixo.*
-19. **Ranking com recortes dia / semana / mês / sempre** — quem está começando aparece; evita o ranking que premia só volume. *Baixo (views no Supabase).*
-20. **Barra de pressão** sob o placar da partida (complemento do D2). *Baixo-médio.*
-21. **Feedback em troca de recompensa** (ex.: X dias sem anúncio por responder um questionário) — útil justamente no teste com pessoas. *Baixo.*
-22. **Fim de temporada ilustrado** (confete no título, clima pesado no rebaixamento) e **cerimônia de sorteio** — momentos em tela cheia. *Médio.*
-23. **Banner de dica por aba**, fechável (onboarding barato, do Browserfoot). *Baixo.*
+### Triadas em 05/10/2026 (vindas da análise de concorrentes, nunca tinham entrado aqui)
+> **Decisão do Dart (05/10/2026):** **antes do teste com pessoas** entram o **17 (balanceamento econômico)** e o **20 (barra de pressão)**. **Depois do teste:** 16 (copa nacional), 18, 19, 21, 22 e 23. O 24 continua reservado junto dos escudos gerados.
+> Estavam na tabela "Copiar/adaptar" e no §4 de `docs/concorrentes/analise_retrofoot_browserfoot.md`, mas não neste roadmap. Conferido no código: **nenhuma existe ainda**.
+17. **⬜ PRÉ-TESTE — Teste de balanceamento econômico** — harness de 10 temporadas com IA "gananciosa" medindo caixa e força (a lição do Browserfoot: economia quebrada deixa o jogo fácil). Junto: **teto de preço coerente** e **craque recusando clube pequeno**. O gate de carreira longa confere números válidos, não equilíbrio. *Esforço médio.*
+18. **🅿️ PÓS-TESTE — Botão Compartilhar resultado** (Web Share API / copiar texto) — aquisição barata, casa com o teste com pessoas. *Esforço baixo.*
+19. **🅿️ PÓS-TESTE — Ranking com recortes dia / semana / mês / sempre** — quem está começando aparece; evita o ranking que premia só volume. *Baixo (views no Supabase).*
+20. **⬜ PRÉ-TESTE — Barra de pressão** sob o placar da partida (complemento do D2). *Baixo-médio.*
+21. **🅿️ PÓS-TESTE — Feedback em troca de recompensa** (ex.: X dias sem anúncio por responder um questionário) — útil justamente no teste com pessoas. *Baixo.*
+22. **🅿️ PÓS-TESTE — Fim de temporada ilustrado** (confete no título, clima pesado no rebaixamento) e **cerimônia de sorteio** — momentos em tela cheia. *Médio.*
+23. **🅿️ PÓS-TESTE — Banner de dica por aba**, fechável (onboarding barato, do Browserfoot). *Baixo.*
 24. **Clubes pelo apelido da torcida** — decisão de base de dados, não de código; avaliar junto dos escudos gerados (Reservado pra depois).
 
 ### Decidido NÃO fazer (por ora)

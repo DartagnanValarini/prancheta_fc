@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Prancheta FC! — Manager</title>
+<meta name="theme-color" content="#111112">
+<meta name="description" content="Manager de futebol arcade: monte o time, suba de série e aguente a diretoria.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23111112'/><text x='50' y='78' font-size='80' font-family='Arial Black' font-weight='900' text-anchor='middle' fill='%23D2FF00'>!</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -2203,7 +2209,10 @@ const Menu={
     if(senha.length<6) return this.telaCadastro('A senha precisa de pelo menos 6 caracteres.');
     this.el().innerHTML=`<div class="pre-card">${this.msg('Criando conta...','info')}</div>`;
     try{
-      const {data,error}=await App.sb.auth.signUp({email,password:senha});
+      // o link de confirmação volta pra onde o jogo está hospedado (precisa estar
+      // na lista de Redirect URLs do Supabase Auth; senão cai no Site URL)
+      const volta=/^https?:/.test(location.protocol)?location.origin+location.pathname:undefined;
+      const {data,error}=await App.sb.auth.signUp({email,password:senha,options:volta?{emailRedirectTo:volta}:undefined});
       if(error) throw error;
       if(data.user && !data.session){
         // confirmação de e-mail está ligada no projeto
@@ -2382,6 +2391,7 @@ const Menu={
   async comecarCarreira(ti){
     App.torcida=App.TORCIDA_NEUTRA;   // torcida é do clube: clube novo, humor neutro
     const novoJogo=!this._demissaoFlow;
+    if(novoJogo) App.zerarCarreira();  // 2ª carreira na mesma sessão não herda nada da 1ª
     App.myTeam=ti; App.squadView=ti;
     App.slotAtual=this.slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
     App.confianca=App.CONF_INICIAL;    // voto de confiança inicial (60/100)
@@ -3044,7 +3054,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:12,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados · v12: save enxuto (só atributos que mudaram)
+  SCHEMA_VERSION:13,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados · v12: save enxuto (só atributos que mudaram) · v13: campo reservado pra cosméticos (itensUsuario)
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -3112,6 +3122,54 @@ const App={
     if(this.carreira.titulos==null) this.carreira.titulos=0;
     if(this.carreira.acessos==null) this.carreira.acessos=0;
     return this.carreira;
+  },
+  // carreira NOVA (slot vazio): zera tudo que é da carreira e não do aparelho.
+  // Sem isto, começar uma 2ª carreira na mesma sessão herdava temporada, títulos/
+  // acessos (inflando o score do ranking), histórico, leilões, propostas e extrato.
+  // NÃO roda na demissão (lá a carreira continua, só muda o clube).
+  // Opções (velocidade, som…) são preferência do jogador e ficam.
+  zerarCarreira(){
+    this.temporada=1; this.rodada=0; this.dia=1;
+    this.carreira=null; this.garantirCarreira();
+    this.histClube=[]; this.objetivos=null;
+    this.leiloes=[]; this.ofertasRecebidas=[];
+    this.extrato=[]; this.ultimoMesPago=0; this.emprestimo=null;
+    this.histConf=[]; this.ultimato=null; this._reuniaoFeita=false; this.demitido=false;
+    this.confianca=this.CONF_INICIAL; this.torcida=this.TORCIDA_NEUTRA;
+    this.estadual=null; this.itensUsuario=null; this._saveCreatedAt=null;
+  },
+
+  /* ---------- Cosméticos: campo RESERVADO no save (v13) ----------
+     Bloco B deixou anotado: cosméticos (importar logo do clube, temas, kits,
+     placas) ficam pra depois do lançamento, mas o save já reserva o lugar pra
+     não travar essa porta. Regra pensada pra quando entrar:
+       - POSSE de item pago mora no SERVIDOR (como o remove-ads, tabela
+         entitlement) — nunca confiada ao save;
+       - o save guarda só o que está EQUIPADO nesta carreira (ex.: o logo do
+         clube desta carreira) e itens grátis/ganhos jogando.
+     Formato: {v:1, itens:[{id,tipo,origem,em}], equipados:{tipo:id}}. */
+  ITENS_TIPOS:['escudo','tema','kit','placa'],
+  garantirItensUsuario(){
+    if(!this.itensUsuario || typeof this.itensUsuario!=='object') this.itensUsuario={v:1, itens:[], equipados:{}};
+    return this.itensUsuario;
+  },
+  // dado do save NÃO é confiável: só tipos conhecidos, ids curtos, no máx. 200 itens,
+  // e só fica equipado o que existe na lista
+  sanearItensUsuario(v){
+    const ok={v:1, itens:[], equipados:{}};
+    if(!v || typeof v!=='object') return ok;
+    const txt=(x,n)=>String(x==null?'':x).replace(/[^\w\-.:]/g,'').slice(0,n);
+    const vistos=new Set();
+    (Array.isArray(v.itens)?v.itens:[]).slice(0,200).forEach(it=>{
+      if(!it || typeof it!=='object') return;
+      const id=txt(it.id,40), tipo=String(it.tipo||'');
+      if(!id || !this.ITENS_TIPOS.includes(tipo) || vistos.has(id)) return;
+      vistos.add(id);
+      ok.itens.push({id, tipo, origem:it.origem==='compra'?'compra':'jogo', em:txt(it.em,30)});
+    });
+    const eq=(v.equipados&&typeof v.equipados==='object')?v.equipados:{};
+    this.ITENS_TIPOS.forEach(tp=>{ const id=txt(eq[tp],40); if(id && ok.itens.some(i=>i.id===id && i.tipo===tp)) ok.equipados[tp]=id; });
+    return ok;
   },
   // score do treinador: pesos simples e explicáveis (o servidor só checa plausibilidade).
   scoreTreinador(){
@@ -6468,6 +6526,7 @@ const App={
               {rotulo:'Caixa depois', valor:this.fmtReais(caixa+top.valor), cor:'var(--lemon)'},
               {rotulo:'Lance × valor', valor:pct+'%'}],
         aviso:titular?`⚠️ ${this.esc(p.nome.split(' ')[0])} é titular e sai da escalação se você vender.`:'',
+        extraHTML:this.impactoVendaHTML(pid),
       }),
       botoes:[
         {txt:'Recusar todos', tipo:'sm', onClick:()=>{ this.fecharLeilao(pid,false); p.aVenda=false; fim(); }},
@@ -6810,6 +6869,55 @@ const App={
   avisarPropostasNovas(){
     (this.ofertasRecebidas||[]).filter(o=>!o.avisada).forEach(o=>{ o.avisada=true; this.decidirVendaUI(o.pid,{fila:true, nova:true}); });
   },
+  /* §6.1 item 7 — impacto da venda ANTES de aceitar: folha depois, força do
+     setor e do time (melhor escalação possível na formação atual, com e sem o
+     jogador) e o provável substituto (quem entra no onze ideal no lugar dele).
+     Só leitura: não mexe na escalação. */
+  impactoVenda(pid){
+    const i=this.myTeam, t=this.teams[i], c=this.cfg[i]; if(!t||!c) return null;
+    const p=t.players.find(x=>x.pid===pid); if(!p) return null;
+    const slots=[]; (LINHAS_FM[c.formacao]||[]).forEach(l=>l.forEach(pos=>slots.push(pos)));
+    const disp=t.players.filter(x=>!this.indisponivel(x));
+    const antes=Escalacao.atribuir(disp, slots);
+    const depois=Escalacao.atribuir(disp.filter(x=>x.pid!==pid), slots);
+    const posAtual=this.posDe(i,p.numero);
+    const noOnzeIdeal=antes.find(a=>a.p===p);
+    const setor=POS_SETOR[(posAtual!=='BANCO'&&posAtual!=='FORA')?posAtual:(noOnzeIdeal?noOnzeIdeal.pos:Escalacao.posNatural(p))]||'MEI';
+    // força na vaga = a mesma nota que a escalação automática maximiza (overall na
+    // posição − penalidade de improviso), então vender nunca "melhora" o time
+    const media=(atr,filtro)=>{ const v=atr.filter(a=>filtro(a.pos)).map(a=>a.p?Escalacao.nota(a.p,a.pos,Escalacao.posNatural(a.p)):0);
+      return v.length?Math.round(v.reduce((s,x)=>s+x,0)/v.length*10)/10:0; };
+    const doSetor=pos=>POS_SETOR[pos]===setor;
+    const idsAntes=new Set(antes.filter(a=>a.p).map(a=>a.p.pid));
+    const entra=depois.find(a=>a.p && !idsAntes.has(a.p.pid));
+    const vagaVazia=depois.some(a=>!a.p) && !antes.some(a=>!a.p);
+    return { setor, nomeSetor:{GK:'Goleiro',DEF:'Defesa',MEI:'Meio',ATQ:'Ataque'}[setor]||setor,
+      noOnzeIdeal:!!noOnzeIdeal,
+      setorAntes:media(antes,doSetor), setorDepois:media(depois,doSetor),
+      timeAntes:media(antes,()=>true), timeDepois:media(depois,()=>true),
+      substituto: entra ? {nome:entra.p.nome, pos:entra.pos, ov:Motor.overallEm(entra.p,entra.pos),
+        natural:Escalacao.posNatural(entra.p)===entra.pos,
+        mesmoSetor:POS_SETOR[Escalacao.posNatural(entra.p)]===POS_SETOR[entra.pos]} : null,
+      vagaVazia,
+      folhaAntes:this.folhaDe(i), folhaDepois:this.folhaDe(i)-Math.round((p.salario||0)*1000) };
+  },
+  // bloco "Impacto no time" pros modais de venda e leilão (padrão §6.3)
+  impactoVendaHTML(pid){
+    const m=this.impactoVenda(pid); if(!m) return '';
+    const f1=v=>v.toFixed(1).replace('.',',');
+    const dif=(a,b)=>{ const d=Math.round((b-a)*10)/10; return d===0?'<span style="color:var(--gray)">=</span>':`<span style="color:${d<0?'var(--loss)':'var(--lemon)'}">${d>0?'+':'−'}${f1(Math.abs(d))}</span>`; };
+    const sub = m.vagaVazia ? '<span style="color:var(--loss)">ninguém — sobra vaga</span>'
+      : !m.noOnzeIdeal ? '<span style="color:var(--gray)">não muda o onze</span>'
+      : m.substituto ? `${this.esc(m.substituto.nome)} <small style="color:var(--gray);font-family:'Space Mono'">${m.substituto.pos}${m.substituto.natural?'':m.substituto.mesmoSetor?' · adaptado':' · improvisado'} · ${m.substituto.ov}</small>`
+      : '<span style="color:var(--gray)">rearranjo do onze</span>';
+    return `<div class="mf-impacto" data-impacto="${pid}"><small style="display:block;font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Impacto no time (melhor escalação na formação atual)</small>
+      <div class="mf-kpis n4">
+        <div class="mf-kpi"><small>Força · ${m.nomeSetor}</small><b data-k="setor">${f1(m.setorAntes)} → ${f1(m.setorDepois)} ${dif(m.setorAntes,m.setorDepois)}</b></div>
+        <div class="mf-kpi"><small>Força do time</small><b data-k="time">${f1(m.timeAntes)} → ${f1(m.timeDepois)} ${dif(m.timeAntes,m.timeDepois)}</b></div>
+        <div class="mf-kpi"><small>Folha depois</small><b data-k="folha">${this.fmtReais(m.folhaDepois)}<small style="color:var(--gray);font-family:'Space Mono'"> /mês</small></b></div>
+        <div class="mf-kpi"><small>Provável substituto</small><b data-k="sub" style="font-size:12px">${sub}</b></div>
+      </div></div>`;
+  },
   // modal de decisão de venda: quem quer, quanto, impacto no caixa/folha/escalação
   decidirVendaUI(pid, op){
     op=op||{};
@@ -6833,6 +6941,7 @@ const App={
           {rotulo:'Oferta × valor', valor:pct+'%'},
         ],
         aviso:titular?`⚠️ ${this.esc(p.nome.split(' ')[0])} é titular e sai da escalação se você vender.`:'',
+        extraHTML:this.impactoVendaHTML(pid),
       }),
       botoes:[
         {txt:'Recusar', tipo:'sm', onClick:()=>{ this.responderOferta(pid,false); fim(); }},
@@ -7934,6 +8043,8 @@ const App={
       estadual:this.estadual||null,                                  // estadual de pré-temporada
       // --- v9: forma recente de cada time (5 últimas notas + V/E/D) ---
       formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
+      // --- v13: campo reservado pra cosméticos (vazio até o recurso existir) ---
+      itensUsuario:this.garantirItensUsuario(),
     };
     snap.checksum=this._checksum(snap);
     return snap;
@@ -8135,6 +8246,7 @@ const App={
     this.objetivos=(s.objetivos&&s.objetivos.div)?s.objetivos:null;   // A3 (garantirObjetivos recria se faltar)
     this.carreira=(s.carreira&&typeof s.carreira==='object')?{titulos:s.carreira.titulos||0, acessos:s.carreira.acessos||0, estaduais:s.carreira.estaduais||0}:{titulos:0, acessos:0};   // C3
     this.opcoes=(s.opcoes&&typeof s.opcoes==='object')?{...this.OPCOES_PADRAO,...s.opcoes}:{...this.OPCOES_PADRAO};   // Bloco B
+    this.itensUsuario=this.sanearItensUsuario(s.itensUsuario);   // v13 (saves ≤ v12 chegam vazios)
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;
     if(s.fase) this.fase=s.fase;

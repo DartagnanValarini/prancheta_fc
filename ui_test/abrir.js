@@ -16,7 +16,16 @@ async function abrir(browser,{w=1280,h=860,seguro=false}={}){
   page.on('console',m=>{ if(m.type()==='error') erros.push('console: '+m.text()); });
   await page.route('**/*',route=>{
     const u=route.request().url();
-    if(u.startsWith(BASE)) return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'prancheta_fc.html'),'utf8')});
+    if(u.startsWith(BASE)){
+      // serve o arquivo pedido do repo (manifest, ícones…); a raiz e o resto caem no jogo
+      const rel=decodeURIComponent(new URL(u).pathname).replace(/^\/+/,'');
+      const arq=rel&&!rel.includes('..')?path.join(REPO,rel):null;
+      if(arq && rel!=='prancheta_fc.html' && fs.existsSync(arq) && fs.statSync(arq).isFile()){
+        const tipo={'.webmanifest':'application/manifest+json','.png':'image/png','.json':'application/json','.js':'application/javascript','.html':'text/html'}[path.extname(arq)]||'application/octet-stream';
+        return route.fulfill({contentType:tipo, body:fs.readFileSync(arq)});
+      }
+      return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'prancheta_fc.html'),'utf8')});
+    }
     if(u.includes('supabase-js')) return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.join(__dirname,'fake_supabase.js'),'utf8')});
     return route.abort();
   });

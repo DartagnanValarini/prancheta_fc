@@ -132,7 +132,13 @@ const clicar=(page,txt)=>page.click(`#flkModal .flkm-foot .btn:has-text("${txt}"
   t(d.r1.pr.length===1 && d.r1.pr[0]===d.esp1 && d.r1.cx===d.esp1,`passou da semifinal → +${d.esp1}`);
   t(d.r2.pr[1]===d.esp2 && /campeão/.test(d.r2.txt[1]),`campeão da Série D → +${d.esp2}`);
   await page.evaluate(()=>{ App.fase='fim'; App.liveState={done:true}; App.fecharRodada(); });
-  t(/Premiação por fase/.test(await titulo(page)),'aviso "💰 Premiação por fase" no fim da rodada');
+  // outros avisos do fim da rodada (desfalques, propostas, leilão…) podem vir antes na fila:
+  // pula-os até achar o da premiação (no máx. 6)
+  let achou=false, vistos=[];
+  for(let k=0;k<6;k++){ const tt=await titulo(page); if(!tt) break; vistos.push(tt);
+    if(/Premiação por fase/.test(tt)){ achou=true; break; }
+    await page.click('#flkModal .flkm-foot .btn:first-child'); await page.waitForTimeout(250); }
+  t(achou,'aviso "💰 Premiação por fase" no fim da rodada'+(achou?'':' (fila: '+vistos.join(' · ')+')'));
   if(SHOTS) await page.screenshot({path:path.join(SHOTS,'premio_fase.png')});
   t(await page.evaluate(()=>!(App._premiosFase||[]).length),'fila de prêmios esvazia depois do aviso');
 
