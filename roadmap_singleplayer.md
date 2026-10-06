@@ -264,6 +264,8 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - **Supabase Auth:** quem criar conta recebe link de confirmação; o cadastro agora pede `emailRedirectTo` = endereço onde o jogo está. Adicionar o link do Pages em **Authentication → URL Configuration** (Site URL e/ou Redirect URLs), senão o link de confirmação cai no endereço padrão. Jogar como convidado não depende disso.
 - `ui_test/abrir.js` agora serve os arquivos do repo (manifest, ícones) em vez de devolver o HTML pra tudo.
 
+**Auditoria de segurança do banco (05/10/2026, noite):** RLS ligado nas 6 tabelas; nenhuma função exposta. Cliente só **lê** `team`/`player`/`ranking` e escreve apenas o próprio `game_save` (políticas de dono). Removidas as permissões de escrita que sobravam pro `anon`/`authenticated` (migration `hardening_revoke_escrita_cliente` — o RLS já barrava; é defesa em profundidade). Pendências: (1) **Auth → proteção contra senha vazada** desligada (aviso do Supabase); (2) a chave pública permite baixar a base de jogadores — inevitável pra jogo que roda no aparelho; (3) repo público expõe o código e o `SAVE_SECRET` → trocar o segredo e decidir se o repo fica privado; (4) projeto pausa sozinho no plano grátis após dias sem uso.
+
 **O que vale pras DUAS versões:** o servidor (Bloco C) — a compra de "remover anúncios" precisa ser validada no servidor tanto na web quanto no app, senão é o primeiro alvo de cheat. Por isso o Bloco C vem antes do empacotamento: protege a compra e destrava o ranking, independente da superfície.
 
 ---
