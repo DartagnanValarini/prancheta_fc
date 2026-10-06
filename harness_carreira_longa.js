@@ -3,6 +3,14 @@
 // virada, que nada apodrece: elencos inteiros, sem jogador duplicado, séries com o
 // mesmo número de clubes, números finitos, idade média estável, save enxuto que volta
 // idêntico (ida e volta) e carrega rápido. No fim, salva como convidado e recarrega.
+// Cobertura de ACESSO/REBAIXAMENTO do meu time (06/10/2026): com o jogo balanceado, o
+// time do teste (só escalação automática) ficava na Série D pra sempre e o caminho
+// "meu time sobe/cai de série" deixou de ser testado. Agora a carreira segue um PLANO:
+// sobe, sobe, sobe (D→C→B→A), cai (A→B), sobe (B→A) e depois joga normal. Pra
+// forçar, a força em campo do meu time é multiplicada só durante a temporada (o
+// estado do jogo não é tocado). A cada virada confere: série nova, liga ativa certa,
+// meu time na tabela e nos jogos da nova série, prêmio de acesso, meta da diretoria
+// e patrocínio da série nova.
 // Uso: node harness_carreira_longa.js [--temporadas N]
 const {abrir,chromium}=require('./ui_test/abrir.js');
 const N=process.argv.includes('--temporadas')?+process.argv[process.argv.indexOf('--temporadas')+1]:12;
@@ -18,14 +26,22 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   await page.click('.clube-lin'); await page.waitForSelector('.fm-campo');
   await page.evaluate(()=>{ const o=App.garantirOpcoes(); o.coletiva=false; o.recado=false; o.autoSaveRodadas=99; App._salvarOrig=App.salvarSupabase; App.salvarSupabase=async()=>{}; });
   const div0=await page.evaluate(()=>{ const c={}; App.teams.forEach(t=>c[t.divisao]=(c[t.divisao]||0)+1); return c; });
+  // turbo do meu time (só na força em campo; o estado salvo não muda)
+  await page.evaluate(()=>{ const orig=Motor.forcaCampo.bind(Motor);
+    Motor.forcaCampo=function(campo){ const f=orig(campo); const meus=new Set(App.teams[App.myTeam].players);
+      return campo.some(c=>c&&c.ref&&meus.has(c.ref)) ? f*(window.__turbo||1) : f; }; });
+  const PLANO=['sobe','sobe','sobe','cai','sobe'];   // depois: normal
+  const ORDEM=['D','C','B','A'];
 
-  // assinatura do estado pra comparar ida e volta do save
-  const retrato=`(()=>{ const r=[]; App.teams.forEach(t=>{ r.push(t.saldo); t.players.forEach(p=>r.push(p.pid,p.forca,p.idade,p.energia,p.gols||0,
+  // assinatura do estado pra comparar ida e volta do save (salário entrou em 06/10/2026: não era salvo)
+  const retrato=`(()=>{ const r=[]; App.teams.forEach(t=>{ r.push(t.saldo); t.players.forEach(p=>r.push(p.pid,p.forca,p.idade,p.energia,p.gols||0,p.salario,
       Object.values(p.attrs).join(','), p._capAttr?Object.values(p._capAttr).join(','):'-', p._growth||'-', p._ovInicialNat||'-')); });
       return r.join('|')+'#'+App.rodada+'#'+App.temporada+'#'+App.myTeam; })()`;
 
-  const log=[]; let problemas=[];
+  const log=[]; let problemas=[]; const viradas=[];
   for(let temp=1; temp<=N; temp++){
+    const plano=PLANO[temp-1]||'normal';
+    await page.evaluate(pl=>{ window.__turbo = pl==='sobe'?1.9 : pl==='cai'?0.45 : 1; },plano);
     // --- temporada inteira (loop dentro da página: rápido) ---
     const r=await page.evaluate(()=>{
       let n=0, demissoes=0;
@@ -52,7 +68,23 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
       else if(/renovações/.test(ti)){ await page.click('#flkModal .flkm-foot .btn:has-text("Renovar todos")'); await page.click('#flkModal .flkm-foot .btn:has-text("Confirmar")'); }
       else break;
     }
-    await page.evaluate(()=>{ document.getElementById('flkModal')?.remove(); App._filaModais=[]; });
+    await page.evaluate(()=>{ document.getElementById('flkModal')?.remove(); App._filaModais=[]; if(App.demitido){ App.demitido=false; App.confianca=70; } });
+    // --- troca de série do MEU time ---
+    if(plano!=='normal'){
+      const v=await page.evaluate(({antes,ORDEM})=>{
+        const eu=App.myTeam, div=App.teams[eu].divisao, lg=App.ligas&&App.ligas[div];
+        const nosJogos=(App.fixtures||[]).some(rd=>(rd||[]).some(j=>j[0]===eu||j[1]===eu));
+        const naTabela=!!(lg && lg.indices.includes(eu) && lg.stats.some(s=>s.i===eu));
+        const foraDaVelha=!(App.ligas[antes] && App.ligas[antes].indices.includes(eu));
+        const premio=(App.extrato||[]).some(e=>/Premiação por acesso à Série/.test(e.desc||''));
+        const obj=App.garantirObjetivos&&App.garantirObjetivos();
+        const patroc=App.patrocinioMensal(eu), base=App.PATROC_BASE[div];
+        return {div, ativa:App.divisao, nosJogos, naTabela, foraDaVelha, premio, premioEsperado:(App.PREMIO_ACESSO[div]||0)>0, objDiv:obj&&obj.div, patrocOk:patroc>=base*0.75-1 && patroc<=base*1.25+1};
+      },{antes:r.div, ORDEM});
+      const esperado = plano==='sobe' ? ORDEM[Math.min(3,ORDEM.indexOf(r.div)+1)] : ORDEM[Math.max(0,ORDEM.indexOf(r.div)-1)];
+      viradas.push({temp, plano, de:r.div, para:v.div, esperado, ...v});
+      console.log(`   ↳ plano "${plano}": ${r.div} → ${v.div} (esperado ${esperado})`);
+    }
     // --- invariantes ---
     const inv=await page.evaluate((div0)=>{
       const pids=new Set(); let dup=0, minElenco=99, somaIdade=0, nJog=0, naoFinito=0;
@@ -92,6 +124,16 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   t(!problemas.some(p=>/idêntico/.test(p)),'save volta idêntico (atributos, teto, growth, caixa, rodada)');
   t(!problemas.some(p=>/load lento/.test(p)),'carregar leva menos de 3 s');
   if(problemas.length) console.log('   problemas:\n   - '+problemas.join('\n   - '));
+
+  console.log('\n[meu time troca de série]');
+  const sub=viradas.filter(v=>v.plano==='sobe'), cai=viradas.filter(v=>v.plano==='cai');
+  t(sub.length>=3 && sub.every(v=>v.para===v.esperado),`subiu nas ${sub.length} temporadas planejadas (${sub.map(v=>v.de+'→'+v.para).join(', ')})`);
+  t(cai.length>=1 && cai.every(v=>v.para===v.esperado),`caiu na temporada planejada (${cai.map(v=>v.de+'→'+v.para).join(', ')})`);
+  t(viradas.every(v=>v.ativa===v.div),'a liga ativa passa a ser a da série nova');
+  t(viradas.every(v=>v.naTabela && v.nosJogos && v.foraDaVelha),'meu time está na tabela e nos jogos da série nova (e saiu da antiga)');
+  t(sub.filter(v=>v.premioEsperado).every(v=>v.premio),'prêmio de acesso cai no extrato');
+  t(viradas.every(v=>v.objDiv===v.div),'meta da diretoria é da série nova');
+  t(viradas.every(v=>v.patrocOk),'patrocínio passa a ser o da série nova');
 
   console.log('\n[convidado: salvar, recarregar a página, carregar]');
   const antes=await page.evaluate(async(retrato)=>{ App.salvarSupabase=App._salvarOrig; await App.salvarSupabase(false); const raw=localStorage.getItem('flk_save_1'); return {tam:raw?raw.length:0, r:eval(retrato)}; },retrato);

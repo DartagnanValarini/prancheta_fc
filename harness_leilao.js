@@ -95,8 +95,8 @@ const clicar=(page,txt)=>page.click(`#flkModal .flkm-foot .btn:has-text("${txt}"
   await page.click('#fmLeilao');
   t(/Leilão por/.test(await titulo(page)),'"Leilão" abre o leilão na hora');
   const lances=await page.evaluate(pid=>{ const l=App.leilaoDe(pid); return l.lances.map(x=>x.valor); },p4.pid);
-  const piso=Math.round(p4.vm*0.6/1e5)*1e5;
-  t(Math.min(...lances)===piso && lances.every(v=>v>=piso && v<=p4.vm*0.7+1e5),`lances começam em 60% do valor (${(piso/1e6).toFixed(1)} M de ${(p4.vm/1e6).toFixed(1)} M)`);
+  const ps=p4.vm<2e6?1e4:1e5, piso=Math.round(p4.vm*0.6/ps)*ps;
+  t(Math.min(...lances)===piso && lances.every(v=>v>=piso && v<=p4.vm*0.7+ps),`lances começam em 60% do valor (${(piso/1e6).toFixed(1)} M de ${(p4.vm/1e6).toFixed(1)} M)`);
   await clicar(page,'Esperar');
   const outroCard=await page.evaluate(()=>{ const ti=App.teams.findIndex((t,i)=>i!==App.myTeam); App.abrirFichaModal(ti,App.teams[ti].players[0].numero); return !document.getElementById('fmLeilao'); });
   t(outroCard,'card de jogador de outro clube não tem esses botões');

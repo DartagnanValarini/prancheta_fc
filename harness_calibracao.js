@@ -13,6 +13,8 @@
  * Uso:
  *   node harness_calibracao.js baseline    # motor atual: *0.03, mando +40 absoluto
  *   node harness_calibracao.js calibrado   # Fase 0:      *0.027, mando +7% percentual
+ *   node harness_calibracao.js atual       # em vigor:    força³, mando +30% no ataque e na defesa (06/10/2026)
+ *   node harness_calibracao.js forca|mando|mando2   # estudos de 05–06/10/2026
  *   node harness_calibracao.js             # roda os dois e compara
  */
 
@@ -129,7 +131,23 @@ function medir(chanceGol, nome){
 const modo=(process.argv[2]||'ambos').toLowerCase();
 console.log(`harness_calibracao — ${JOGOS_POR_CENARIO} jogos/série, ${MINUTOS} min/jogo, alvo do roadmap: ~2,5 gols/jogo`);
 
-if(modo==='mando'){
+if(modo==='atual'){
+  // fórmula em vigor no app.js desde 06/10/2026: força³ + mando +30% no ataque e na defesa
+  const k=3, M=0.30;
+  medir(function(fAtk,fDef,estiloAtk,estiloDef,mando){
+    const atk=Math.pow(fAtk,k)*(mando?(1+M):1)*EST[estiloAtk];
+    const def=Math.pow(fDef,k)*(mando?1:(1+M))*defMult(estiloDef);
+    return (atk/(def+atk))*0.027; }, 'ATUAL (força³, mando +30% ataque e defesa)');
+  const z=zebra(chanceGol_k(3)); console.log(`  (força³) time 12–20% mais fraco vence: ${z.zebra.toFixed(1)}%`);
+} else if(modo==='mando2'){
+  // mando valendo no ATAQUE e na DEFESA do mandante (força^3)
+  const k=3;
+  const mk=(M)=>function(fAtk,fDef,estiloAtk,estiloDef,mando){
+    const atk=Math.pow(fAtk,k)*(mando?(1+M):1)*EST[estiloAtk];
+    const def=Math.pow(fDef,k)*(mando?1:(1+M))*defMult(estiloDef);   // visitante ataca contra defesa de mandante
+    return (atk/(def+atk))*0.027; };
+  [0.07,0.2,0.3,0.4].forEach(M=>medir(mk(M), `MANDO +${Math.round(M*100)}% no ataque E na defesa (força^3)`));
+} else if(modo==='mando'){
   // mando de campo com força^3 (referência Brasileirão: mandante vence ~45–48%, visitante ~25–28%)
   [0.07,0.15,0.2,0.25,0.3].forEach(m=>{ MANDO_PCT=m; medir(chanceGol_k(3), `MANDO +${Math.round(m*100)}% (força^3)`); });
 } else if(modo==='forca'){

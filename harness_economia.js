@@ -4,7 +4,8 @@
 //  [2] força pesa no placar (força^3): 16% mais fraco → bem menos chances; gols/jogo iguais
 //  [3] interesse do jogador: craque de série maior recusa clube pequeno (ou pede salário maior)
 //  [4] recém-contratado não pode ser revendido por 8 rodadas (fecha a arbitragem)
-//  [5] informativo: temporada do clube mais fraco da Série A (posição final)
+//  [5] economia por série: preço pela força+potencial, salário pela força, salário salvo
+//  [6] informativo: temporada do clube mais fraco da Série A (posição final)
 // A medição longa (10 temporadas, 3 estratégias) está descrita no roadmap §6.1 item 17.
 // Uso: node harness_economia.js
 const {abrir,chromium}=require('./ui_test/abrir.js');
@@ -92,7 +93,33 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   t(r4.salvo,'a trava sobrevive ao save');
   t(r4.libera && r4.novaTemp,`libera depois de ${8} rodadas (rodada ${r4.rodadaLibera}) ou na temporada seguinte`);
 
-  console.log('\n[5] informativo: o clube mais fraco da Série A');
+  console.log('\n[5] economia por série (06/10/2026): preço pela força+potencial, salário pela força');
+  const r6=await page.evaluate(()=>{
+    const meses={A:9.5,B:9.5,C:9.5,D:5}, q=(a,x)=>a[Math.floor(a.length*x)], out={};
+    ['A','B','C','D'].forEach(d=>{ const ts=App.teams.map((t,i)=>i).filter(i=>App.teams[i].divisao===d);
+      const pr=ts.flatMap(i=>App.teams[i].players.map(p=>App.precoPedido(p))).sort((a,b)=>a-b);
+      const sal=ts.flatMap(i=>App.teams[i].players.map(p=>p.salario)).sort((a,b)=>a-b);
+      const fol=ts.map(i=>App.folhaDe(i)).sort((a,b)=>a-b);
+      const rec=App.PATROC_BASE[d]*meses[d] + App.CAP_ESTADIO[d]*0.6*App.PRECO_INGRESSO[d]*meses[d]*2;
+      out[d]={preco:q(pr,.5), sal:q(sal,.5), folhaPct:q(fol,.5)*meses[d]/rec, precoPct:q(pr,.5)/rec}; });
+    // potencial: jovem promissor × mesmo nível sem potencial
+    const jov=App.teams.flatMap(t=>t.players).filter(p=>p.idade<=20 && (p.potential||0)-Motor.melhorGeral(p).ov>=12);
+    const razoes=jov.map(p=>{ const c={...p, potential:Motor.melhorGeral(p).ov}; return App.valorNivelA(p)/Math.max(1,App.valorNivelA(c)); }).sort((a,b)=>a-b);
+    // salário vai pro save
+    const p=App.teams[App.myTeam].players[0]; p.salario=123; const sp=JSON.parse(JSON.stringify(App.jogadorParaSave(p)));
+    p.salario=1; App.aplicarJogadorSave(p,sp); const salvo=p.salario;
+    return {out, nJov:jov.length, razMin:razoes[0], razMed:razoes[Math.floor(razoes.length/2)], razMax:razoes[razoes.length-1], salvo};
+  });
+  const M=v=>(v/1e6).toFixed(1)+' M', Pc=v=>Math.round(v*100)+'%';
+  Object.entries(r6.out).forEach(([d,x])=>console.log(`     Série ${d}: preço mediano ${M(x.preco)} (${Pc(x.precoPct)} da receita) · salário mediano ${x.sal} mil · folha ${Pc(x.folhaPct)} da receita`));
+  t(r6.out.D.precoPct<=0.6,'mercado cabe na Série D (preço mediano ≤ 60% da receita anual)');
+  t(r6.out.A.sal>=r6.out.D.sal*4,`salário escala com a série (A ${r6.out.A.sal} mil × D ${r6.out.D.sal} mil)`);
+  t(['A','B','C','D'].every(d=>r6.out[d].folhaPct>=0.35 && r6.out[d].folhaPct<=0.75),'folha entre 35% e 75% da receita em todas as séries');
+  console.log(`     jovens promissores (${r6.nJov}): valem ${r6.razMin.toFixed(1)}× … ${r6.razMed.toFixed(1)}× (mediana) … ${r6.razMax.toFixed(1)}× um jogador igual sem potencial`);
+  t(r6.razMed>=1.5 && r6.razMax<=10,'potencial vale bem, sem explodir');
+  t(r6.salvo===123,'salário vai pro save (antes voltava ao do banco ao recarregar)');
+
+  console.log('\n[6] informativo: o clube mais fraco da Série A');
   const r5=await page.evaluate(()=>{
     const As=App.teams.map((t,i)=>i).filter(i=>App.teams[i].divisao==='A').sort((a,b)=>Menu.forcaTime(a)-Menu.forcaTime(b));
     const ti=As[0]; App.temporada=1; App.reiniciarTemporadaPara(ti); App.myTeam=ti; App.squadView=ti; App.sincronizarDivisaoAtiva(); App.estadual={status:'pulado'};

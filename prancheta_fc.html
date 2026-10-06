@@ -894,6 +894,7 @@
   .fm-acao{width:100%; padding:14px; font-size:15px}
   .fm-descansar{align-self:center}
   .fm-bonus{border-color:var(--lemon); color:var(--lemon)}
+  .fm-mando{color:var(--lemon); white-space:nowrap}
 
   .fm-semana{display:grid; grid-template-columns:repeat(7,1fr); gap:6px}
   .fm-dia{display:flex; flex-direction:column; align-items:center; background:var(--black); border:2px solid var(--line); border-radius:9px; padding:6px 2px}
@@ -1592,19 +1593,26 @@ const Motor={
   },
 
   // chance de gol de um lado num minuto, dadas as forças EM CAMPO (soma) e estilos
-  chanceGol(fAtk, fDef, estiloAtk, estiloDef, mando){
+  // mando: true = quem ataca é o mandante; false = quem DEFENDE é o mandante.
+  // bonusMando (opcional): o mando desse jogo (padrão MANDO_PCT; a torcida mexe no do usuário)
+  chanceGol(fAtk, fDef, estiloAtk, estiloDef, mando, bonusMando){
     const est={ofensivo:1.35,normal:1.0,defensivo:0.72};
+    const M=(bonusMando!=null)?bonusMando:this.MANDO_PCT;
     // Fase 0: mando percentual (+7%) em vez de +40 absoluto — escala igual entre séries.
     // Balanceamento (05/10/2026): a força entra elevada a EXP_FORCA — antes era linear
     // e um time 16% mais fraco ainda ficava com 46% das chances (o mais fraco da Série A
     // brigava por G-4). Mando e estilo continuam multiplicando por fora (mesmo peso de antes);
     // como as duas fatias somam ~1, o total de gols por jogo quase não muda.
-    const atk=Math.pow(fAtk,this.EXP_FORCA)*(mando?(1+this.MANDO_PCT):1)*est[estiloAtk];
-    const def=Math.pow(fDef,this.EXP_FORCA)*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
+    // Mando (06/10/2026): vale no ATAQUE e na DEFESA do mandante. Antes era +7% só no ataque e
+    // jogar em casa quase não importava (mandante 37% × visitante 35%). Com +30% nos dois:
+    // ~44% × 27% × 29% (Brasileirão ≈ 47% × 27% × 26%); gols por jogo seguem ~2,4.
+    const atk=Math.pow(fAtk,this.EXP_FORCA)*(mando?(1+M):1)*est[estiloAtk];
+    const def=Math.pow(fDef,this.EXP_FORCA)*(mando?1:(1+M))*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
     // Fase 0: *0.027 estabiliza ~2,5 gols/jogo (harness_calibracao.js: 2,71 -> 2,44).
     return (atk/(def+atk))*0.027;
   },
-  MANDO_PCT:0.07,   // bônus de mando percentual sobre o ataque (Fase 0)
+  MANDO_PCT:0.30,   // mando: +30% no ataque e na defesa do mandante (06/10/2026; era +7% só no ataque)
+  MANDO_TORCIDA:0.10,   // torcida do USUÁRIO mexe no mando dele: eufórica (100) +10 p.p., revoltada (20) −10 p.p.
   EXP_FORCA:3,      // quanto a diferença de força pesa no placar (1 = linear, como era até 05/10/2026)
 
   // desgaste fixo por minuto jogado (Fase 0: ~−7 na partida cheia, saldo do ciclo não-negativo)
@@ -3077,7 +3085,7 @@ const App={
 
   // versionamento de save (Fase 1 — SaveSchema). Bump SCHEMA_VERSION quando o
   // formato do snapshot mudar de forma incompatível.
-  SCHEMA_VERSION:13,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados · v12: save enxuto (só atributos que mudaram) · v13: campo reservado pra cosméticos (itensUsuario)
+  SCHEMA_VERSION:14,  // v9: forma recente · v10: assistências · v11: idade que avança + garotos da base gerados · v12: save enxuto (só atributos que mudaram) · v13: campo reservado pra cosméticos (itensUsuario) · v14: salário salvo + economia por força
   GAME_VERSION:'0.9.0',
 
   /* ---------- OPÇÕES / CONFIGURAÇÕES (Bloco B) ---------- */
@@ -3262,7 +3270,7 @@ const App={
     this.divisoesCarregadas=pedido;
     this.teams=teams;
     // Fase 2B: tira a "foto" inicial (âncora de potencial) e calcula valor vivo inicial
-    teams.forEach(t=>t.players.forEach(p=>{ Evolucao.inicializar(p); }));
+    teams.forEach(t=>t.players.forEach(p=>{ Evolucao.inicializar(p); p.salario=this.salarioMercado(p); }));   // salário pela força (o do banco era igual em todas as séries); o save sobrescreve com o contratado
     this.tickMercado();
     this.myTeam=0; this.squadView=0;
     this.cfg=teams.map((t,i)=>this.cfgInicial(t));
@@ -3592,8 +3600,9 @@ const App={
       const cfgH=this.cfg[s.h], cfgA=this.cfg[s.a];
       const fH=Motor.forcaCampo(s.campoH);
       const fA=Motor.forcaCampo(s.campoA);
-      const pH=Motor.chanceGol(fH,fA,cfgH.estilo,cfgA.estilo,true);
-      const pA=Motor.chanceGol(fA,fH,cfgA.estilo,cfgH.estilo,false);
+      const M=this.mandoDe(s.h);
+      const pH=Motor.chanceGol(fH,fA,cfgH.estilo,cfgA.estilo,true,M);
+      const pA=Motor.chanceGol(fA,fH,cfgA.estilo,cfgH.estilo,false,M);
       if(Math.random()<pH){ s.gc++; const art=this.artilheiro(s.campoH), ast=this.assistente(s.campoH,art);
         if(art&&art.ref) art.ref._golsRodada=(art.ref._golsRodada||0)+1;
         if(ast&&ast.ref) ast.ref._assistRodada=(ast.ref._assistRodada||0)+1;
@@ -4101,9 +4110,11 @@ const App={
   // classifica a partida em 5 categorias comparando forças (escala de forcaOnze,
   // que é a média por jogador ~50-70). Mando percentual via Motor.MANDO_PCT (Fase 0).
   expectativaJogo(meuTi, advTi, mando){
-    // Fase 0: mando percentual (+7%), coerente com chanceGol (MANDO_PCT).
-    const fMeu=this.forcaDoTime(meuTi)*(mando?(1+Motor.MANDO_PCT):1);
-    const fAdv=this.forcaDoTime(advTi)*(mando?1:(1+Motor.MANDO_PCT));
+    // mando na escala da força média: o mando do motor (+30% nos dois lados, sobre força³)
+    // equivale a ~+8% de força média → entre iguais, quem joga em casa é "ligeiro favorito"
+    const fm=1+Motor.MANDO_PCT*0.27;
+    const fMeu=this.forcaDoTime(meuTi)*(mando?fm:1);
+    const fAdv=this.forcaDoTime(advTi)*(mando?1:fm);
     const dif=fMeu-fAdv;
     if(dif>=10)  return 'favorito';     // ~1.5 divisões acima
     if(dif>=4)   return 'ligeiro';
@@ -4289,6 +4300,14 @@ const App={
      Enche ou esvazia o estádio → bilheteria (rendaBilheteria). */
   TORCIDA_NEUTRA:60,
   humorTorcida(){ return this.torcida==null?this.TORCIDA_NEUTRA:this.torcida; },
+  // mando do jogo com 'ti' de mandante: base fixa; se o mandante sou EU, a torcida mexe
+  // (neutra 60 = base; cada 40 pontos de humor = ±MANDO_TORCIDA). IA: torcida neutra.
+  mandoDe(ti){
+    const base=Motor.MANDO_PCT;
+    if(ti!==this.myTeam) return base;
+    const d=(this.humorTorcida()-this.TORCIDA_NEUTRA)/40*Motor.MANDO_TORCIDA;
+    return Math.max(base-Motor.MANDO_TORCIDA, Math.min(base+Motor.MANDO_TORCIDA, base+d));
+  },
   ehClassico(a,b){ const A=this.teams[a], B=this.teams[b]; return !!(A&&B&&A.cidade&&B.cidade&&A.cidade===B.cidade); },
   reagirTorcida({resultado, meusGols, golsAdv, advTi}){
     let d = resultado==='v'?4 : resultado==='d'?-5 : 0;
@@ -4363,10 +4382,23 @@ const App={
   },
 
   /* ---------- MERCADO / VALOR VIVO (Fase 2B) ---------- */
-  // curva exponencial de valor por overall (em reais). ov~82 ≈ R$ 80M.
+  /* ---------- ECONOMIA POR SÉRIE (06/10/2026) ----------
+     Antes: salário igual em todas as séries (~35 mil, do banco) e curva de valor
+     rasa (força^5,2) — o jogador mediano da Série D custava mais que o caixa de um
+     clube da D, e na Série A sobrava fortuna. Agora PREÇO e SALÁRIO vêm da força,
+     calibrados pra cada série se pagar:
+       preço mediano ≈ 45% da receita anual de um clube da D … ≈ 30% na A;
+       folha ≈ 50–65% da receita em todas as séries.
+     Preço considera também o POTENCIAL (jovem promissor vale bem); salário só a
+     força ATUAL (o jogador cobra pelo que joga hoje). */
+  VALOR_K:585e6, VALOR_N:8.5,            // 52 → ~2 M · 70 → ~28 M · 80 → ~88 M · 90 → ~240 M
   curvaValor(ov){
-    const K=180e6, N=5.2;                 // calibrado: 82 -> ~80M, 90 -> ~150M, 60 -> ~9M
-    return K*Math.pow(ov/100, N);
+    return this.VALOR_K*Math.pow(Math.max(0,ov)/100, this.VALOR_N);
+  },
+  SAL_REF:220, SAL_EXP:7.3,              // mil/mês: 52 → ~25 · 58 → ~55 · 64 → ~115 · 70 → 220 · 80 → ~580
+  salarioMercado(p){
+    const ov=Motor.melhorGeral(p).ov;
+    return Math.max(3, Math.round(this.SAL_REF*Math.pow(Math.max(1,ov)/70, this.SAL_EXP)));
   },
   fatorIdadeValor(age){
     if(age<=20) return 0.85;
@@ -4394,9 +4426,13 @@ const App={
       * this.fatorIdadeValor(p.idade)
       * this.fatorContratoValor(p.contratoMeses)
       * this.fatorPosValor(p.setorNat);
+    // potencial: o preço usa uma força EFETIVA = força + parte do caminho até o potencial
+    // (jovem crível anda metade do caminho; veterano, nada). Com a curva íngreme, somar a
+    // diferença em dinheiro explodia (garoto da D com potencial 65 valia ~10 M).
     const pot=p.potential||mg.ov;
-    const premio=Math.max(0, this.curvaValor(pot)-this.curvaValor(mg.ov))
-      * this.fatorConfiancaIdade(p.idade) * 0.6;
+    const ovEf=mg.ov+Math.max(0,pot-mg.ov)*this.fatorConfiancaIdade(p.idade)*0.5;
+    const premio=Math.max(0, this.curvaValor(ovEf)-this.curvaValor(mg.ov))
+      * this.fatorIdadeValor(p.idade) * this.fatorContratoValor(p.contratoMeses) * this.fatorPosValor(p.setorNat);
     // A4: moral tempera o valor (insatisfeito vale menos; motivado, um pouco mais). Suave: ±5%.
     const m=(p.moral!=null)?p.moral:65;
     const fMoral = 1 + (m-65)/100*0.5;   // moral 0→0.675, 65→1.0, 100→1.175 → clamp abaixo
@@ -4496,6 +4532,8 @@ const App={
       motivo:`Joga a Série ${orig.divisao}: pra descer pra Série ${eu.divisao} só com salário maior.`};
     return {ok:false, mult:0, gap, motivo:`“Não troco a Série ${orig.divisao} pela Série ${eu.divisao}.” Ele está muito acima do nível da sua série — suba de divisão primeiro.`};
   },
+  // passo de arredondamento de valores de negociação: R$ 10 mil abaixo de R$ 2 M, R$ 100 mil acima
+  passoValor(v){ return (v||0)<2e6 ? 1e4 : 1e5; },
   podeRevender(p){
     const c=p && p._chegou; if(!c) return true;
     if(c.t!==(this.temporada||1)) return true;
@@ -4516,7 +4554,7 @@ const App={
     if(oferta<alvo*0.6)   return {decisao:'recusa', fala:'Proposta muito baixa. Nem vamos considerar.'};
     // contrapropõe no meio do caminho, arredondado PRA CIMA em R$ 100 mil,
     // sempre ACIMA da oferta e nunca acima do alvo (arredondado) nem do que já pediu
-    const passo=1e5, teto=Math.ceil(alvo/passo)*passo;
+    const passo=this.passoValor(alvo), teto=Math.ceil(alvo/passo)*passo;   // passo proporcional (era R$ 100 mil fixo: +25% em jogador de R$ 400 mil)
     let contra=Math.min(teto, Math.max(Math.ceil((oferta+alvo)/2/passo)*passo, Math.floor(oferta/passo)*passo+passo));
     if(pedido!=null) contra=Math.min(contra, pedido);
     this._contras[pid]={valor:contra, rodada:this.rodada, temporada:this.temporada};
@@ -4542,7 +4580,7 @@ const App={
       if(candidatos.length>=2 && Math.random()<this.CHANCE_LEILAO){ this.abrirLeilao(p, candidatos, vm); return; }
       const c=candidatos[Math.floor(Math.random()*candidatos.length)];
       // oferta entre 75% e 115% do valor
-      const oferta=Math.round(vm*(0.75+Math.random()*0.4)/1e5)*1e5;
+      const ps=this.passoValor(vm), oferta=Math.round(vm*(0.75+Math.random()*0.4)/ps)*ps;
       this.ofertasRecebidas.push({pid:p.pid, nome:p.nome, de:c.i, deNome:c.t.nome, valor:oferta, rodada:this.rodada});
     });
   },
@@ -5335,7 +5373,7 @@ const App={
         <div class="fm-adv-top"><span>Adversário</span><span>Rodada ${this.rodada+1} · ${this.diaSemana(this.dia)}</span></div>
         <div class="fm-adv-id">${this.escudoHTML(this.teams[adv.ti],40)}<div>
           <div class="fm-adv-nome">${esc(this.teams[adv.ti].nome)}</div>
-          <div class="fm-adv-sub">${adv.casa?'🏠 Em casa':'✈️ Fora'} · Série ${this.teams[adv.ti].divisao}</div></div></div>
+          <div class="fm-adv-sub">${adv.casa?`🏠 Em casa <span class="fm-mando" title="Fator casa: a torcida mexe no seu mando (eufórica aumenta, revoltada diminui)">· mando +${Math.round(this.mandoDe(this.myTeam)*100)}% ${this.estadoTorcida().ic}</span>`:'✈️ Fora'} · Série ${this.teams[adv.ti].divisao}</div></div></div>
         <table class="fm-adv-tab"><thead><tr><th class="l"></th><th>J</th><th>V</th><th>D</th><th>GM:GS</th><th>P</th></tr></thead>
           <tbody>${linhaStat(i)}${linhaStat(adv.ti)}</tbody></table>`
       : `<div class="fm-adv-top"><span>Próximo jogo</span></div>
@@ -6022,7 +6060,7 @@ const App={
   },
   // salário que o jogador pede pra vir (em MIL/mês): o atual + 10% pra trocar de clube.
   // O "real" (escondido) pode ser até 12% maior — o empresário testa o mercado.
-  pedidoSalarial(p){ const it=this.interesseJogador(p); return Math.max(5, Math.round((p.salario||20)*1.10*(it.ok?it.mult:1))); },
+  pedidoSalarial(p){ const it=this.interesseJogador(p); return Math.max(3, Math.round(Math.max(p.salario||0, this.salarioMercado(p))*1.10*(it.ok?it.mult:1))); },
   cabecaNegociacao(p, ti, rotuloDir, valorDir){
     const mg=Motor.melhorGeral(p);
     return `<div class="neg-top">${this.escudoHTML(this.teams[ti],40)}<div class="neg-id"><div class="mf-nome">${this.esc(p.nome)}</div>
@@ -6335,7 +6373,8 @@ const App={
     if((p.idade||0)>=32) f*=0.9;                          // veterano aceita menos
     const m=Rating.moralDe(p);
     if(m<40) f*=1.15;                                     // insatisfeito só fica ganhando mais
-    const sal=Math.max(5, Math.round((p.salario||20)*f));
+    // base: o que ganha hoje ou 90% do mercado pela força atual (quem evoluiu pede pra subir)
+    const sal=Math.max(3, Math.round(Math.max(p.salario||0, this.salarioMercado(p)*0.9)*f));
     const anos=(p.idade||25)<=25?3:(p.idade||25)<=30?2:1;
     return {sal, anos, nota, exigente:m<65};
   },
@@ -6443,7 +6482,7 @@ const App={
     this.teams.forEach((t,ti)=>t.players.forEach(p=>{
       if(p.contratoMeses==null) p.contratoMeses=24;
       p.contratoMeses=Math.max(0,p.contratoMeses-12);
-      if(p.contratoMeses<=0 && ti!==this.myTeam) p.contratoMeses=24;
+      if(p.contratoMeses<=0 && ti!==this.myTeam){ p.contratoMeses=24; p.salario=this.salarioMercado(p); }   // IA renova pelo mercado
     }));
     // no meu time, contrato zerado sem decisão (não deveria acontecer) ganha 1 ano automático
     this.teams[this.myTeam].players.forEach(p=>{ if(p.contratoMeses<=0) p.contratoMeses=12; });
@@ -6500,6 +6539,7 @@ const App={
       salario:Math.max(5,Math.round((m.salario||20)*0.4)), contratoMeses:36, valor:Math.max(0.1,+((m.valor||1)*0.5).toFixed(1)),
       altura:m.altura, peso:m.peso, peDominante:m.peDominante, peFraco:m.peFraco});
     Evolucao.inicializar(p);
+    p.salario=Math.max(3, Math.round(this.salarioMercado(p)*0.7));   // garoto ganha abaixo do mercado
     return p;
   },
   // monta o objeto de jogador a partir dos dados salvos de um gerado (dado NÃO confiável: saneia)
@@ -6574,8 +6614,8 @@ const App={
     const esc=[...cands].sort(()=>Math.random()-0.5).slice(0,n);
     // piso (leilão rápido): 1º lance exatamente no piso, demais até +10%; senão 75%–110% do valor
     const lances=esc.map((c,k)=>({ti:c.i, nome:c.t.nome, fora:false, valor: piso!=null
-      ? Math.round(vm*(k===0?piso:piso+Math.random()*0.1)/1e5)*1e5
-      : Math.round(vm*(0.75+Math.random()*0.35)/1e5)*1e5}));
+      ? Math.round(vm*(k===0?piso:piso+Math.random()*0.1)/this.passoValor(vm))*this.passoValor(vm)
+      : Math.round(vm*(0.75+Math.random()*0.35)/this.passoValor(vm))*this.passoValor(vm)}));
     const l={pid:p.pid, nome:p.nome, lances, rodadas:this.RODADAS_LEILAO, status:'aberto', vm};
     this.leiloes.push(l); return l;
   },
@@ -6588,7 +6628,10 @@ const App={
       const r=Math.random();
       if(r<0.2 && ativos.filter(y=>!y.fora).length>1){ x.fora=true; return; }
       if(r<0.75){
-        const novo=Math.round(top.valor*(1.05+Math.random()*0.07)/1e5)*1e5;
+        // passo de arredondamento proporcional ao valor: com R$ 100 mil fixos, +5% num jogador
+        // de R$ 400 mil arredondava pro MESMO lance (achado com a economia de 06/10/2026)
+        const passo=this.passoValor(top.valor);
+        const novo=Math.max(top.valor+passo, Math.round(top.valor*(1.05+Math.random()*0.07)/passo)*passo);
         const teto=Math.min(l.vm*1.4, (this.teams[x.ti].saldo||0));
         if(novo<=teto) x.valor=novo; else x.fora=true;
       }
@@ -6728,7 +6771,8 @@ const App={
     if(E.status==='pendente'){ E.status='andamento'; this.pagarEstadual('participacao','participação'); }
     const eu=this.myTeam, fz=i=>i===eu?this.forcaDoTime(i):this.forcaBaseTime(i);
     const jogos=E.confrontos.map(([h,a])=>{
-      const fh=fz(h)*(1+Motor.MANDO_PCT), fa=fz(a), tot=Math.max(1,fh+fa);
+      // mesmo modelo das séries simuladas: força³ e (1+M) na fatia do mandante
+      const fh=Math.pow(fz(h),Motor.EXP_FORCA)*Math.pow(1+Motor.MANDO_PCT,1), fa=Math.pow(fz(a),Motor.EXP_FORCA), tot=Math.max(1,fh+fa);
       const gh=this.poisson((fh/tot)*2.6), ga=this.poisson((fa/tot)*2.6);
       let venc = gh>ga?h : ga>gh?a : (Math.random()<fh/tot?h:a);
       return {h,a,gh,ga,pen:gh===ga,venc};
@@ -7657,7 +7701,8 @@ const App={
   // simula UM confronto (usando a força REAL dos onzes) e devolve o placar
   simularConfrontoReal(h, a){
     // Fase 0: mando percentual (+7%), coerente com o motor real.
-    const fh=Math.pow(this.forcaBaseTime(h),Motor.EXP_FORCA)*(1+Motor.MANDO_PCT), fa=Math.pow(this.forcaBaseTime(a),Motor.EXP_FORCA);
+    // mando: (1+M) na fatia de chances do modelo rápido dá o mesmo resultado do motor ao vivo (~44% × 27% × 29%)
+    const fh=Math.pow(this.forcaBaseTime(h),Motor.EXP_FORCA)*Math.pow(1+Motor.MANDO_PCT,1), fa=Math.pow(this.forcaBaseTime(a),Motor.EXP_FORCA);
     const tot=Math.max(1,fh+fa);
     const gc=this.poisson((fh/tot)*2.6), gf=this.poisson((fa/tot)*2.6);
     return {gc, gf};
@@ -8272,7 +8317,7 @@ const App={
   // growth são recalculados no load a partir dos atributos do banco (determinístico).
   // Garoto da base (sem base no banco) segue no formato completo.
   jogadorParaSave(p){
-    const o={numero:p.numero, idade:p.idade, contratoMeses:p.contratoMeses, valor:p.valor};
+    const o={numero:p.numero, idade:p.idade, contratoMeses:p.contratoMeses, valor:p.valor, salario:p.salario};   // v14: salário salvo (antes se perdia)
     const put=(k,v,def)=>{ if(v==null || v===def || (Array.isArray(v)&&!v.length)) return; o[k]=v; };
     put('energia',Math.round(p.energia),100); put('gols',p.gols,0); put('jogos',p.jogos,0); put('lesionado',p.lesionado,0);
     put('golsTemp',p.golsTemp,0); put('jogosTemp',p.jogosTemp,0); put('assist',p.assist,0); put('assistTemp',p.assistTemp,0);
@@ -8308,6 +8353,7 @@ const App={
     if(sp.suspenso>0){ p.suspenso=sp.suspenso; p._motivoSusp=sp.motivoSusp||''; } else { delete p.suspenso; delete p._motivoSusp; }
     if(sp.lesionado) p.lesionado=sp.lesionado; else delete p.lesionado;
     if(sp.contratoMeses!=null) p.contratoMeses=sp.contratoMeses;
+    if(isFinite(+sp.salario) && +sp.salario>0) p.salario=Math.min(5000, Math.max(1, +sp.salario));   // v14 (save ≤ v13: fica o da força)
     if(sp.valor!=null) p.valor=sp.valor;
     p.aVenda=sp.aVenda||false;
     if(sp.attrs){   // formato completo (saves ≤ v11 e garotos da base)

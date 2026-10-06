@@ -39,12 +39,14 @@
 
 - 🟡 **Bloco B só em stub:** `mostrarAnuncio()` mostra um modal placeholder ("o anúncio real entra com o empacotamento"); a compra remove-ads concede sem validar pagamento. Também **não feito**: detectar a superfície (web × app) dentro do `mostrarAnuncio()` (§5) e os outros bônus do B1 (energia, scout extra). *(O campo reservado de cosméticos no save foi feito em 05/10 — save v13.)*
 - ✅ **Pré-teste (05/10/2026, noite):** balanceamento (§6.1 item 17 — achou e corrigiu o bug da **escalação da IA**), barra de pressão (item 20), **nota/energia/gols de quem sai de campo**, bônus ⚡ fisioterapia e 🔭 olheiro (B1).
-- 🟠 **Decisão pendente — economia por série** (§6.1 item 17, "O que ficou pra decidir"): salários iguais em todas as séries e preços que não cabem na Série D. Pro teste foi feito um meio-termo; o redesenho é decisão de produto.
+- ✅ **Economia por série e mando decididos e feitos (06/10/2026):** preço pela força + potencial, salário pela força atual (e salvo — era bug), mando +30% no ataque e na defesa com a torcida mexendo no seu (§6.1 item 17). Carreira longa voltou a cobrir subir/cair de série.
 - ⬜ **Hospedagem web pros testers:** arquivos prontos (`index.html`, manifest, ícones — instalável); falta **ligar o GitHub Pages** (§5 "Hospedagem").
 - ⬜ **Pós-teste** (triado em 05/10/2026): Copa nacional com clubes das 4 séries (item 16 — torneio *paralelo* ao Brasileiro; as 4 séries em si já existem), ranking por período, fim de temporada ilustrado, banner de dica por aba, compartilhar, feedback por recompensa.
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E) — de propósito pra depois do teste com pessoas.
 
-**Estado dos testes (05/10/2026, noite):** 39 harnesses verdes + `harness_carreira_longa` 13/13 (~3,3 min). Novos: `harness_saida`, `harness_bonus`, `harness_pressao`, `harness_economia`. `harness_d2` passou a medir a posse só em jogos com ≥5% de diferença de força (com a IA completa, muitos jogos são parelhos). ⚠️ **Cobertura perdida:** com o balanceamento, a carreira longa (escalação automática, sem mercado) fica na Série D as 12 temporadas — antes subia até a A. Acessos/rebaixamentos da IA seguem exercitados todo ano, mas "o MEU time sobe de série" (troca de liga ativa, prêmio de acesso, meta nova) não é mais coberto por ela → adicionar um modo que force o acesso do meu time.
+**Estado dos testes (06/10/2026):** 41 harnesses verdes + `harness_carreira_longa` **20/20** (12 temporadas, agora com o plano sobe/sobe/sobe/cai/sobe do meu time e o salário no teste de ida e volta do save). Novos: `harness_mando`; `harness_economia` ganhou a seção da economia por série. `harness_calibracao atual` mede a fórmula em vigor. **🐞 Achado pela regressão:** com os preços novos, o arredondamento fixo de R$ 100 mil travava os lances do leilão de jogador barato (+5% de R$ 400 mil voltava pro mesmo lance) e fazia a contraproposta cobrar até 25% a mais → `passoValor()`: R$ 10 mil abaixo de R$ 2 M, R$ 100 mil acima (leilão, contraproposta, propostas da IA). O `harness_leilao` instável era isso em parte: agora dá 85–87% estável.
+
+**Estado dos testes (05/10/2026, noite):** 39 harnesses verdes + `harness_carreira_longa` 13/13 (~3,3 min). Novos: `harness_saida`, `harness_bonus`, `harness_pressao`, `harness_economia`. `harness_d2` passou a medir a posse só em jogos com ≥5% de diferença de força (com a IA completa, muitos jogos são parelhos). ~~⚠️ Cobertura perdida~~ (**resolvido em 06/10/2026**: a carreira longa segue um plano sobe/sobe/sobe/cai/sobe e confere série nova, liga ativa, tabela, jogos, prêmio de acesso, meta e patrocínio): com o balanceamento, a carreira longa (escalação automática, sem mercado) fica na Série D as 12 temporadas — antes subia até a A. Acessos/rebaixamentos da IA seguem exercitados todo ano, mas "o MEU time sobe de série" (troca de liga ativa, prêmio de acesso, meta nova) não é mais coberto por ela → adicionar um modo que force o acesso do meu time.
 
 **Estado dos testes (05/10/2026, manhã):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa. ⚠️ `harness_estadual` [6] também falhava às vezes: o aviso de premiação podia vir **depois** de outro aviso na fila (proposta, desfalque…) — o teste agora percorre a fila (05/10). `harness_save_enxuto` aceita schema ≥ 12.
 
@@ -228,6 +230,8 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 11. ✅ **Imersão (D2)** + **estabilidade (D3)** + **áudio (D4)**.
 12. ⬜ **Empacotar e publicar (E)** conforme a plataforma decidida.
 
+**Onde estamos na rota (06/10/2026):** economia por série, mando e cobertura de acesso decididos e feitos. **Falta pro teste com pessoas:** só hospedar.
+
 **Onde estamos na rota (05/10/2026, noite):** tudo de jogo que estava marcado pra antes do teste foi feito — item 7, cosméticos, triagem, balanceamento (17), barra de pressão (20), nota de quem sai substituído e bônus extras do B1. **Falta pro teste com pessoas:** hospedar (fora deste roadmap de jogo) e decidir se o redesenho da economia por série (§6.1 item 17) entra antes ou depois do teste.
 
 ---
@@ -331,19 +335,25 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
     - **Interesse do jogador (craque recusa clube pequeno):** comprando de série MAIOR, o jogador compara a força dele com o nível da sua série (força média dos clubes): até +4 vem normal; +4 a +14 vem pedindo salário maior (+10% por ponto); acima de +14 **recusa** ("Não troco a Série A pela Série D"). Mercado marca "🚫 Recusa"; "Negociar ⚠️" quando pede mais. Comprar de série igual ou menor: sem restrição.
     - **Recém-contratado não é revendido por 8 rodadas** (ou até a virada): fechou a arbitragem compra-a-95% / revende-em-leilão-a-140% (dava +16 a +20 M por temporada a partir da 3ª). Trava salva no save (`chegou`).
     - **Série D: passam 2 por grupo (32), não 4 (64).** Com 4 mata-matas até o acesso e forças parelhas, subir era sorteio (o mais forte da D não subiu em 5 de 5; subiram o 95º, 87º e 82º mais fortes). Agora a fase de grupos vale e o acesso pede 3 mata-matas. Cruzamento generalizado (k-ésimo × (avançam−1−k)-ésimo do grupo espelho); 1ª fase do mata-mata segue chamada "Segunda Fase".
-    - **Patrocínio da Série D 0,5 → 0,8 M/mês** (ver "O que ficou pra decidir").
+    - **Patrocínio da Série D 0,5 → 0,8 M/mês** (mantido com a economia nova de 06/10: a temporada da D tem só 5 "meses").
     - **Resultado (depois de tudo):** *passivo* fica na Série D (~27º de 96, caixa 4 → 10 M em 6 temporadas); *ganancioso* sobe **D → C → B → A em 4 temporadas** (uma por ano, com muita compra e venda); *arbitragem* dá prejuízo; o mais fraco da Série A termina no Z-4. Gate: `harness_economia` (IA sempre com 11, força pesa, interesse, trava de revenda, informativo da Série A).
-    - **O que ficou pra decidir (economia por série — decisão de produto):** medido na base atual:
+    - **✅ DECIDIDO E FEITO (06/10/2026) — economia por série.** O problema medido: salário igual em todas as séries (~35 mil, do banco) e preço que não cabia na D (o mediano da D custava mais que o caixa de um clube da D). **Decisão do Dart: preço pela força + potencial; salário pela força atual.**
+      - **Preço:** curva `VALOR_K·(força/100)^VALOR_N` com N 5,2 → **8,5** (52 → ~2 M · 70 → ~28 M · 80 → ~88 M · 90 → ~240 M). **Potencial:** em vez de somar a diferença em dinheiro (com a curva íngreme um garoto da D de potencial 65 valeria ~10 M), o preço usa uma **força efetiva = força + (potencial − força) × confiança da idade × 0,5**. Jovens promissores valem **2,3× a 5,9×** (mediana 3,3×) um jogador igual sem potencial.
+      - **Salário:** `salarioMercado(p) = 220 mil × (força/70)^7,3` (52 → ~25 mil · 58 → ~55 · 64 → ~115 · 70 → 220 · 80 → ~580). Aplicado a todos ao montar a temporada; garoto da base ganha 70% do mercado; a IA renova pelo mercado; pedido de compra e de renovação partem de `max(salário atual, mercado)` (renovação: 90% do mercado × nota).
+      - **🐞 Bug corrigido junto: o salário não ia pro save** — contratação e renovação voltavam ao salário do banco ao recarregar. Save **v14** guarda o salário; save ≤ v13 carrega com o salário da força.
+      - **Resultado na base atual:**
 
-      | Série | Força mediana | Preço mediano | Caixa mediano | Receita/temporada | Folha/mês |
-      |---|---|---|---|---|---|
-      | A | 70 | 23,7 M | 80 M | 88 M | 0,69 M |
-      | B | 64 | 14,5 M | 30 M | 36,5 M | 0,69 M |
-      | C | 58 | 9,4 M | 12 M | 16 M | 0,69 M |
-      | D | 52 | 5,1 M | 3 M | 3,2 M | 0,69 M |
+        | Série | Preço mediano | % da receita anual | Salário mediano | Folha / receita |
+        |---|---|---|---|---|
+        | A | 23,3 M | 27% | 220 mil | 48% |
+        | B | 10,2 M | 28% | 114 mil | 59% |
+        | C | 4,7 M | 30% | 56 mil | 65% |
+        | D | 1,9 M | 40% | 25 mil | 55% |
 
-      (1) **Salário igual em todas as séries** (vem do banco ~35 mil/mês): na D a folha come a receita; na A sobra fortuna ("caixa só cresce"). (2) **Preço não cabe na D:** o jogador mediano da D custa mais que o caixa inteiro de um clube da D — o mercado lá embaixo só funciona vendendo pra IA rica. Caminhos: salário derivado da força (e da série), curva de valor mais íngreme, ou receita que escale. Mexe em valor, renovação, leilão, objetivos e saves — por isso ficou como decisão. Pro teste: meio-termo (patrocínio da D + interesse até +14).
-    - **Observação — mando de campo fraco:** mandante vence 37% × visitante 35% (Brasileirão real ≈ 47% × 27%). Com força³, subir o `MANDO_PCT` quase não muda (o bônus só vale no ataque: +30% → 40%). Corrigir pede mudar o formato do mando (valer também na defesa). Não mexido.
+        Clube passivo da D junta 2–5 M por temporada; quem reforça passa a sentir a folha (o ganancioso foi de 1,4 a 4,9 M/mês).
+      - **Acesso na Série D (medido, força EM CAMPO acima da mediana da D, 12 temporadas cada):** +10% → sobe 17% das vezes · +20% → 75% · +30% → 75%. Quem domina de verdade sobe; quem é só um pouco melhor depende de sorte (grupo de 10 jogos + 3 mata-matas). Atenção: força "no papel" (11 melhores) não é força em campo — o comprador ganancioso tinha +16% no papel mas jogadores fora de posição e sem rodízio, e não subiu em 6 temporadas. Se os testers acharem a D lenta, os botões são: mais acessos da D (precisa casar com o rebaixamento da C), grupos maiores, ou EXP_FORCA 4.
+      - Gate: `harness_economia` [5] (preço cabe na D, salário escala, folha 35–75% da receita, potencial vale 1,5–10×, salário salvo).
+    - **✅ DECIDIDO E FEITO (06/10/2026) — mando de campo:** era +7% só no ataque (mandante 37% × visitante 35%: jogar em casa quase não importava). **Decisão do Dart: +30% no ataque E na defesa do mandante, e a torcida mexe no mando do usuário.** `Motor.MANDO_PCT = 0,30`; `mandoDe(ti)`: IA sempre +30%; o meu time em casa vai de **+20% (torcida revoltada)** a **+40% (eufórica)**, neutra = +30% (`MANDO_TORCIDA = 0,10` a cada 40 pontos de humor). Medido no motor ao vivo: **mandante 44% · empate 26% · visitante 30%**, 2,38 gols/jogo, gols casa/fora 1,30× (Brasileirão ≈ 47/27/26). Séries simuladas e estadual usam o mesmo modelo (força³ × (1+M) na fatia do mandante: 45/27/29). Expectativa do jogo (confiança): entre iguais, em casa = "ligeiro favorito", fora = "azarão" (mando na escala de força média ≈ +8%). Card do adversário mostra "🏠 Em casa · mando +XX% 🔥". `harness_calibracao atual`. Gate: `harness_mando`.
     - **Observação — a IA não gasta:** caixa da IA só se move quando ela compra de você. Fica pra quando houver mercado entre clubes da IA.
 18. **🅿️ PÓS-TESTE — Botão Compartilhar resultado** (Web Share API / copiar texto) — aquisição barata, casa com o teste com pessoas. *Esforço baixo.*
 19. **🅿️ PÓS-TESTE — Ranking com recortes dia / semana / mês / sempre** — quem está começando aparece; evita o ranking que premia só volume. *Baixo (views no Supabase).*

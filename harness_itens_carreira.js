@@ -32,7 +32,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     App.itensUsuario={v:1,itens:[{id:'x',tipo:'kit'}],equipados:{}}; const r12=App.aplicarSnapshot(v12);
     return {vazio, schema:s2.schemaVersion, volta, sujo, ok12:r12.ok, vazio12:App.itensUsuario.itens.length===0};
   });
-  t(r1.schema===13,'snapshot sai com schemaVersion 13');
+  t(r1.schema>=13,'snapshot sai com schemaVersion ≥ 13 ('+r1.schema+')');
   t(r1.vazio,'carreira nova: itensUsuario vazio ({v:1, itens:[], equipados:{}})');
   t(r1.volta,'itens e equipados voltam idênticos pelo save');
   const ids=r1.sujo.itens.map(i=>i.id+':'+i.tipo+':'+i.origem);
