@@ -25,7 +25,7 @@
 - **Motor de partida** minuto-a-minuto calibrado (2,43 gols/jogo, mando percentual) + **assistências** (`Motor.assistente()`, save v10). Gates `harness_fase0`, `harness_calibracao`, `harness_assistencias`.
 - **Camada `Rating`** unificada, **evolução** por potencial oculto, fator de posição (natural/treinada/improvisada 100/70/30%), seta de tendência do overall, **idade que avança + aposentadoria + garotos da base** (save v11).
 - **Energia, lesões, suspensões**; escalação automática por **atribuição ótima** (`Escalacao`, também na IA).
-- **Competição:** as **4 séries do Brasileiro (A/B/C/D)** data-driven (`FORMATO_DIVISOES`: A/B/C pontos corridos, D com 16 grupos + mata-mata), acesso/rebaixamento, **estadual de pré-temporada** opcional, premiação por fase na Série D. *Não existe copa nacional* (§6.1 item 16).
+- **Competição:** as **4 séries do Brasileiro (A/B/C/D)** data-driven (`FORMATO_DIVISOES`: A/B/C pontos corridos, D com 16 grupos de 6 → 2 por grupo → mata-mata de 32, desde 05/10), acesso/rebaixamento, **estadual de pré-temporada** opcional, premiação por fase na Série D. *Não existe copa nacional* (§6.1 item 16).
 - **Finanças:** saldo, extrato, empréstimo, premiação por acesso, patrocínio, **bilheteria movida pelo humor da torcida**, contador de caixa.
 - **Mercado:** filtros (cabe no caixa…), **negociação em 3 etapas**, propostas recebidas com modal de decisão, **leilão**, **renovação de contratos** na virada.
 - **Gestão humana (Bloco A inteiro ✅):** Match Rating, estatísticas, objetivos por divisão, moral 0–100, forma recente (5 notas), **coletiva pós-jogo**, **reunião com a diretoria** + confiança explicada, **recado do presidente** a cada rodada, **balanço de fim de temporada**, **pedir demissão**.
@@ -38,12 +38,15 @@
 **O que ainda NÃO existe / está pela metade** (buracos entre "funciona" e "lançável e bom"):
 
 - 🟡 **Bloco B só em stub:** `mostrarAnuncio()` mostra um modal placeholder ("o anúncio real entra com o empacotamento"); a compra remove-ads concede sem validar pagamento. Também **não feito**: detectar a superfície (web × app) dentro do `mostrarAnuncio()` (§5) e os outros bônus do B1 (energia, scout extra). *(O campo reservado de cosméticos no save foi feito em 05/10 — save v13.)*
-- ⬜ **Pré-teste, triado em 05/10/2026:** teste de balanceamento econômico (§6.1 item 17) e barra de pressão (item 20).
+- ✅ **Pré-teste (05/10/2026, noite):** balanceamento (§6.1 item 17 — achou e corrigiu o bug da **escalação da IA**), barra de pressão (item 20), **nota/energia/gols de quem sai de campo**, bônus ⚡ fisioterapia e 🔭 olheiro (B1).
+- 🟠 **Decisão pendente — economia por série** (§6.1 item 17, "O que ficou pra decidir"): salários iguais em todas as séries e preços que não cabem na Série D. Pro teste foi feito um meio-termo; o redesenho é decisão de produto.
 - ⬜ **Hospedagem web pros testers:** arquivos prontos (`index.html`, manifest, ícones — instalável); falta **ligar o GitHub Pages** (§5 "Hospedagem").
 - ⬜ **Pós-teste** (triado em 05/10/2026): Copa nacional com clubes das 4 séries (item 16 — torneio *paralelo* ao Brasileiro; as 4 séries em si já existem), ranking por período, fim de temporada ilustrado, banner de dica por aba, compartilhar, feedback por recompensa.
 - ❌ **Ads e compra reais** (AdMob/AdSense, Play Billing) + **empacotamento** (Bloco E) — de propósito pra depois do teste com pessoas.
 
-**Estado dos testes (05/10/2026):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa. ⚠️ `harness_estadual` [6] também falhava às vezes: o aviso de premiação podia vir **depois** de outro aviso na fila (proposta, desfalque…) — o teste agora percorre a fila (05/10). `harness_save_enxuto` aceita schema ≥ 12.
+**Estado dos testes (05/10/2026, noite):** 39 harnesses verdes + `harness_carreira_longa` 13/13 (~3,3 min). Novos: `harness_saida`, `harness_bonus`, `harness_pressao`, `harness_economia`. `harness_d2` passou a medir a posse só em jogos com ≥5% de diferença de força (com a IA completa, muitos jogos são parelhos). ⚠️ **Cobertura perdida:** com o balanceamento, a carreira longa (escalação automática, sem mercado) fica na Série D as 12 temporadas — antes subia até a A. Acessos/rebaixamentos da IA seguem exercitados todo ano, mas "o MEU time sobe de série" (troca de liga ativa, prêmio de acesso, meta nova) não é mais coberto por ela → adicionar um modo que force o acesso do meu time.
+
+**Estado dos testes (05/10/2026, manhã):** os 34 harnesses da regressão rápida passaram (D1 31/31, layout 61/61, modais 30/30, estadual 31/31…) e `harness_carreira_longa` passou 13/13 em **~4,6 min** (não 40 min como estava anotado — o ambiente atual é mais rápido; continua fora da regressão rápida). ⚠️ **Teste instável:** `harness_leilao` [1] "o maior lance sobe na maioria dos leilões" falhou 1 vez em ~12 (59%, contra 85–89% normalmente; o corte é 60%). Não é bug de jogo confirmado, mas o teste depende do sorteio — fixar a semente ou investigar qual mundo derruba a taxa. ⚠️ `harness_estadual` [6] também falhava às vezes: o aviso de premiação podia vir **depois** de outro aviso na fila (proposta, desfalque…) — o teste agora percorre a fila (05/10). `harness_save_enxuto` aceita schema ≥ 12.
 
 **05/10/2026 (tarde):** item 7 do §6.1 ✅ (`harness_impacto` 18/18), campo de cosméticos no save v13 + **bug da 2ª carreira** corrigido (`harness_itens_carreira` 13/13), arquivos de hospedagem/PWA prontos, triagem do §6.1 feita.
 
@@ -103,7 +106,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 - O jogador **escolhe** ver um ad pra ganhar bônus: **dobrar o prêmio** de um objetivo/rodada, acelerar recuperação de energia, um scout extra. Nunca forçado, **nunca no meio da partida nem entre rodadas** (mataria o "só mais uma rodada").
 - Interstitial leve só em transição de temporada, se houver.
 - *Pronto quando:* existe ao menos um ponto de "assistir ad → bônus" opt-in, e ele some pra quem comprou o remove-ads.
-- **Estado (05/10/2026):** 🟡 o ponto existe ("dobrar prêmio" dos objetivos, `assistirAnuncioBonus` → `mostrarAnuncio()`) e some pra quem tem `adFree` — mas o `mostrarAnuncio()` ainda é **modal placeholder**, sem SDK e sem detectar web × app (§5). Os outros bônus (energia, scout extra) **não foram feitos**. Gate: `harness_blocob`.
+- **Estado (05/10/2026):** 🟡 três pontos de "assistir → bônus", todos opt-in e fora da partida: **dobrar prêmio** de objetivo, **⚡ Fisioterapia extra** (+10 de energia pro elenco, 1x por rodada, botão na Formação) e **🔭 Relatório do olheiro** (revela uma faixa de 5 pontos do **potencial oculto** de qualquer jogador — a faixa contém o real mas não é centrada nele; 3 por rodada; o revelado fica salvo no save v13 `bonus`). Quem tem `adFree` recebe direto. Falta: o `mostrarAnuncio()` ainda é **modal placeholder**, sem SDK e sem detectar web × app (§5). Gates: `harness_blocob`, `harness_bonus`.
 
 **B2. Compra única "Remover anúncios".**
 - Um pagamento (sem assinatura) desliga todos os ads. Modelo honesto, casa com público de manager clássico.
@@ -225,7 +228,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 11. ✅ **Imersão (D2)** + **estabilidade (D3)** + **áudio (D4)**.
 12. ⬜ **Empacotar e publicar (E)** conforme a plataforma decidida.
 
-**Onde estamos na rota (05/10/2026, atualizado à tarde):** item 7, campo de cosméticos e triagem ✅. **Falta antes do teste com pessoas:** (1) §6.1 item 17 — balanceamento econômico; (2) item 20 — barra de pressão; (3) **ligar o GitHub Pages** pra ter o link (arquivos prontos, §5 "Hospedagem"). O resto do §6.1 ficou pra depois do teste.
+**Onde estamos na rota (05/10/2026, noite):** tudo de jogo que estava marcado pra antes do teste foi feito — item 7, cosméticos, triagem, balanceamento (17), barra de pressão (20), nota de quem sai substituído e bônus extras do B1. **Falta pro teste com pessoas:** hospedar (fora deste roadmap de jogo) e decidir se o redesenho da economia por série (§6.1 item 17) entra antes ou depois do teste.
 
 ---
 
@@ -321,14 +324,37 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 ### Triadas em 05/10/2026 (vindas da análise de concorrentes, nunca tinham entrado aqui)
 > **Decisão do Dart (05/10/2026):** **antes do teste com pessoas** entram o **17 (balanceamento econômico)** e o **20 (barra de pressão)**. **Depois do teste:** 16 (copa nacional), 18, 19, 21, 22 e 23. O 24 continua reservado junto dos escudos gerados.
 > Estavam na tabela "Copiar/adaptar" e no §4 de `docs/concorrentes/analise_retrofoot_browserfoot.md`, mas não neste roadmap. Conferido no código: **nenhuma existe ainda**.
-17. **⬜ PRÉ-TESTE — Teste de balanceamento econômico** — harness de 10 temporadas com IA "gananciosa" medindo caixa e força (a lição do Browserfoot: economia quebrada deixa o jogo fácil). Junto: **teto de preço coerente** e **craque recusando clube pequeno**. O gate de carreira longa confere números válidos, não equilíbrio. *Esforço médio.*
+17. **✅ FEITO (05/10/2026) — Balanceamento** *(pedido original: harness de 10 temporadas com IA "gananciosa" medindo caixa e força; teto de preço coerente; craque recusando clube pequeno)*.
+    - **Como foi medido:** 3 estratégias jogando até 10 temporadas pelo fluxo real — *passivo* (só escalação automática), *ganancioso* (pega empréstimo, compra o melhor que cabe, vende o excedente) e *arbitragem* (compra veterano barato e revende) — acompanhando caixa, força relativa na série e caixa da IA por série. Mais: temporadas inteiras com o clube **mais fraco** da Série A, correlação força × pontos e chance de acesso por faixa de força na Série D (150 temporadas simuladas).
+    - **🐞 Bug grave achado — a IA não re-escalava:** a escalação dos times da IA era montada uma vez (`cfgInicial`) e **nunca refeita**; cada lesão/suspensão virava buraco (o time ia a campo com 9, 7, 4 jogadores e posições desalinhadas). Resultado: o clube **mais fraco da Série A, com escalação automática, era campeão com 90–104 pontos**, e um time passivo da Série D subia sozinho até a A. Correção: `escalarIA()` antes de cada jogo (refaz só se o onze está incompleto, com indisponível ou com alguém < 60% de energia — a IA também poupa). Força em campo da IA: 30–330 → ~700–780.
+    - **Força pesa no placar (`Motor.EXP_FORCA = 3`):** a chance de gol usava a força linear — um time 16% mais fraco ficava com 46% das chances. Agora força³ (mando e estilo continuam por fora, mesmo peso): o 16% mais fraco cria ~60% das chances do forte; o time 12–20% mais fraco vence ~23% e empata ~25% dos jogos; **gols por jogo iguais (2,44)**. Vale também pras séries simuladas (`simularConfrontoReal`). `harness_calibracao forca` mostra k = 1…4.
+    - **Interesse do jogador (craque recusa clube pequeno):** comprando de série MAIOR, o jogador compara a força dele com o nível da sua série (força média dos clubes): até +4 vem normal; +4 a +14 vem pedindo salário maior (+10% por ponto); acima de +14 **recusa** ("Não troco a Série A pela Série D"). Mercado marca "🚫 Recusa"; "Negociar ⚠️" quando pede mais. Comprar de série igual ou menor: sem restrição.
+    - **Recém-contratado não é revendido por 8 rodadas** (ou até a virada): fechou a arbitragem compra-a-95% / revende-em-leilão-a-140% (dava +16 a +20 M por temporada a partir da 3ª). Trava salva no save (`chegou`).
+    - **Série D: passam 2 por grupo (32), não 4 (64).** Com 4 mata-matas até o acesso e forças parelhas, subir era sorteio (o mais forte da D não subiu em 5 de 5; subiram o 95º, 87º e 82º mais fortes). Agora a fase de grupos vale e o acesso pede 3 mata-matas. Cruzamento generalizado (k-ésimo × (avançam−1−k)-ésimo do grupo espelho); 1ª fase do mata-mata segue chamada "Segunda Fase".
+    - **Patrocínio da Série D 0,5 → 0,8 M/mês** (ver "O que ficou pra decidir").
+    - **Resultado (depois de tudo):** *passivo* fica na Série D (~27º de 96, caixa 4 → 10 M em 6 temporadas); *ganancioso* sobe **D → C → B → A em 4 temporadas** (uma por ano, com muita compra e venda); *arbitragem* dá prejuízo; o mais fraco da Série A termina no Z-4. Gate: `harness_economia` (IA sempre com 11, força pesa, interesse, trava de revenda, informativo da Série A).
+    - **O que ficou pra decidir (economia por série — decisão de produto):** medido na base atual:
+
+      | Série | Força mediana | Preço mediano | Caixa mediano | Receita/temporada | Folha/mês |
+      |---|---|---|---|---|---|
+      | A | 70 | 23,7 M | 80 M | 88 M | 0,69 M |
+      | B | 64 | 14,5 M | 30 M | 36,5 M | 0,69 M |
+      | C | 58 | 9,4 M | 12 M | 16 M | 0,69 M |
+      | D | 52 | 5,1 M | 3 M | 3,2 M | 0,69 M |
+
+      (1) **Salário igual em todas as séries** (vem do banco ~35 mil/mês): na D a folha come a receita; na A sobra fortuna ("caixa só cresce"). (2) **Preço não cabe na D:** o jogador mediano da D custa mais que o caixa inteiro de um clube da D — o mercado lá embaixo só funciona vendendo pra IA rica. Caminhos: salário derivado da força (e da série), curva de valor mais íngreme, ou receita que escale. Mexe em valor, renovação, leilão, objetivos e saves — por isso ficou como decisão. Pro teste: meio-termo (patrocínio da D + interesse até +14).
+    - **Observação — mando de campo fraco:** mandante vence 37% × visitante 35% (Brasileirão real ≈ 47% × 27%). Com força³, subir o `MANDO_PCT` quase não muda (o bônus só vale no ataque: +30% → 40%). Corrigir pede mudar o formato do mando (valer também na defesa). Não mexido.
+    - **Observação — a IA não gasta:** caixa da IA só se move quando ela compra de você. Fica pra quando houver mercado entre clubes da IA.
 18. **🅿️ PÓS-TESTE — Botão Compartilhar resultado** (Web Share API / copiar texto) — aquisição barata, casa com o teste com pessoas. *Esforço baixo.*
 19. **🅿️ PÓS-TESTE — Ranking com recortes dia / semana / mês / sempre** — quem está começando aparece; evita o ranking que premia só volume. *Baixo (views no Supabase).*
-20. **⬜ PRÉ-TESTE — Barra de pressão** sob o placar da partida (complemento do D2). *Baixo-médio.*
+20. **✅ FEITO (05/10/2026) — Barra de pressão** sob o placar do *Seu jogo*: índice −100…+100 que decai a cada minuto (×0,85) e sobe com o que aconteceu NAQUELE minuto (posse 6, finalização 14, no alvo 8, escanteio 8, gol 20). Mostra quem está em cima *agora* (a posse já mostra o jogo todo): "🔥 SEU TIME PRESSIONA" (lemon), "⚠️ ADVERSÁRIO PRESSIONA" (vermelho) ou "JOGO EQUILIBRADO" (limiar 25). Calibrado em jogos reais: ~74% dos minutos equilibrado, ~14 viradas de rótulo por jogo, quem venceu pressionou mais em ~65% dos jogos. Camada de TV: não mexe no motor. Gate: `harness_pressao`.
 21. **🅿️ PÓS-TESTE — Feedback em troca de recompensa** (ex.: X dias sem anúncio por responder um questionário) — útil justamente no teste com pessoas. *Baixo.*
 22. **🅿️ PÓS-TESTE — Fim de temporada ilustrado** (confete no título, clima pesado no rebaixamento) e **cerimônia de sorteio** — momentos em tela cheia. *Médio.*
 23. **🅿️ PÓS-TESTE — Banner de dica por aba**, fechável (onboarding barato, do Browserfoot). *Baixo.*
 24. **Clubes pelo apelido da torcida** — decisão de base de dados, não de código; avaliar junto dos escudos gerados (Reservado pra depois).
+
+### Bug achado no caminho (05/10/2026) — quem sai de campo
+- **Substituído ou expulso sumia da partida:** só o campo do apito final era processado. Quem saía **não recebia nota** (fora da forma e da média do time), **não gastava energia** (voltava descansado), se tinha **marcado o gol vazava pro jogo seguinte** dele, e a moral contava como se tivesse ficado no banco. Agora `registrarSaida()` guarda quem sai (energia, minutos, posição) e o fim da rodada processa campo + saídas. Expulso aos 30' recebe nota baixa por 30 minutos. Gate: `harness_saida`.
 
 ### Decidido NÃO fazer (por ora)
 - **Futebol feminino** — fora do escopo por enquanto.

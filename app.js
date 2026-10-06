@@ -442,12 +442,17 @@ const Motor={
   chanceGol(fAtk, fDef, estiloAtk, estiloDef, mando){
     const est={ofensivo:1.35,normal:1.0,defensivo:0.72};
     // Fase 0: mando percentual (+7%) em vez de +40 absoluto — escala igual entre séries.
-    const atk=fAtk*(mando?(1+this.MANDO_PCT):1)*est[estiloAtk];
-    const def=fDef*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
+    // Balanceamento (05/10/2026): a força entra elevada a EXP_FORCA — antes era linear
+    // e um time 16% mais fraco ainda ficava com 46% das chances (o mais fraco da Série A
+    // brigava por G-4). Mando e estilo continuam multiplicando por fora (mesmo peso de antes);
+    // como as duas fatias somam ~1, o total de gols por jogo quase não muda.
+    const atk=Math.pow(fAtk,this.EXP_FORCA)*(mando?(1+this.MANDO_PCT):1)*est[estiloAtk];
+    const def=Math.pow(fDef,this.EXP_FORCA)*(estiloDef==='defensivo'?1.3:estiloDef==='ofensivo'?0.82:1);
     // Fase 0: *0.027 estabiliza ~2,5 gols/jogo (harness_calibracao.js: 2,71 -> 2,44).
     return (atk/(def+atk))*0.027;
   },
   MANDO_PCT:0.07,   // bônus de mando percentual sobre o ataque (Fase 0)
+  EXP_FORCA:3,      // quanto a diferença de força pesa no placar (1 = linear, como era até 05/10/2026)
 
   // desgaste fixo por minuto jogado (Fase 0: ~−7 na partida cheia, saldo do ciclo não-negativo)
   desgastarMinuto(onze){
@@ -1353,7 +1358,7 @@ const Menu={
 /* ====================================================================
    COMPETIÇÃO — formatos de disputa (pontos corridos e Série D)
    Série D: 96 times, 16 grupos de 6 (turno e returno = 10 rodadas),
-   4 melhores de cada grupo avançam (64), mata-mata ida e volta,
+   2 melhores de cada grupo avançam (32), mata-mata ida e volta,
    4 semifinalistas sobem + 2 vagas em repescagem entre os eliminados
    nas quartas = 6 acessos. Sem rebaixamento.
    ==================================================================== */
@@ -1367,7 +1372,10 @@ const FORMATO_DIVISOES={
   A:{tipo:'pontos', acessos:4, rebaixa:4},                                   // topo: acessos ignorado
   B:{tipo:'pontos', acessos:4, rebaixa:4},
   C:{tipo:'pontos', acessos:4, rebaixa:6},                                   // cai 6 = casa com os 6 da D
-  D:{tipo:'grupos', nGrupos:16, porGrupo:6, avancamPorGrupo:4, acessos:6, rebaixa:0}, // base
+  // Balanceamento (05/10/2026): avançavam 4 de 6 (64 times, 4 mata-matas até o acesso) e
+  // subir virava sorteio — o mais forte da Série D não subiu em 5 de 5 temporadas. Com 2
+  // por grupo a fase de grupos vale e o acesso pede 3 mata-matas.
+  D:{tipo:'grupos', nGrupos:16, porGrupo:6, avancamPorGrupo:2, acessos:6, rebaixa:0}, // base
 };
 
 const Competicao={
@@ -1435,22 +1443,22 @@ const Competicao={
   },
 
   // ---------- MATA-MATA ----------
-  // monta os confrontos da 2ª fase: 1º de um grupo x 4º de outro, etc. (cruzado)
+  // monta os confrontos da 2ª fase: melhor colocado de um grupo x pior classificado do grupo espelho (cruzado)
   montarMataMata(grupos, stats, nomeDe, avancam){
     const class1=grupos.map(g=>this.classificarGrupo(stats,g,nomeDe));
     const classificados=[];
     class1.forEach((c,gi)=>c.slice(0,avancam).forEach((s,pos)=>classificados.push({i:s.i, grupo:gi, pos})));
-    // cruzamento: 1º do grupo G enfrenta o 4º do grupo espelhado
+    // cruzamento: o k-ésimo do grupo G enfrenta o (avancam−1−k)-ésimo do grupo espelhado
+    // (avancam=4: 1º×4º e 2º×3º; avancam=2: 1º×2º) — o melhor colocado pega o pior
     const pares=[];
     const n=grupos.length;
     for(let gi=0; gi<n; gi++){
       const espelho=n-1-gi;
-      const a=classificados.find(c=>c.grupo===gi && c.pos===0);
-      const b=classificados.find(c=>c.grupo===espelho && c.pos===3);
-      const c2=classificados.find(c=>c.grupo===gi && c.pos===1);
-      const d=classificados.find(c=>c.grupo===espelho && c.pos===2);
-      if(a&&b) pares.push([a.i,b.i]);
-      if(c2&&d) pares.push([c2.i,d.i]);
+      for(let k=0; k<Math.floor(avancam/2); k++){
+        const a=classificados.find(c=>c.grupo===gi && c.pos===k);
+        const b=classificados.find(c=>c.grupo===espelho && c.pos===avancam-1-k);
+        if(a&&b) pares.push([a.i,b.i]);
+      }
     }
     return pares.slice(0, classificados.length/2);
   },
@@ -1471,6 +1479,9 @@ const Competicao={
 
   // nome da fase pelo número de confrontos restantes
   nomeFase(nTimes){
+    // a 1ª fase do mata-mata é sempre a "Segunda Fase" (a primeira é a de grupos)
+    const inicio=FORMATO_DIVISOES.D.nGrupos*FORMATO_DIVISOES.D.avancamPorGrupo;
+    if(nTimes===inicio && nTimes>16) return 'Segunda Fase';
     return ({64:'Segunda Fase',32:'Terceira Fase',16:'Oitavas de final',
              8:'Quartas de final',4:'Semifinal',2:'Final'})[nTimes] || `Fase de ${nTimes}`;
   },
@@ -1995,7 +2006,7 @@ const App={
     this.extrato=[]; this.ultimoMesPago=0; this.emprestimo=null;
     this.histConf=[]; this.ultimato=null; this._reuniaoFeita=false; this.demitido=false;
     this.confianca=this.CONF_INICIAL; this.torcida=this.TORCIDA_NEUTRA;
-    this.estadual=null; this.itensUsuario=null; this._saveCreatedAt=null;
+    this.estadual=null; this.itensUsuario=null; this.bonus=null; this._saveCreatedAt=null;
   },
 
   /* ---------- Cosméticos: campo RESERVADO no save (v13) ----------
@@ -2265,6 +2276,22 @@ const App={
     this.reforcarBanco(i);
   },
 
+  // escalação da IA pro próximo jogo: só refaz se o onze atual está incompleto,
+  // tem alguém indisponível ou cansado demais — senão mantém (evita custo à toa)
+  escalarIA(i){
+    const t=this.teams[i], c=this.cfg[i];
+    const vagas=(LINHAS_FM[c.formacao]||[]).flat().length||11;
+    const onze=t.players.filter(p=>{ const ps=c.posEscala[p.numero]; return ps && ps!=='BANCO' && ps!=='FORA'; });
+    const ruim=onze.length<vagas || onze.some(p=>this.indisponivel(p) || (p.energia||0)<60);
+    if(!ruim) return false;
+    // cansado (<60) só joga se não houver outro disponível: a IA também poupa
+    const disp=t.players.filter(p=>!this.indisponivel(p));
+    const descansados=disp.filter(p=>(p.energia||0)>=60);
+    if(descansados.length>=vagas) t.players.forEach(p=>{ if((p.energia||0)<60) p._poupar=true; });
+    const ind=this.indisponivel; this.indisponivel=(p)=>ind.call(this,p)||!!p._poupar;
+    try{ this.escalarMelhor(i); } finally { this.indisponivel=ind; t.players.forEach(p=>{ delete p._poupar; }); }
+    return true;
+  },
   // garante no máx 12 no banco (excedente vai pra FORA, pelos de menor força)
   reforcarBanco(i){
     const c=this.cfg[i], t=this.teams[i];
@@ -2278,6 +2305,12 @@ const App={
   // prepara a rodada: cada jogo mantém estado VIVO (energia decai durante a partida)
   prepararRodada(){
     const jogos=this.fixtures[this.rodada];
+    // 🐞 (05/10/2026) a IA re-escala ANTES de cada jogo: a escalação dela era montada
+    // uma vez (cfgInicial) e nunca refeita — cada lesão/suspensão virava um buraco que
+    // ninguém do banco cobria, e o time da IA ia a campo com 9, 7, 4 jogadores (e com
+    // posições desalinhadas). O clube mais fraco da Série A na mão do jogador era
+    // campeão com 100 pontos. O meu time segue com a escalação que eu montei.
+    jogos.forEach(([h,a])=>[h,a].forEach(i=>{ if(i!==this.myTeam && this.teams[i] && this.cfg[i]) this.escalarIA(i); }));
     const sims=jogos.map(([h,a])=>{
       const oh=this.onzeDe(h), oa=this.onzeDe(a);
       const rolesH=this.rolesDe(h), rolesA=this.rolesDe(a);
@@ -2476,7 +2509,17 @@ const App={
   // tira o jogador expulso de campo (time joga com menos)
   removerDeCampo(s, campo, alvo){
     const idx=campo.indexOf(alvo);
-    if(idx>=0) campo.splice(idx,1);
+    if(idx>=0){ this.registrarSaida(s, campo, alvo); campo.splice(idx,1); }
+  },
+  // quem SAI de campo no meio do jogo (substituído ou expulso) não pode sumir da
+  // partida: guarda energia, minutos jogados, posição — pra receber nota, gastar
+  // energia, contar gols/assistências e moral de quem jogou (antes só o campo do
+  // apito final era processado)
+  registrarSaida(s, campo, c){
+    if(!c || !c.ref) return;
+    const lado = campo===s.campoA ? 'saidaA' : 'saidaH';
+    const min = (this.liveState && this.liveState.min!=null) ? this.liveState.min : 90;
+    (s[lado]||(s[lado]=[])).push({...c, _minutos:Math.max(1, Math.min(90,min)-(c._entrou||0)), _saiu:min});
   },
     // Quem marca: pondera pelo xG da POSIÇÃO (ST >> ponta > meia > zagueiro) e pelo rendimento.
     // O expoente concentra os gols no centroavante (artilharia realista ~18-22 na temporada).
@@ -2541,8 +2584,10 @@ const App={
       });
       if(alvo!=null && entra && melhorGanho>3){
         const sai=campo[alvo];
+        this.registrarSaida(s, campo, sai);
         campo[alvo]={ref:entra, forca:entra.forca, energia:entra.energia,
                      posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero,
+                     _entrou:this.liveState.min,
                      _minutos:Math.max(1,90-this.liveState.min)};   // A1: minutos que o reserva vai jogar
         sub.feitas++; sub.paradas++;
         (tk===s.h?s.jogaramH:s.jogaramA).add(entra.numero);
@@ -2672,21 +2717,24 @@ const App={
           notasLado.push(nota);
         }
       });
-      notasLado=[]; notaLado(campoH, gf, resH);   // a defesa da casa sofreu 'gf' gols
+      // quem saiu no meio do jogo (substituído/expulso) também jogou: entra na nota,
+      // na energia, nos gols e na moral
+      const todosH=campoH.concat(s.saidaH||[]), todosA=campoA.concat(s.saidaA||[]);
+      notasLado=[]; notaLado(todosH, gf, resH);   // a defesa da casa sofreu 'gf' gols
       Forma.registrarTime(this.teams[h], notasLado, resH);
-      notasLado=[]; notaLado(campoA, gc, resA);   // a defesa de fora sofreu 'gc' gols
+      notasLado=[]; notaLado(todosA, gc, resA);   // a defesa de fora sofreu 'gc' gols
       Forma.registrarTime(this.teams[a], notasLado, resA);
       // A1: craque do jogo do MEU time (maior nota) — pro feedback pós-rodada
       let craqueRef=null;
       if(h===this.myTeam || a===this.myTeam){
-        const meuCampo = (h===this.myTeam) ? campoH : campoA;
+        const meuCampo = (h===this.myTeam) ? todosH : todosA;
         let craque=null;
         meuCampo.forEach(c=>{ if(c.ref && c.ref._notaRodada!=null && (!craque || c.ref._notaRodada>craque.nota)){
           craque={nome:c.ref.nome, numero:c.ref.numero, nota:c.ref._notaRodada, gols:c.ref._golsRodada||0, assist:c.ref._assistRodada||0, pos:c.posicao}; craqueRef=c.ref; } });
         this._craqueRodada=craque;
       }
       // A4: atualiza MORAL de todos os jogadores dos dois times (jogaram ou não)
-      const jogouSet=new Set([...campoH,...campoA].map(c=>c.ref).filter(Boolean));
+      const jogouSet=new Set([...todosH,...todosA].map(c=>c.ref).filter(Boolean));
       [{ti:h,res:resH},{ti:a,res:resA}].forEach(({ti,res})=>{
         this.teams[ti].players.forEach(p=>{
           const jogou=jogouSet.has(p);
@@ -2694,7 +2742,7 @@ const App={
         });
       });
       // grava energia final e conta gols individuais
-      campoH.concat(campoA).forEach(c=>{ if(c.ref){
+      todosH.concat(todosA).forEach(c=>{ if(c.ref){
         c.ref.energia=Math.max(0,Math.round(c.energia));
         if(c.ref._golsRodada){
           c.ref.gols=(c.ref.gols||0)+c.ref._golsRodada;              // carreira (acumula sempre)
@@ -2814,7 +2862,7 @@ const App={
   // Chamado quando as rodadas acabam. Monta a próxima fase (ou encerra a temporada).
   avancarFaseMataMata(){
     const f=this.formato;
-    // 1) acabou a fase de grupos → monta a 2ª fase com os 64 classificados
+    // 1) acabou a fase de grupos → monta a 2ª fase com os classificados (32 desde 05/10/2026)
     if(this.fase==='grupos'){
       const pares=Competicao.montarMataMata(this.grupos,this.stats,i=>this.teams[i].nome,f.avancamPorGrupo);
       if(pares.some(c=>c.includes(this.myTeam))) this.premiarFaseMataMata('classificou','classificou pra 2ª fase');
@@ -3049,7 +3097,8 @@ const App={
      redondos, poucas alavancas, tudo cai no extrato do usuário.
      ============================================================ */
   // patrocínio mensal por nível de divisão (base) — creditado junto da folha
-  PATROC_BASE:{A:6e6, B:2.5e6, C:1.2e6, D:5e5},
+  // D era 5e5 (05/10/2026): a folha mediana é 0,69 M/mês em TODAS as séries e na D comia a receita inteira
+  PATROC_BASE:{A:6e6, B:2.5e6, C:1.2e6, D:8e5},
   patrocinioMensal(ti){
     const t=this.teams[ti]; if(!t) return 0;
     const base=this.PATROC_BASE[t.divisao]||5e5;
@@ -3249,6 +3298,7 @@ const App={
     const usados=new Set(dest.players.map(q=>q.numero));
     if(usados.has(p.numero)){ let n=1; while(usados.has(n)) n++; p.numero=n; }
     p.aVenda=false;
+    if(tiDestino===this.myTeam) p._chegou={t:this.temporada||1, r:this.rodada||0}; else delete p._chegou;
     dest.players.push(p);
     // reescala só os times da IA (preserva a escalação manual do MEU time)
     if(tiOrigem!==this.myTeam) this.cfg[tiOrigem]=this.cfgInicial(orig);
@@ -3267,6 +3317,38 @@ const App={
     const apego = p.idade<=21 ? 1.25 : p.idade<=26 ? 1.1 : 0.95;
     return vm*apego;
   },
+  /* ---------- Balanceamento do mercado (05/10/2026) ----------
+     1) INTERESSE do jogador: craque de série MAIOR não troca de bom grado por um
+        clube pequeno. Mede o quanto ele está acima do nível da série do comprador
+        (força média dos clubes daquela série): até +4 vem normal; de +4 a +14 vem,
+        mas pede salário maior (+10% por ponto, até +100%); acima de +14 recusa. Comprar de série
+        igual ou menor que a sua: sem restrição. (Antes: o time da Série D comprava
+        titular da Série A e era o mais forte das 96 na 1ª temporada.)
+     2) RECÉM-CONTRATADO não pode ser revendido por 8 rodadas (ou até a virada da
+        temporada): fecha a arbitragem compra-a-95%/revende-em-leilão-a-140%. */
+  REVENDA_RODADAS:8, INTERESSE_FOLGA:4, INTERESSE_TETO:14,
+  forcaRefDivisao(div){
+    const k=(this.temporada||1)+'-'+(this.rodada||0)+'-'+div;
+    if(this._refDiv && this._refDiv.k===k) return this._refDiv.v;
+    const ts=this.teams.map((t,i)=>i).filter(i=>this.teams[i].divisao===div);
+    const v=ts.length ? ts.reduce((a,i)=>a+Menu.forcaTime(i),0)/ts.length : 60;
+    this._refDiv={k, v}; return v;
+  },
+  interesseJogador(p, tiOrigem){
+    const rank={A:0,B:1,C:2,D:3}, eu=this.teams[this.myTeam], orig=this.teams[tiOrigem!=null?tiOrigem:this.timeDoJogador(p.pid)];
+    if(!eu || !orig || (rank[eu.divisao]??3)<=(rank[orig.divisao]??3)) return {ok:true, mult:1, gap:0};
+    const gap=Math.round(Motor.melhorGeral(p).ov - this.forcaRefDivisao(eu.divisao));
+    if(gap<=this.INTERESSE_FOLGA) return {ok:true, mult:1, gap};
+    if(gap<=this.INTERESSE_TETO) return {ok:true, mult:+(1+(gap-this.INTERESSE_FOLGA)*0.1).toFixed(2), gap,
+      motivo:`Joga a Série ${orig.divisao}: pra descer pra Série ${eu.divisao} só com salário maior.`};
+    return {ok:false, mult:0, gap, motivo:`“Não troco a Série ${orig.divisao} pela Série ${eu.divisao}.” Ele está muito acima do nível da sua série — suba de divisão primeiro.`};
+  },
+  podeRevender(p){
+    const c=p && p._chegou; if(!c) return true;
+    if(c.t!==(this.temporada||1)) return true;
+    return (this.rodada||0) >= c.r+this.REVENDA_RODADAS;
+  },
+  rodadaLiberaRevenda(p){ const c=p&&p._chegou; return c ? c.r+this.REVENDA_RODADAS+1 : 0; },
   avaliarOfertaCompra(pid, oferta){
     const p=this.teams[this.timeDoJogador(pid)].players.find(x=>x.pid===pid);
     const alvo=this.precoPedido(p);            // preço que o clube realmente quer
@@ -3294,7 +3376,7 @@ const App={
     if(!this.ofertasRecebidas) this.ofertasRecebidas=[];
     this.tickLeiloes();   // leilões abertos: uma rodada de lances
     const meu=this.teams[this.myTeam];
-    meu.players.filter(p=>p.aVenda).forEach(p=>{
+    meu.players.filter(p=>p.aVenda && this.podeRevender(p)).forEach(p=>{
       // já tem oferta ou leilão pendente pra esse jogador?
       if(this.ofertasRecebidas.some(o=>o.pid===p.pid) || this.leilaoDe(p.pid) || (this.leiloes||[]).some(l=>l.pid===p.pid)) return;
       // 35% de chance por rodada de alguém se interessar
@@ -3551,10 +3633,12 @@ const App={
     // aplica todas as trocas pendentes
     ctx.pendentes.forEach(({saiIdx,entra})=>{
       const sai=campo[saiIdx];
+      this.registrarSaida(s, campo, sai);
       // Fase 0: o reserva assume o SLOT TÁTICO de quem saiu (posição + role),
       // não a posição natural dele — preserva a força tática do time.
       campo[saiIdx]={ref:entra, forca:entra.forca, energia:entra.energia,
                      posicao:sai.posicao, role:sai.role, nome:entra.nome, numero:entra.numero,
+                     _entrou:L.min,
                      _minutos:Math.max(1,90-L.min)};   // A1: minutos que o reserva vai jogar
       sub.feitas++;
       (lado==='H'?s.jogaramH:s.jogaramA).add(entra.numero);
@@ -4214,6 +4298,7 @@ const App={
             ${advHTML}
             ${acao}
             ${!live&&!fimRod&&!acabou?`<button class="btn sm fm-descansar" id="btnDescansarEsc" title="Avança um dia: +2% de energia pra todo o elenco">＋1 dia de descanso</button>`:''}
+            ${!live&&!fimRod&&!acabou&&this.podeBonusEnergia()?`<button class="btn sm fm-descansar fm-bonus" id="btnBonusEnergia" title="Bônus opcional: +${this.BONUS_ENERGIA} de energia pra todo o elenco, 1x por rodada">⚡ Fisioterapia extra (+${this.BONUS_ENERGIA})</button>`:''}
           </div>
         </div>
 
@@ -4271,6 +4356,7 @@ const App={
     const bJog=document.getElementById('btnJogarEsc'); if(bJog) bJog.onclick=()=>this.jogarRodada();
     el.querySelectorAll('[data-ir-arena]').forEach(b=>b.onclick=()=>this.showTab('arena'));
     const bDesc=document.getElementById('btnDescansarEsc'); if(bDesc) bDesc.onclick=()=>{ this.descansar(); this.showTab('escala'); };
+    const bBon=document.getElementById('btnBonusEnergia'); if(bBon) bBon.onclick=()=>this.bonusEnergiaUI();
     el.querySelectorAll('[data-form]').forEach(b=>b.onclick=()=>{ this.aplicarFormacao(i,b.dataset.form); this._trocaSel=null; re(); });
     document.getElementById('btnEscalarAuto').onclick=()=>{ this.escalarMelhor(); this._trocaSel=null; this.renderShell(); this.showTab('escala'); };
     document.getElementById('btn11Melhores').onclick=()=>{ const f=this.escalar11Melhores(); this._trocaSel=null; this.renderShell(); this.showTab('escala');
@@ -4324,19 +4410,22 @@ const App={
       <div class="fmodal-layout">
         ${this.cardHTML(i,sel)}
         <div class="fmodal-ficha">${this.fichaHTML(i,sel)}
+          ${this.olheiroHTML(sel)}
           ${i===this.myTeam?`<div class="ficha-acoes">
             <button class="btn sm" id="fmVender">${sel.aVenda?'✕ Tirar da venda':'💰 Vender'}</button>
-            <button class="btn sm primary" id="fmLeilao" ${this.leilaoDe(sel.pid)||(this.leiloes||[]).some(l=>l.pid===sel.pid)?'disabled':''}>🔨 Leilão</button>
-            <span class="ficha-acoes-hint">${this.leilaoDe(sel.pid)?'Leilão em andamento — veja no Mercado.':sel.aVenda?'À venda: clubes interessados mandam propostas ao fim das rodadas.':`Leilão começa em ${this.fmtReais(this.valorMercadoReais(sel)*this.LEILAO_INICIO)} (60% do valor).`}</span>
+            <button class="btn sm primary" id="fmLeilao" ${this.leilaoDe(sel.pid)||(this.leiloes||[]).some(l=>l.pid===sel.pid)||!this.podeRevender(sel)?'disabled':''}>🔨 Leilão</button>
+            <span class="ficha-acoes-hint">${!this.podeRevender(sel)?`⏳ Recém-contratado: venda liberada na rodada ${this.rodadaLiberaRevenda(sel)}.`:this.leilaoDe(sel.pid)?'Leilão em andamento — veja no Mercado.':sel.aVenda?'À venda: clubes interessados mandam propostas ao fim das rodadas.':`Leilão começa em ${this.fmtReais(this.valorMercadoReais(sel)*this.LEILAO_INICIO)} (60% do valor).`}</span>
           </div>`:''}</div>
       </div>
     </div></div>`;
     document.getElementById('fmClose').onclick=()=>ov.remove();
     const bv=document.getElementById('fmVender'); if(bv) bv.onclick=()=>{
+      if(!sel.aVenda && !this.podeRevender(sel)){ Tutorial.toast(`⏳ ${this.esc(sel.nome)} acabou de chegar: venda liberada na rodada ${this.rodadaLiberaRevenda(sel)}.`); return; }
       sel.aVenda=!sel.aVenda; this.salvarSupabase(true); this.renderMercado();
       Tutorial.toast(sel.aVenda?`💰 <b>${this.esc(sel.nome)}</b> está à venda. Propostas chegam ao fim das rodadas.`:`${this.esc(sel.nome)} saiu da lista de venda.`);
       this.abrirFichaModal(i,num); };
     const bl=document.getElementById('fmLeilao'); if(bl) bl.onclick=()=>{ ov.remove(); this.leilaoRapido(sel.pid); };
+    const bo=document.getElementById('fmOlheiro'); if(bo) bo.onclick=()=>this.olheiroUI(i,num);
     ov.querySelector('.fmodal-bg').onclick=(e)=>{ if(e.target.classList.contains('fmodal-bg')) ov.remove(); };
     // efeito 3D + glare no card (adaptado do card enviado pelo usuário)
     const card=ov.querySelector('.pcard'), glare=ov.querySelector('.pcard-glare');
@@ -4702,12 +4791,12 @@ const App={
             <table class="mk-table"><colgroup><col style="width:auto"><col style="width:62px"><col style="width:44px"><col style="width:96px"><col style="width:80px"></colgroup>
               <thead><tr><th class="l">Jogador</th><th>Pos</th><th>OVR</th><th>Pedem</th><th></th></tr></thead>
               <tbody>${topAlvos.length?'':`<tr><td colspan="5" class="mk-vazio">Nenhum jogador com esses filtros${F.caixa?' dentro do seu caixa':''}. Tente outra série, setor ou "Qualquer preço".</td></tr>`}${topAlvos.map(({p,ti,tm,preco})=>{
-                const mg=Motor.melhorGeral(p); const ov=mg.ov;
-                return `<tr class="mk-row"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · S${tm.divisao} · ${p.idade}a</span></td>
+                const mg=Motor.melhorGeral(p); const ov=mg.ov; const it=this.interesseJogador(p,ti);
+                return `<tr class="mk-row${it.ok?'':' mk-recusa'}"><td class="l mk-nome">${p.aVenda?'🔖 ':''}<a class="mk-nome-link" data-mkmodal="${p.numero}" data-mkteam="${ti}">${p.nome}</a> <span class="mk-idade">${tm.abrev} · S${tm.divisao} · ${p.idade}a</span></td>
                   <td><span class="mk-pos-tag setor-${p.setorNat}">${p.setorNat}</span> <span class="mk-pos-fm">${mg.pos}</span></td>
                   <td class="mk-f">${ov}${Rating.setaTendencia(p)}</td>
                   <td class="mk-money" style="color:${preco>saldo?'var(--loss)':preco>saldo/2?'#e8c547':'var(--lemon)'}" title="Preço pedido pelo clube">${this.fmtReais(preco)}</td>
-                  <td><button class="mini-btn" data-negociar="${p.pid}">Negociar</button></td></tr>`;
+                  <td>${it.ok?`<button class="mini-btn" data-negociar="${p.pid}"${it.mult>1?` title="Pede salário ${Math.round((it.mult-1)*100)}% maior pra descer de série"`:''}>Negociar${it.mult>1?' ⚠️':''}</button>`:`<button class="mini-btn" data-negociar="${p.pid}" title="Não quer jogar na sua série">🚫 Recusa</button>`}</td></tr>`;
               }).join('')}</tbody>
             </table>
           </div>
@@ -4717,6 +4806,7 @@ const App={
     // handlers: toggle à venda
     el.querySelectorAll('[data-venda]').forEach(cb=>cb.onchange=()=>{
       const pid=+cb.dataset.venda; const p=t.players.find(x=>x.pid===pid);
+      if(p && cb.checked && !this.podeRevender(p)){ cb.checked=false; this.avisoFLK('⏳ Recém-contratado', `${this.esc(p.nome)} acabou de chegar: dá pra vender a partir da rodada ${this.rodadaLiberaRevenda(p)}.`, '#e8c547'); return; }
       if(p) p.aVenda=cb.checked;
     });
     // handlers: clique no nome abre a ficha do jogador (meu elenco e mercado)
@@ -4779,7 +4869,7 @@ const App={
   },
   // salário que o jogador pede pra vir (em MIL/mês): o atual + 10% pra trocar de clube.
   // O "real" (escondido) pode ser até 12% maior — o empresário testa o mercado.
-  pedidoSalarial(p){ return Math.max(5, Math.round((p.salario||20)*1.10)); },
+  pedidoSalarial(p){ const it=this.interesseJogador(p); return Math.max(5, Math.round((p.salario||20)*1.10*(it.ok?it.mult:1))); },
   cabecaNegociacao(p, ti, rotuloDir, valorDir){
     const mg=Motor.melhorGeral(p);
     return `<div class="neg-top">${this.escudoHTML(this.teams[ti],40)}<div class="neg-id"><div class="mf-nome">${this.esc(p.nome)}</div>
@@ -4790,6 +4880,8 @@ const App={
   negociarCompraUI(pid){
     const ti=this.timeDoJogador(pid); if(ti<0||ti===this.myTeam) return;
     const p=this.teams[ti].players.find(x=>x.pid===pid);
+    const it=this.interesseJogador(p, ti);
+    if(!it.ok){ this.avisoFLK('🚫 Ele não quer vir', `${this.esc(p.nome)}: ${it.motivo}`, 'var(--loss)'); return; }
     const alvo=this.precoPedido(p), piso=alvo*0.6;
     const neg={pid, ti, taxa:null, salReal:Math.round(this.pedidoSalarial(p)*(1+Math.random()*0.12)), salPedido:this.pedidoSalarial(p)};
     this._negAtual=neg;
@@ -4803,7 +4895,7 @@ const App={
     this.modalFLK({titulo:`<span class="neg-etapa">Etapa 1 de 3 · taxa com o clube</span>Proposta por ${this.esc(p.nome)}`,
       corpoHTML:`<div class="mf">${this.cabecaNegociacao(p, neg.ti, 'Pedido', this.fmtReais(alvo))}
         ${contra?`<div class="mf-destaque"><small>Contraproposta do ${this.esc(clube)}</small><b>${this.fmtReais(contra)}</b><span>Ofereça esse valor (ou mais) e a taxa fecha.</span></div>`:''}
-        <div class="mf-aviso">Abaixo de <b>${this.fmtReais(piso)}</b> o ${this.esc(clube)} recusa direto.</div>
+        <div class="mf-aviso">Abaixo de <b>${this.fmtReais(piso)}</b> o ${this.esc(clube)} recusa direto.${(()=>{ const it=this.interesseJogador(p,neg.ti); return it.mult>1?`<br>⚠️ ${this.esc(it.motivo)} (+${Math.round((it.mult-1)*100)}% no salário)`:''; })()}</div>
         <div data-contador>${this.contadorHTML(pr)}</div>
         <div class="mf-sub">Primeiro acerta-se a TAXA com o clube. O salário vem na etapa seguinte (estimativa: ${this.fmtReais(this.pedidoSalarial(p)*1000)}/mês).</div></div>`,
       campos:[{id:'oferta', label:'Valor da proposta (em milhões)', tipo:'number', valor:sug.toFixed(1)}],
@@ -5311,6 +5403,7 @@ const App={
   leilaoRapido(pid){
     const t=this.teams[this.myTeam], p=t.players.find(x=>x.pid===pid); if(!p) return;
     if(this.leilaoDe(pid)) return this.verLeilaoUI(pid);
+    if(!this.podeRevender(p)) return this.avisoFLK('⏳ Recém-contratado', `${this.esc(p.nome)} acabou de chegar: dá pra leiloar a partir da rodada ${this.rodadaLiberaRevenda(p)}.`, '#e8c547');
     const vm=this.valorMercadoReais(p), ini=vm*this.LEILAO_INICIO;
     const cands=this.teams.map((x,i)=>({t:x,i})).filter(o=>o.i!==this.myTeam && (o.t.saldo||0)>=ini);
     if(cands.length<2) return this.avisoFLK('Sem interessados','Nenhum clube tem caixa pra disputar esse jogador agora. Tente anunciar à venda.','var(--loss)');
@@ -5571,7 +5664,7 @@ const App={
      resultado: gols continuam vindo do motor; aqui é só a camada de TV.
      ==================================================================== */
   estatMeuJogo(s){
-    if(!s.est) s.est={posse:[0,0], fin:[0,0], alvo:[0,0], esc:[0,0]};
+    if(!s.est) s.est={posse:[0,0], fin:[0,0], alvo:[0,0], esc:[0,0], press:0};
     if(!s.narr) s.narr=[];
     return s.est;
   },
@@ -5603,6 +5696,7 @@ const App={
   // chamado a cada minuto pro MEU jogo, depois do motor decidir gols e cartões
   lancesMeuJogo(s, fH, fA, n0){
     const L=this.liveState, m=L.min, est=this.estatMeuJogo(s);
+    const antes=JSON.stringify([est.posse,est.fin,est.alvo,est.esc]), gols0=[s.gc,s.gf];
     const nome=i=>this.teams[i].nome, lados=[['casa',0,s.h,s.campoH,s.campoA],['fora',1,s.a,s.campoA,s.campoH]];
     const narrar=(txt,tipo,time)=>{ s.narr.push({m,txt,tipo,time}); if(s.narr.length>40) s.narr.shift(); };
     // posse: minuto a minuto, pela força relativa (com ruído)
@@ -5641,6 +5735,29 @@ const App={
     });
     if(m===45) narrar('⏸️ Fim do primeiro tempo.','apito');
     if(m===90) narrar('🏁 Fim de jogo!','apito');
+    this.atualizarPressao(est, JSON.parse(antes), gols0, [s.gc,s.gf]);
+  },
+  /* §6.1 item 20 — barra de pressão: índice −100 (fora pressiona) … +100 (casa)
+     que decai a cada minuto e sobe com o que aconteceu NESTE minuto: posse,
+     finalização, chute no alvo, escanteio, gol. Mostra quem está em cima AGORA,
+     não no jogo todo (isso a posse já mostra). Camada de TV: não mexe no motor. */
+  PRESS_PESOS:{posse:6, fin:14, alvo:8, esc:8, gol:20}, PRESS_DECAI:0.85, PRESS_LIMIAR:25,   // calibrado: ~70% dos minutos "equilibrado"
+  atualizarPressao(est, a, g0, g1){
+    const W=this.PRESS_PESOS, d=k=>[0,1].map(i=>({posse:est.posse,fin:est.fin,alvo:est.alvo,esc:est.esc})[k][i]-a[['posse','fin','alvo','esc'].indexOf(k)][i]);
+    let v=0;
+    ['posse','fin','alvo','esc'].forEach(k=>{ const x=d(k); v+=(x[0]-x[1])*W[k]; });
+    v+=((g1[0]-g0[0])-(g1[1]-g0[1]))*W.gol;
+    est.press=Math.max(-100, Math.min(100, (est.press||0)*this.PRESS_DECAI + v));
+    return est.press;
+  },
+  pressaoHTML(s, eu){
+    const p=(s.est&&s.est.press)||0, lim=this.PRESS_LIMIAR, quem=p>lim?s.h:p<-lim?s.a:null;
+    const t=quem!=null?this.teams[quem]:null, meu=quem===this.myTeam;
+    const rot=t?`${meu?'🔥':'⚠️'} ${this.esc(t.abrev||t.nome).toUpperCase()} PRESSIONA`:'JOGO EQUILIBRADO';
+    const larg=Math.round(Math.abs(p)/2);   // metade da barra = 100
+    return `<div class="mj-press ${t?(meu?'meu':'adv'):'eq'}" data-press="${Math.round(p)}" title="Quem está em cima nos últimos minutos">
+      <div class="mj-press-bar"><i style="${p>=0?'right:50%':'left:50%'};width:${larg}%"></i><span class="mj-press-meio"></span></div>
+      <small>${rot}</small></div>`;
   },
   // painel "Seu jogo" na Arena (atualiza a cada minuto)
   meuJogoHTML(){
@@ -5659,6 +5776,7 @@ const App={
         <div class="mj-placar"><b>${s.gc}</b><span>×</span><b>${s.gf}</b></div>
         <div class="mj-time fora ${eu===1?'eu':''}"><span>${this.esc(ta.nome)}</span>${this.escudoHTML(ta,34)}</div>
       </div>
+      ${this.pressaoHTML(s, eu)}
       <div class="mj-grid">
         <div class="mj-ests">${barra('Posse',pos[0],pos[1],'%')}${barra('Finalizações',est.fin[0],est.fin[1])}${barra('No alvo',est.alvo[0],est.alvo[1])}${barra('Escanteios',est.esc[0],est.esc[1])}${fad}</div>
         <div class="mj-narr">${narr.length?narr.map((n,i)=>`<div class="nr nr-${n.tipo} ${n.time?(n.time===(eu===0?'casa':'fora')?'nr-meu':'nr-adv'):''} ${i===0?'novo':''}"><span class="nr-m">${n.m}'</span><span>${n.txt}</span></div>`).join(''):`<div class="nr"><span class="nr-m">0'</span><span>Bola rolando!</span></div>`}</div>
@@ -5937,6 +6055,92 @@ const App={
         this.avisoFLK&&this.avisoFLK('🎁 Bônus em dobro!', `Prêmio de "${s.titulo}" dobrado: +${this.fmtM(s.premioBase/1e6)}.`, 'var(--lemon)'); } }
     });
   },
+  /* ---------- B1: bônus recompensados extras (05/10/2026) ----------
+     Opt-in, sempre fora da partida, passam pelo mostrarAnuncio() (quem tem
+     remove-ads recebe direto; na versão web saem sem anúncio — §5):
+       ⚡ Fisioterapia extra: +10 de energia pro elenco, 1x por rodada;
+       🔭 Relatório do olheiro: revela uma FAIXA de 5 pontos do potencial oculto
+          de qualquer jogador (meu ou não), 3 por rodada; o que foi revelado fica
+          salvo. A faixa contém o potencial real mas não é centrada nele. */
+  BONUS_ENERGIA:10, OLHEIRO_POR_RODADA:3, OLHEIRO_MAX_SALVOS:400,
+  chaveRodada(){ return (this.temporada||1)+'-'+(this.rodada||0); },
+  garantirBonus(){
+    if(!this.bonus || typeof this.bonus!=='object') this.bonus={energia:null, olheiroRod:null, olheiroUsos:0, revelados:{}};
+    if(!this.bonus.revelados || typeof this.bonus.revelados!=='object') this.bonus.revelados={};
+    return this.bonus;
+  },
+  sanearBonus(v){
+    const b={energia:null, olheiroRod:null, olheiroUsos:0, revelados:{}};
+    if(!v || typeof v!=='object') return b;
+    const chave=x=>typeof x==='string' && /^\d{1,5}-\d{1,4}$/.test(x) ? x : null;
+    b.energia=chave(v.energia); b.olheiroRod=chave(v.olheiroRod);
+    b.olheiroUsos=Math.max(0,Math.min(this.OLHEIRO_POR_RODADA, +v.olheiroUsos||0));
+    const rv=(v.revelados && typeof v.revelados==='object') ? v.revelados : {};
+    Object.keys(rv).slice(-this.OLHEIRO_MAX_SALVOS).forEach(pid=>{ const f=rv[pid];
+      if(isFinite(+pid) && f && isFinite(+f.lo) && isFinite(+f.hi)) b.revelados[pid]={lo:Math.round(+f.lo), hi:Math.round(+f.hi)}; });
+    return b;
+  },
+  partidaRolando(){ return !!(this.liveState && !this.liveState.done); },
+  podeBonusEnergia(){
+    return !this.partidaRolando() && !this.tempEncerrada && this.garantirBonus().energia!==this.chaveRodada();
+  },
+  aplicarBonusEnergia(){
+    if(!this.podeBonusEnergia()) return 0;
+    const t=this.teams[this.myTeam]; if(!t) return 0;
+    let n=0; t.players.forEach(p=>{ const e=p.energia||0; p.energia=Math.min(100, e+this.BONUS_ENERGIA); if(p.energia>e) n++; });
+    this.garantirBonus().energia=this.chaveRodada();
+    return n;
+  },
+  bonusEnergiaUI(){
+    if(!this.podeBonusEnergia()) return;
+    this.mostrarAnuncio({ titulo:'⚡ Fisioterapia extra',
+      descricao:`+${this.BONUS_ENERGIA} de energia pra todo o elenco antes do próximo jogo. Uma vez por rodada.`,
+      onRecompensa:()=>{ const n=this.aplicarBonusEnergia(); this.salvarSupabase&&this.salvarSupabase(true);
+        this.renderShell(); this.showTab('escala');
+        this.avisoFLK&&this.avisoFLK('⚡ Elenco recuperado', n?`${n} jogador${n===1?'':'es'} ganharam +${this.BONUS_ENERGIA} de energia.`:'O elenco já estava com energia cheia.', 'var(--lemon)'); } });
+  },
+  olheiroRestante(){
+    const b=this.garantirBonus();
+    return b.olheiroRod!==this.chaveRodada() ? this.OLHEIRO_POR_RODADA : Math.max(0, this.OLHEIRO_POR_RODADA-(b.olheiroUsos||0));
+  },
+  faixaPotencial(p){
+    const pot=Math.round(p.potential || Motor.melhorGeral(p).ov);
+    const off=(Math.abs(p.pid||0)%4)+1;          // 1..4: a faixa de 5 contém o real, sem ser centrada
+    return {lo:pot-off, hi:pot-off+4};
+  },
+  reveladoDe(p){ return (p && this.garantirBonus().revelados[p.pid]) || null; },
+  revelarPotencial(p){
+    if(!p) return null;
+    const ja=this.reveladoDe(p); if(ja) return ja;
+    if(this.olheiroRestante()<=0) return null;
+    const b=this.garantirBonus();
+    if(b.olheiroRod!==this.chaveRodada()){ b.olheiroRod=this.chaveRodada(); b.olheiroUsos=0; }
+    b.olheiroUsos++;
+    const f=this.faixaPotencial(p); b.revelados[p.pid]=f;
+    const ks=Object.keys(b.revelados); if(ks.length>this.OLHEIRO_MAX_SALVOS) delete b.revelados[ks[0]];
+    return f;
+  },
+  olheiroHTML(sel){
+    const f=this.reveladoDe(sel), ov=Motor.melhorGeral(sel).ov;
+    if(f){
+      const falta=f.lo-ov;
+      const leitura = f.hi<=ov ? 'já chegou no auge' : falta>=8 ? 'muito a crescer' : falta>=3 ? 'ainda cresce' : 'perto do teto';
+      return `<div class="ficha-olheiro"><span>🔭 Potencial (olheiro)</span><b>${f.lo}–${f.hi}</b> <small>hoje ${ov} · ${leitura}</small></div>`;
+    }
+    const rest=this.olheiroRestante();
+    return `<div class="ficha-olheiro"><button class="btn sm" id="fmOlheiro" ${rest<=0?'disabled':''}>🔭 Relatório do olheiro</button>
+      <small>${rest>0?`revela a faixa de potencial · ${rest} nesta rodada`:'o olheiro volta na próxima rodada'}</small></div>`;
+  },
+  olheiroUI(i, num){
+    const p=this.teams[i]&&this.teams[i].players.find(x=>x.numero===num); if(!p || this.olheiroRestante()<=0) return;
+    // a ficha fica por cima dos modais FLK: fecha e reabre depois (com o resultado)
+    const tinhaFicha=!!document.getElementById('fichaModal'); document.getElementById('fichaModal')?.remove();
+    const reabrir=()=>{ if(tinhaFicha) this.abrirFichaModal(i,num); };
+    this.mostrarAnuncio({ titulo:'🔭 Relatório do olheiro',
+      descricao:`O olheiro estima até onde <b>${this.esc(p.nome)}</b> pode chegar (faixa de potencial). ${this.olheiroRestante()} relatório${this.olheiroRestante()===1?'':'s'} nesta rodada.`,
+      onRecompensa:()=>{ if(this.revelarPotencial(p)){ this.salvarSupabase&&this.salvarSupabase(true); } reabrir(); },
+      onCancelar:reabrir });
+  },
   avaliarPrincipal(destino){
     const o=this.garantirObjetivos(); const P=o.principal; if(!P || o.principalStatus!=='aberto') return null;
     const eu=this.myTeam;
@@ -5995,13 +6199,13 @@ const App={
     if(aba==='grupos' && this.grupos){
       const meu=this.indiceDoGrupo(this.myTeam);
       body.innerHTML=`
-        <div class="cmp-nota">Os 4 melhores de cada grupo avançam ao mata-mata. Seu grupo está destacado.</div>
+        <div class="cmp-nota">Os ${Competicao.formatoDe('D').avancamPorGrupo} melhores de cada grupo avançam ao mata-mata. Seu grupo está destacado.</div>
         <div class="cmp-grid">
         ${this.grupos.map((g,gi)=>{
           const cls=Competicao.classificarGrupo(this.stats,g,i=>this.teams[i].nome);
           return `<div class="cmp-grupo ${gi===meu?'meu':''}">
             <div class="cmp-grupo-h">Grupo ${gi+1} ${gi===meu?'<span class="cmp-badge">SEU GRUPO</span>':''}</div>
-            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<4?'classifica':''} ${s.i===this.myTeam?'eu':''}">
+            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<Competicao.formatoDe('D').avancamPorGrupo?'classifica':''} ${s.i===this.myTeam?'eu':''}">
               <span class="cmp-pos">${pos+1}º</span>
               <span class="cmp-nome">${this.teams[s.i].nome}${flag(s.i)}</span>
               <span class="cmp-j">${s.j}j</span>
@@ -6147,7 +6351,7 @@ const App={
           const cls=Competicao.classificarGrupo(liga.stats,g,i=>this.teams[i].nome);
           return `<div class="cmp-grupo">
             <div class="cmp-grupo-h">Grupo ${gi+1}</div>
-            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<4?'classifica':''}">
+            ${cls.map((s,pos)=>`<div class="cmp-row ${pos<Competicao.formatoDe('D').avancamPorGrupo?'classifica':''}">
               <span class="cmp-pos">${pos+1}º</span>
               <span class="cmp-nome">${this.teams[s.i].nome}</span>
               <span class="cmp-j">${s.j}j</span><span class="cmp-pts">${s.pts}</span>
@@ -6300,7 +6504,7 @@ const App={
   // simula UM confronto (usando a força REAL dos onzes) e devolve o placar
   simularConfrontoReal(h, a){
     // Fase 0: mando percentual (+7%), coerente com o motor real.
-    const fh=this.forcaBaseTime(h)*(1+Motor.MANDO_PCT), fa=this.forcaBaseTime(a);
+    const fh=Math.pow(this.forcaBaseTime(h),Motor.EXP_FORCA)*(1+Motor.MANDO_PCT), fa=Math.pow(this.forcaBaseTime(a),Motor.EXP_FORCA);
     const tot=Math.max(1,fh+fa);
     const gc=this.poisson((fh/tot)*2.6), gf=this.poisson((fa/tot)*2.6);
     return {gc, gf};
@@ -6904,6 +7108,7 @@ const App={
       formaTimes:this.teams.map(t=>({n:t._notas5||[], r:t._forma5||[]})),
       // --- v13: campo reservado pra cosméticos (vazio até o recurso existir) ---
       itensUsuario:this.garantirItensUsuario(),
+      bonus:this.garantirBonus(),                                    // B1 extra: fisioterapia/olheiro usados + potenciais revelados
     };
     snap.checksum=this._checksum(snap);
     return snap;
@@ -6920,7 +7125,7 @@ const App={
     put('golsTemp',p.golsTemp,0); put('jogosTemp',p.jogosTemp,0); put('assist',p.assist,0); put('assistTemp',p.assistTemp,0);
     put('amarelos',p.amarelos,0); put('expulsoes',p.expulsoes,0); put('suspenso',p.suspenso,0); put('motivoSusp',p._motivoSusp,'');
     put('somaNotas',p._somaNotas,0); put('qtdNotas',p._qtdNotas,0); put('melhorNota',p._melhorNota,0); put('notaRodada',p._notaRodada,0);
-    put('moral',p.moral,65); put('semJogar',p._semJogar,0); put('notas5',p._notas5,null); put('ovBase',p._ovBase,null); put('aVenda',p.aVenda,false);
+    put('moral',p.moral,65); put('semJogar',p._semJogar,0); put('chegou',p._chegou,null); put('notas5',p._notas5,null); put('ovBase',p._ovBase,null); put('aVenda',p.aVenda,false);
     if(!p._attrsBase){
       Object.assign(o,{attrs:p.attrs, attrsDec:p.attrsDec, mkt:p._mktFactor, ovIni:p._ovInicialNat, growth:p._growth, capAttr:p._capAttr});
       return o;
@@ -6943,6 +7148,7 @@ const App={
     p._somaNotas=sp.somaNotas||0; p._qtdNotas=sp.qtdNotas||0;
     p.moral=(sp.moral!=null)?sp.moral:65; p._semJogar=sp.semJogar||0;   // A4
     p._ovBase=(sp.ovBase!=null)?sp.ovBase:null;   // item 4
+    if(sp.chegou && isFinite(+sp.chegou.t) && isFinite(+sp.chegou.r)) p._chegou={t:+sp.chegou.t, r:+sp.chegou.r}; else delete p._chegou;   // revenda travada
     p._notas5=Forma.sanearNotas(sp.notas5);       // v9 (save v8 → lista vazia)
     if(sp.melhorNota) p._melhorNota=sp.melhorNota; else delete p._melhorNota;
     if(sp.notaRodada) p._notaRodada=sp.notaRodada; else delete p._notaRodada;
@@ -7106,6 +7312,7 @@ const App={
     this.carreira=(s.carreira&&typeof s.carreira==='object')?{titulos:s.carreira.titulos||0, acessos:s.carreira.acessos||0, estaduais:s.carreira.estaduais||0}:{titulos:0, acessos:0};   // C3
     this.opcoes=(s.opcoes&&typeof s.opcoes==='object')?{...this.OPCOES_PADRAO,...s.opcoes}:{...this.OPCOES_PADRAO};   // Bloco B
     this.itensUsuario=this.sanearItensUsuario(s.itensUsuario);   // v13 (saves ≤ v12 chegam vazios)
+    this.bonus=this.sanearBonus(s.bonus);                          // v13: bônus recompensados (save antigo chega vazio)
     this.fixtures=s.fixtures||gerarFixtures(Math.max(this.teams.length,2));
     if(s.grupos!==undefined) this.grupos=s.grupos;
     if(s.fase) this.fase=s.fase;

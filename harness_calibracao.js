@@ -38,11 +38,32 @@ function chanceGol_baseline(fAtk, fDef, estiloAtk, estiloDef, mando){
 // CALIBRADO (Fase 0): mando = +7% percentual sobre o ataque, multiplicador 0.027
 // +40 numa soma ~600 ≈ +6,7% -> arredondado para 7%, agora proporcional à escala,
 // então escala igual entre Série A (forças altas) e Série D (forças baixas).
-const MANDO_PCT = 0.07;
+let MANDO_PCT = 0.07;
 function chanceGol_calibrado(fAtk, fDef, estiloAtk, estiloDef, mando){
   const atk=fAtk*(mando?(1+MANDO_PCT):1)*EST[estiloAtk];
   const def=fDef*defMult(estiloDef);
   return (atk/(def+atk))*0.027;
+}
+
+// FORÇA^k (05/10/2026): igual ao calibrado, mas a força entra elevada a k
+// (app.js Motor.EXP_FORCA). k=1 reproduz o calibrado.
+function chanceGol_k(k){
+  return function(fAtk, fDef, estiloAtk, estiloDef, mando){
+    const atk=Math.pow(fAtk,k)*(mando?(1+MANDO_PCT):1)*EST[estiloAtk];
+    const def=Math.pow(fDef,k)*defMult(estiloDef);
+    return (atk/(def+atk))*0.027;
+  };
+}
+// zebra: o time ≥12% mais fraco vence com que frequência? (mesma série, estilo normal)
+function zebra(chanceGol){
+  let jogos=0, zebras=0, empates=0;
+  for(let k=0;k<JOGOS_POR_CENARIO;k++){
+    const forte=rand(560,660), fraco=forte*rand(0.80,0.88), casaForte=Math.random()<0.5;
+    const {gc,gf}=casaForte?simularJogo(chanceGol,forte,fraco,'normal','normal'):simularJogo(chanceGol,fraco,forte,'normal','normal');
+    const gForte=casaForte?gc:gf, gFraco=casaForte?gf:gc;
+    jogos++; if(gFraco>gForte) zebras++; else if(gFraco===gForte) empates++;
+  }
+  return {zebra:100*zebras/jogos, empate:100*empates/jogos};
 }
 
 // --- simula 1 jogo (90 min, dois lados) ---------------------------------
@@ -108,7 +129,15 @@ function medir(chanceGol, nome){
 const modo=(process.argv[2]||'ambos').toLowerCase();
 console.log(`harness_calibracao — ${JOGOS_POR_CENARIO} jogos/série, ${MINUTOS} min/jogo, alvo do roadmap: ~2,5 gols/jogo`);
 
-if(modo==='baseline'){
+if(modo==='mando'){
+  // mando de campo com força^3 (referência Brasileirão: mandante vence ~45–48%, visitante ~25–28%)
+  [0.07,0.15,0.2,0.25,0.3].forEach(m=>{ MANDO_PCT=m; medir(chanceGol_k(3), `MANDO +${Math.round(m*100)}% (força^3)`); });
+} else if(modo==='forca'){
+  // EXP_FORCA: quanto a diferença de força pesa. Referência real: o time bem mais fraco
+  // vence ~15–20% dos jogos; mandante vence ~45%.
+  [1,2,3,4].forEach(k=>{ const r=medir(chanceGol_k(k), `FORÇA^${k}`); const z=zebra(chanceGol_k(k));
+    console.log(`  time 12–20% mais fraco vence: ${z.zebra.toFixed(1)}% (empata ${z.empate.toFixed(1)}%)`); });
+} else if(modo==='baseline'){
   medir(chanceGol_baseline, 'BASELINE (*0.03, mando +40 absoluto)');
 } else if(modo==='calibrado'){
   medir(chanceGol_calibrado, 'CALIBRADO (*0.027, mando +7% percentual)');

@@ -53,7 +53,9 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
       r.fin+=e.fin[0]+e.fin[1]; r.alvo+=e.alvo[0]+e.alvo[1]; r.esc+=e.esc[0]+e.esc[1]; r.gols+=s.gc+s.gf;
       if(e.alvo[0]<s.gc || e.alvo[1]<s.gf) r.alvoGol=false;
       const fH=Motor.forcaCampo(s.campoH), fA=Motor.forcaCampo(s.campoA);
-      if((fH>fA)===(e.posse[0]>e.posse[1]) || e.posse[0]===e.posse[1]) r.posseForte++;
+      // só conta jogo com diferença real de força (≥5%): entre times parelhos a posse é cara ou coroa
+      // (antes de 05/10/2026 a IA jogava desfalcada e quase todo jogo era desigual)
+      if(Math.abs(fH-fA)/Math.min(fH,fA)>=0.05){ r.desiguais=(r.desiguais||0)+1; if((fH>fA)===(e.posse[0]>e.posse[1]) || e.posse[0]===e.posse[1]) r.posseForte++; }
       Som.ambiente(false); App.liveState=null;
     }
     return r;
@@ -63,7 +65,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   t(n.alvo/n.jogos/2>=3 && n.alvo/n.jogos/2<=7,`no alvo por time/jogo: ${pj(n.alvo)}`);
   t(n.esc/n.jogos/2>=3 && n.esc/n.jogos/2<=7,`escanteios por time/jogo: ${pj(n.esc)}`);
   t(n.alvoGol,'gols sempre contam como chute no alvo');
-  t(n.posseForte/n.jogos>=0.6,`time mais forte tem mais posse em ${Math.round(n.posseForte/n.jogos*100)}% dos jogos`);
+  t(n.desiguais>=10 && n.posseForte/n.desiguais>=0.6,`time ≥5% mais forte tem mais posse em ${Math.round(n.posseForte/Math.max(1,n.desiguais)*100)}% dos ${n.desiguais} jogos desiguais`);
 
   console.log('\n[3] tipo do gol pelos atributos');
   const tipos=await page.evaluate(()=>{
