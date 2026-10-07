@@ -4028,6 +4028,7 @@ const App={
     if(this.fase==='grupos'){
       const pares=Competicao.montarMataMata(this.grupos,this.stats,i=>this.teams[i].nome,f.avancamPorGrupo);
       if(pares.some(c=>c.includes(this.myTeam))) this.premiarFaseMataMata('classificou','classificou pra 2ª fase');
+      else this._eliminacaoPendente=true;   // ficou fora do mata-mata → avisa no fecharRodada
       this.iniciarFaseKO(pares);
       return;
     }
@@ -4044,6 +4045,7 @@ const App={
       mm.historico=mm.historico||[];
       mm.historico.push({fase:Competicao.nomeFase(mm.confrontos.length*2), confrontos:mm.confrontos, vencedores, perdedores});
       if(vencedores.includes(this.myTeam)) this.premiarFaseMataMata(vencedores.length, vencedores.length===1?'campeão da Série D':'passou: '+Competicao.nomeFase(mm.confrontos.length*2));
+      if(perdedores.includes(this.myTeam)) this._eliminacaoPendente=true;
       // guarda os eliminados das quartas (para a repescagem de acesso)
       if(mm.confrontos.length===4) mm.eliminadosQuartas=perdedores;
       // semifinalistas = os 4 que venceram as quartas → esses SOBEM
@@ -4077,6 +4079,60 @@ const App={
       faseNome:Competicao.nomeFase(pares.length*2),
     };
     this.fase='ko';
+  },
+  // Série D: o usuário já caiu? Derivado do estado (não vai pro save).
+  // → null (segue vivo / não é Série D) ou {onde:'grupos'|nome da fase, pos, acesso}
+  eliminacaoSerieD(){
+    if(!this.formato||this.formato.tipo!=='grupos') return null;
+    if(this.fase!=='ko' && this.fase!=='fim') return null;
+    const mm=this.mataMata, eu=this.myTeam; if(!mm) return null;
+    const hist=mm.historico||[];
+    const caiu=hist.find(h=>(h.perdedores||[]).includes(eu));
+    const acesso=(mm.semifinalistas||[]).includes(eu) || (mm.sobem||[]).includes(eu);
+    if(caiu) return {onde:caiu.fase, acesso};
+    const jogou=hist.some(h=>(h.confrontos||[]).some(c=>c.includes(eu))) || (mm.confrontos||[]).some(c=>c.includes(eu));
+    if(jogou) return null;
+    const g=this.grupoDe(eu), cls=g?Competicao.classificarGrupo(this.stats,g,i=>this.teams[i].nome):[];
+    return {onde:'grupos', pos:cls.findIndex(s=>s.i===eu)+1, acesso:false};
+  },
+  textoEliminacao(e){
+    if(!e) return '';
+    if(e.onde==='grupos') return `eliminado na fase de grupos (${e.pos}º no grupo)`;
+    return `eliminado: ${e.onde}${e.acesso?' · acesso garantido':''}`;
+  },
+  // aviso quando o usuário sai da Série D (fica fora do mata-mata ou perde um confronto)
+  abrirEliminacao(){
+    const e=this.eliminacaoSerieD(); if(!e) return;
+    const t=this.teams[this.myTeam], f=this.formato;
+    const restam=Math.max(0,this.fixtures.length-this.rodada);
+    const destaque = e.onde==='grupos'
+      ? {rotulo:'Fim da linha', titulo:`${e.pos}º no grupo`, desc:`Só os ${f.avancamPorGrupo} primeiros de cada grupo vão ao mata-mata. Desempate: pontos › saldo › gols pró.`, tom:'alerta'}
+      : e.acesso
+        ? {rotulo:'Caiu no mata-mata', titulo:e.onde, desc:'Mas o acesso à Série C já está garantido!'}
+        : {rotulo:'Caiu no mata-mata', titulo:e.onde, desc:'O acesso ficou pra próxima temporada.', tom:'alerta'};
+    this.modalFLK({fila:true, titulo:e.acesso?'🏁 Fim da campanha':'🚫 Eliminado da Série D', corpoHTML:this.cartaoDecisao({
+        topo:{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome), sub:`Temporada ${this.temporada} · Série ${this.divisao}`},
+        destaque,
+        kpis:[{rotulo:'Rodadas restantes', valor:String(restam)},{rotulo:'Seus jogos', valor:'Nenhum'}],
+      }),
+      botoes:restam?[
+        {txt:'Acompanhar rodada a rodada', tipo:'sm'},
+        {txt:'Simular até o fim ▸', tipo:'primary', onClick:()=>this.simularRestoTemporada()},
+      ]:[{txt:'Entendido', tipo:'primary'}]});
+  },
+  // usuário sem jogos até o fim (eliminado): roda as rodadas restantes sem ao vivo
+  simularRestoTemporada(){
+    if(this.liveState&&this.liveState.playing) return;
+    let n=0; this._simulandoResto=true;
+    try{
+      while(n<20 && this.rodada<this.fixtures.length && !this.tempEncerrada){
+        if(this.proximoAdversario()) break;          // segurança: tem jogo dele → para
+        this.jogarRodada(); const L=this.liveState; if(!L) break;
+        this.pularRodada(); this.liveState=null; n++;
+      }
+    } finally { this._simulandoResto=false; }
+    this.fecharRodada();
+    if(this.tempEncerrada){ this.showTab('arena'); this.renderArena(); }
   },
   forcaDoTime(ti){
     const t=this.teams[ti]; if(!t) return 1;
@@ -4640,10 +4696,11 @@ const App={
           lista:pr.map(x=>({a:this.esc(x.txt), b:'+'+this.fmtReais(x.v)}))}),
         botoes:[{txt:'Boa!', tipo:'primary'}]});
     }
+    if(this._eliminacaoPendente){ this._eliminacaoPendente=false; this.abrirEliminacao(); }
     this.avisarPropostasNovas();
     this.avisarLeiloes();
     // recado do presidente fecha a fila e leva pra Formação (não no 1º jogo do tutorial)
-    if(!this.tempEncerrada && !this.demitido && !this._demissaoPendente && this.garantirOpcoes().recado && Tutorial.estado()!=='jogo1') this.abrirRecadoPresidente();
+    if(!this.tempEncerrada && !this.demitido && !this._demissaoPendente && !this._simulandoResto && this.garantirOpcoes().recado && Tutorial.estado()!=='jogo1') this.abrirRecadoPresidente();
     // tutorial só depois que o jogador respondeu tudo
     this.aposFila(()=>{ if(!this.tempEncerrada) Tutorial.aoFecharRodada(); });
   },
@@ -4690,6 +4747,9 @@ const App={
   // calcula os pontos/saldo provisórios da rodada em andamento
   deltasAoVivo(){
     const L=this.liveState; if(!L) return null;
+    // mata-mata não mexe na tabela de pontos (encerrarRodada ignora) — somar os gols
+    // ao vivo aqui bagunçava a classificação final do grupo na tela (07/10/2026)
+    if(this.fase==='ko') return null;
     const d={};
     L.sims.forEach(s=>{
       const ph = s.gc>s.gf?3:s.gc===s.gf?1:0, pa = s.gf>s.gc?3:s.gc===s.gf?1:0;
@@ -5196,7 +5256,13 @@ const App={
   // fala do presidente estável durante a rodada (memoizada por temporada/rodada/adversário)
   falaPresidenteAtual(){
     const adv=this.proximoAdversario();
-    if(!adv) return 'Sem jogo para você nesta rodada. Aproveite para ajustar o elenco.';
+    if(!adv){
+      const e=this.eliminacaoSerieD();
+      if(e && e.onde==='grupos') return `Ficamos em ${e.pos}º no grupo e fora do mata-mata. Agora é planejar a próxima temporada.`;
+      if(e && e.acesso) return 'Caímos no mata-mata, mas o acesso está garantido. Missão cumprida!';
+      if(e) return `Caímos na ${e.onde}. Dói, mas a próxima temporada começa agora.`;
+      return 'Sem jogo para você nesta rodada. Aproveite para ajustar o elenco.';
+    }
     const exp=this.expectativaJogo(this.myTeam, adv.ti, adv.casa);
     const chave=`${this.temporada}|${this.rodada}|${adv.ti}`;
     if(this._falaChave!==chave){ this._falaChave=chave; this._falaCache=this.falaPresidente(exp); }
@@ -6708,11 +6774,12 @@ const App={
     const adv=this.proximoAdversario(), obj=this.garantirObjetivos(), P=obj&&obj.principal;
     const conf=Math.round(this.confianca??this.CONF_INICIAL), humor=this.humorDiretoria();
     const stP=obj&&obj.principalStatus, cls=this.classificacao(), pos=cls.findIndex(s=>s.i===this.myTeam)+1;
+    const elim=this.eliminacaoSerieD();
     this.modalFLK({fila:true, titulo:'🤵 Recado do presidente', corpoHTML:this.cartaoDecisao({classe:'tut-bv',
         topo:{escudo:this.escudoHTML(t,48), nome:this.esc(t.nome),
           sub:adv?`Rodada ${this.rodada+1} · próximo: ${this.esc(this.teams[adv.ti].nome)} (${adv.casa?'em casa':'fora'})`:`Rodada ${this.rodada+1} · sem jogo nesta rodada`},
         fala:`🤵 “${this.esc(this.falaPresidenteAtual())}”`,
-        destaque:P?{rotulo:'Meta da diretoria', titulo:this.esc(P.titulo), desc:`${this.esc(P.desc)}${pos>0?` · hoje: ${pos}º na tabela`:''}${stP&&stP!=='aberto'?` · ${stP==='cumprido'?'✅ cumprida':'❌ falhou'}`:''}`}:null,
+        destaque:P?{rotulo:'Meta da diretoria', titulo:this.esc(P.titulo), desc:`${this.esc(P.desc)}${elim?` · ${this.esc(this.textoEliminacao(elim))}`:(pos>0?` · hoje: ${pos}º na tabela`:'')}${stP&&stP!=='aberto'?` · ${stP==='cumprido'?'✅ cumprida':'❌ falhou'}`:''}`}:null,
         kpis:[{rotulo:'Caixa', valor:this.fmtReais(t.saldo||0), cor:(t.saldo||0)<0?'var(--loss)':null},
               {rotulo:'Confiança', valor:`${conf}/100 · ${humor.txt}`, cor:humor.cor}],
       }),
