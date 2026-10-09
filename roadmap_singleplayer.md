@@ -451,6 +451,42 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ---
 
+## 6.4 Escala: mais campeonatos, categoria de base e dados (08/10/2026 — pós-teste)
+
+> Conversa de 08/10/2026, com o jogo já no ar pro teste (GitHub Pages). Nada daqui entra antes do teste; é a fila do que vem depois, pensando a longo prazo (mais países, mais jogadores).
+
+### Dados e save — ✅ DECIDIDO (fazer antes da categoria de base e antes do 2º país)
+25. **Garotos gerados por SEMENTE (save v15).** Hoje `gerarJovem` usa `Math.random()` e o save grava o garoto inteiro (`gerados`: 45 atributos + nome, potencial, talento, físico, pés ≈ 300 caracteres cada). Passa a usar um **sorteador determinístico** (ex.: mulberry32): a mesma semente gera sempre o mesmo garoto. O save guarda só a **receita** — `{pid, semente, setor, série de origem, versão do gerador}` (≈ 30 caracteres) — e o que muda com o tempo vai igual ao jogador do banco (idade, contrato, salário, stats, `ev`).
+    - **O gerador NÃO pode depender do banco.** Hoje o garoto copia um jogador-modelo (−18% + ruído); se o modelo for editado/removido numa atualização do banco, a semente geraria outro garoto e o save quebraria em silêncio. O novo gerador sorteia de uma **tabela de perfis por setor × série no código**, versionada (`GERADOR_V`). Mudou a tabela → sobe a versão; o save carrega a versão junto da semente.
+    - Nome também sai da semente (gerador de nomes brasileiros: prenomes, sobrenomes, compostos, apelidos).
+    - Migração: saves ≤ v14 com garotos no formato completo continuam carregando (mantém o leitor atual).
+    - Ganho: 5 garotos/clube/ano em 100 clubes ≈ 15 KB no save, em vez de ~150 KB acumulando por temporada.
+    - Gate: harness novo medindo tamanho do save antes/depois + regeneração idêntica após load.
+26. **Atributos em LISTA no banco** (não JSONB-objeto). Medido em 08/10/2026: a linha do jogador tem ~1.080 caracteres e o download inicial ~3,3 MB (3.180 jogadores); **~75% disso são os nomes dos 45 atributos repetidos em cada linha**. Como objeto (`{"corners":12,…}`) são ~820 caracteres; como lista em ordem fixa (`ATTR_ORDEM`, coluna `smallint[]`) ~180. Migração no Supabase + leitor no `SupabaseProvider`. *JSONB como objeto não ajuda — o ganho vem da ordem fixa.*
+27. **Carregar por país, sob demanda.** Com 50 mil jogadores o formato atual seria ~54 MB só pra abrir o jogo (~22 MB mesmo com a lista). Regra (casa com a decisão "outras ligas só resultado"): **país do usuário = jogadores completos**; **outros países = só times com força resumida** (ataque/meio/defesa) pra simular resultado; jogadores de outro país só baixam quando alguém abre a liga ou vai contratar.
+28. **Arquivo estático por país** (`dados/br.json`, `ar.json`…) servido pelo próprio GitHub Pages com cache do navegador — os atributos do banco não mudam durante a temporada. Supabase fica pra login, saves e ranking (sem tráfego de banco a cada abertura do jogo). Gerado por script a partir do banco a cada atualização de dados.
+
+### Atributos — 🟡 PROPOSTO
+29. **Dar uso aos 8 atributos que hoje não entram em conta nenhuma.** Auditoria (08/10/2026): dos 45, 36 pesam no overall por posição, `rushing_out` só na role Goleiro-Líbero, e `corners`, `freekick`, `penalty`, `long_throws`, `throwing`, `determination`, `leadership`, `natural_fitness` são enfeite. Fora do overall, só assistência (passe/visão/cruzamento), tipo de gol (cabeceio/longe/drible/velocidade/finalização) e cartão (agressividade) leem atributos direto. Proposta: **pênalti** → cobrador e conversão; **falta/escanteio** → gol de bola parada; **liderança** → capitão e moral do elenco; **determinação** → velocidade de evolução; **condicionamento natural** → recuperação de energia entre rodadas. `long_throws` e `throwing` deixam de ir pro save dos gerados. *Manter o modelo de 45 atributos* — é ele que dá sentido a posição, role, improviso e evolução por posição.
+
+### Competições — 🟡 PROPOSTO (ordem sugerida)
+> Referência: calendário CBF 2026 — estaduais com 11 datas (jan–mar) e mais vagas diretas na Copa do Brasil (102); Copa do Brasil com 126 clubes (Série A entra na 5ª fase; campeões de Nordeste, Verde, Série C e D entram na 3ª; final em jogo único); Copa Sul-Sudeste nova (12 clubes), Copa do Nordeste com 20, Copa Verde dividida em Norte e Centro-Oeste; Série D com 96 clubes (16 grupos de 6, **avançam 4** — a nossa avança 2), seis acessos.
+30. **Estadual com consequência:** fase de liga/grupos curta (6–8 rodadas) + mata-mata (ida e volta só na final), cabendo nas ~11 datas. **A campanha dá vaga na Copa do Brasil** (e na Série D pra quem está fora das séries) — hoje pular o estadual quase não custa nada. Decisão pendente: passa a **gastar energia** (vira gestão de elenco, como na vida real em que o Brasileirão começa antes do estadual acabar) ou continua pré-temporada leve? Só o estadual do usuário é jogado; os outros estados sorteiam campeão e classificados. Divisões estaduais (A1/A2) dependem de quantos clubes cada estado tem no banco.
+31. **Copa do Brasil** = item 16, agora com origem dos classificados (estaduais + séries + regionais).
+32. **Copas regionais** (Nordeste, Sul-Sudeste, Norte, Centro-Oeste) — só depois da Copa do Brasil, porque também classificam pra ela.
+33. **Supercopa do Brasil** (campeão do Brasileiro × campeão da Copa do Brasil) — jogo único na abertura da temporada.
+- Continentais (Libertadores/Sul-Americana) ficam pra quando entrarem outros países.
+
+### Categoria de base — 🟡 PROPOSTO (depende do item 25)
+34. Hoje a base é só **reposição** (cada aposentado abre vaga pra um garoto). Proposta:
+    - **Revelação anual:** leva de 3–5 garotos (16–19 anos) no início da temporada; tamanho e qualidade pelo **nível da base** do clube (investível).
+    - **Potencial em faixa** ("60–75") revelada pelo olheiro, que fecha conforme o garoto joga.
+    - **Elenco sub-20 separado:** não pesa na folha cheia nem lota o profissional; decisões: promover, emprestar (evolui jogando fora), dispensar.
+    - **Copinha** em janeiro, simulada só com o sub-20: quem se destaca revela potencial e ganha valor.
+    - **A IA também revela**, na medida de aposentados + folga; quem sobra vira jogador livre (o mundo não envelhece nem encolhe).
+
+---
+
 ## 7. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.
