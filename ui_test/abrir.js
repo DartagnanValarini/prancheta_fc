@@ -19,6 +19,10 @@ async function abrir(browser,{w=1280,h=860,seguro=false}={}){
     if(u.startsWith(BASE)){
       // serve o arquivo pedido do repo (manifest, ícones…); a raiz e o resto caem no jogo
       const rel=decodeURIComponent(new URL(u).pathname).replace(/^\/+/,'');
+      // dados/br.json (jogadores reais) fica de fora: os testes usam o mundo sintético do
+      // fake_supabase. DADOS=1 libera o arquivo (testar o caminho estático com dados reais).
+      // (responde um arquivo de versão desconhecida: o jogo cai no banco sem erro no console)
+      if(rel.startsWith('dados/') && !process.env.DADOS) return route.fulfill({contentType:'application/json', body:'{"v":0}'});
       const arq=rel&&!rel.includes('..')?path.join(REPO,rel):null;
       if(arq && rel!=='prancheta_fc.html' && fs.existsSync(arq) && fs.statSync(arq).isFile()){
         const tipo={'.webmanifest':'application/manifest+json','.png':'image/png','.json':'application/json','.js':'application/javascript','.html':'text/html'}[path.extname(arq)]||'application/octet-stream';

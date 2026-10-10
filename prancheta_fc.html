@@ -1174,8 +1174,42 @@ class SupabaseProvider{
   constructor(url,key){
     if(!window.supabase) throw new Error('supabase-js não carregou');
     this.client=window.supabase.createClient(url,key); this.label='SUPABASE';
+    this.fonte=null;   // 'estatico' | 'banco' — de onde vieram os jogadores da última carga
   }
+  get ARQ_DADOS(){ return 'dados/br.json'; }
+  // Dados dos jogadores: primeiro o ARQUIVO ESTÁTICO (dados/br.json, servido pelo
+  // GitHub Pages com gzip + cache do navegador → não gasta o tráfego do Supabase,
+  // roadmap §6.4 item 28). Qualquer falha (arquivo ausente, formato velho, offline)
+  // cai na consulta ao banco, que continua sendo a fonte da verdade.
   async getTeams(divisoes){
+    try{
+      const est=await this.lerEstatico(divisoes);
+      if(est){ this.fonte='estatico'; return est; }
+    }catch(e){ /* cai no banco */ }
+    this.fonte='banco';
+    return this.lerBanco(divisoes);
+  }
+  // arquivo gerado por tools/exportar_dados.mjs: {v:1, teams:[{…}], cols:[…], rows:[[…]]}
+  async lerEstatico(divisoes){
+    if(typeof fetch!=='function' || typeof location==='undefined' || !/^https?:/.test(location.protocol)) return null;
+    const r=await fetch(this.ARQ_DADOS, {cache:'no-cache'});   // no-cache = revalida (304 se não mudou)
+    if(!r.ok) return null;
+    const d=await r.json();
+    if(!d || d.v!==1 || !Array.isArray(d.teams) || !Array.isArray(d.cols) || !Array.isArray(d.rows)) return null;
+    let teams=d.teams;
+    if(divisoes && divisoes.length) teams=teams.filter(t=>divisoes.includes(t.divisao));
+    if(!teams.length) return null;
+    const ids=new Set(teams.map(t=>t.id)), cols=d.cols;
+    const players=[];
+    for(const row of d.rows){
+      const o={}; for(let i=0;i<cols.length;i++) o[cols[i]]=row[i];
+      if(ids.has(o.team_id)) players.push(o);
+    }
+    if(!players.length) return null;
+    players.sort((a,b)=>a.id-b.id);   // mesma ordem da consulta ao banco
+    return this.montar(teams, players);
+  }
+  async lerBanco(divisoes){
     // times (tabela 'team', singular)
     let q=this.client.from('team').select('id,nome,abrev,cidade,divisao,saldo,escudo,cor1,cor2');
     if(divisoes && divisoes.length) q=q.in('divisao',divisoes);
@@ -1193,7 +1227,10 @@ class SupabaseProvider{
       players.push(...(data||[]));
       if(!data || data.length<PAG) break;
     }
-
+    return this.montar(teams, players);
+  }
+  // linhas cruas (formato das tabelas team/player) → times do jogo
+  montar(teams, players){
     // colunas de atributo (0-100) que alimentam o cálculo de overall
     const ATTR_COLS=ATTR_ORDEM;
 

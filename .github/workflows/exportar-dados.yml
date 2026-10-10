@@ -1,0 +1,55 @@
+# Gera dados/br.json a partir do Supabase e publica no GitHub Pages.
+# Rodar sempre que o banco de jogadores/times mudar: Actions → "Exportar dados dos jogadores" → Run workflow.
+# Também roda sozinho quando o exportador muda.
+name: Exportar dados dos jogadores
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/exportar_dados.mjs
+      - .github/workflows/exportar-dados.yml
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: exportar-dados
+  cancel-in-progress: false
+
+jobs:
+  exportar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Exportar do Supabase
+        run: node tools/exportar_dados.mjs
+
+      - name: Commitar se mudou
+        id: commit
+        run: |
+          git add dados/br.json
+          if git diff --cached --quiet; then
+            echo "Sem mudança nos dados."
+            echo "mudou=0" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Dados: atualiza dados/br.json a partir do Supabase"
+            git push
+            echo "mudou=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      # commit feito com o GITHUB_TOKEN pode não disparar o build do Pages sozinho
+      - name: Publicar no Pages
+        if: steps.commit.outputs.mudou == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Build do Pages não disparado (o próximo push publica)."
