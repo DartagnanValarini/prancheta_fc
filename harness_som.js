@@ -11,7 +11,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   const browser=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});
   const {page,erros}=await abrir(browser);
   page.on('dialog',d=>d.accept());
-  await page.evaluate(()=>{ localStorage.setItem('prancheta_tutorial_v1','feito'); localStorage.removeItem('prancheta_audio_v1'); });
+  await page.evaluate(()=>{ localStorage.setItem('catimba_tutorial_v1','feito'); localStorage.removeItem('catimba_audio_v1'); });
 
   console.log('\n[1] menu e música');
   const m0=await page.evaluate(()=>({ctx:!!Som.ctx, quer:Som._querMusica, cfg:Som.cfg()}));
@@ -53,14 +53,14 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   t(/Som/.test(await page.textContent('#flkModal')) && (await page.$$('#flkModal [data-cfg-som]')).length===8,'seção 🔊 Som com efeitos e música (4 níveis cada)');
   if(SHOTS) await page.screenshot({path:path.join(SHOTS,'config_som.png')});
   await page.click('#flkModal [data-cfg-som="efeitos"][data-v="0"]');
-  const mudo=await page.evaluate(()=>{ Som._log=[]; const r=Som.tocar('gol'); return {r, log:Som._log.length, ls:JSON.parse(localStorage.getItem('prancheta_audio_v1')).efeitos, on:document.querySelector('#flkModal [data-cfg-som="efeitos"].on').dataset.v}; });
+  const mudo=await page.evaluate(()=>{ Som._log=[]; const r=Som.tocar('gol'); return {r, log:Som._log.length, ls:JSON.parse(localStorage.getItem('catimba_audio_v1')).efeitos, on:document.querySelector('#flkModal [data-cfg-som="efeitos"].on').dataset.v}; });
   t(!mudo.r && mudo.log===0 && mudo.ls===0 && mudo.on==='0','efeitos "Mudo": nada toca, fica salvo e marcado');
   await page.click('#flkModal [data-cfg-som="musica"][data-v="0"]');
   const mm=await page.evaluate(()=>{ Menu.mostrar(); const a=!!Som._musica; Som.definir('musica',1); const b=!!Som._musica; Menu.esconder(); return {a,b}; });
   t(!mm.a && mm.b,'música "Mudo" não toca no menu; subir o volume liga na hora');
   const rel=await page.evaluate(()=>{ Som._cfg=null; return Som.cfg(); });
   t(rel.efeitos===0 && rel.musica===1,'volumes sobrevivem a recarregar (localStorage do aparelho)');
-  const lixo=await page.evaluate(()=>{ localStorage.setItem('prancheta_audio_v1','{"efeitos":"x","musica":9}'); Som._cfg=null; return Som.cfg(); });
+  const lixo=await page.evaluate(()=>{ localStorage.setItem('catimba_audio_v1','{"efeitos":"x","musica":9}'); Som._cfg=null; return Som.cfg(); });
   t(lixo.efeitos===0.7 && lixo.musica===1,'valor inválido volta pro padrão / limita em 100%');
   t(erros.filter(e=>!/ERR_FAILED/.test(e)).length===0,'sem erros de JS'+(erros.length?': '+erros.join(' | '):''));
   await browser.close();

@@ -12,7 +12,7 @@ const ABAS=['escala','arena','elenco','mercado','competicoes','financas','rankin
 async function novaCarreira(browser,vp){
   const r=await abrir(browser,vp);
   r.page.on('dialog',d=>d.accept());
-  await r.page.evaluate(()=>{ localStorage.setItem('prancheta_tutorial_v1','feito'); localStorage.removeItem('prancheta_menu_recolhido'); });
+  await r.page.evaluate(()=>{ localStorage.setItem('catimba_tutorial_v1','feito'); localStorage.removeItem('catimba_menu_recolhido'); });
   await r.page.click('#btnJogarAgora'); await r.page.waitForSelector('.clube-lin',{timeout:15000});
   await r.page.click('.clube-lin'); await r.page.waitForSelector('.fm-campo');
   return r;
@@ -56,7 +56,7 @@ const checarCampo=page=>page.evaluate(()=>{
     t(larg<100,'recolher menu deixa só os ícones ('+Math.round(larg)+'px)');
     await page.reload(); await page.waitForSelector('#btnJogarAgora');
     t(await page.evaluate(()=>document.getElementById('appGrid').classList.contains('side-min')),'menu recolhido persiste após recarregar');
-    await page.evaluate(()=>localStorage.removeItem('prancheta_menu_recolhido'));
+    await page.evaluate(()=>localStorage.removeItem('catimba_menu_recolhido'));
 
     console.log('\n[2] formações e campo vertical (desktop)');
     const {page:p2}=await novaCarreira(browser,{w:1440,h:900});

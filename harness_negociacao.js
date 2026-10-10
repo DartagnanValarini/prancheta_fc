@@ -15,7 +15,7 @@ const shot=async(page,n)=>{ if(SHOTS){ await page.waitForTimeout(120); await pag
   const browser=await chromium.launch();
   const {page,erros}=await abrir(browser);
   page.on('dialog',d=>d.accept());
-  await page.evaluate(()=>localStorage.setItem('prancheta_tutorial_v1','feito'));
+  await page.evaluate(()=>localStorage.setItem('catimba_tutorial_v1','feito'));
   await page.click('#btnJogarAgora'); await page.waitForSelector('.clube-lin',{timeout:15000});
   await page.click('.clube-lin'); await page.waitForSelector('.fm-campo');
 

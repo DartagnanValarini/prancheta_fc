@@ -1,5 +1,5 @@
 /* ====================================================================
-   Prancheta FC — lógica do jogo
+   Catimba FC! — lógica do jogo
    ==================================================================== */
 
 /* ---------- DATA PROVIDERS (abstração) ---------- */
@@ -819,7 +819,7 @@ function gerarFixtures(n){
    primeiro toque/tecla (regra de autoplay dos navegadores).
    ==================================================================== */
 const Som={
-  CHAVE:'prancheta_audio_v1',
+  CHAVE:'catimba_audio_v1',
   PADRAO:{efeitos:0.7, musica:0.4},
   ctx:null, _cfg:null, _log:[], _musica:null, _querMusica:false, _amb:null, _querAmb:false,
   cfg(){
@@ -954,7 +954,7 @@ const Erros={
     this.log.push({quando:new Date().toISOString(), onde:onde||'', msg:msg.slice(0,300), pilha:String((e&&e.stack)||'').split('\n').slice(0,5).join(' | ').slice(0,700)});
     if(this.log.length>20) this.log.shift();
   },
-  texto(){ return `Prancheta FC — ${navigator.userAgent}\n`+this.log.map(l=>`[${l.quando}] ${l.onde}: ${l.msg}\n  ${l.pilha}`).join('\n'); },
+  texto(){ return `Catimba FC! — ${navigator.userAgent}\n`+this.log.map(l=>`[${l.quando}] ${l.onde}: ${l.msg}\n  ${l.pilha}`).join('\n'); },
   ehRede(e){ return /Failed to fetch|NetworkError|network|timeout|Load failed|ERR_|fetch/i.test(String((e&&e.message)||e||'')); },
   // mensagem curta e humana pra falhas de carregamento
   amigavel(e, oque){
@@ -1701,7 +1701,7 @@ const Forma={
    ==================================================================== */
 const Coletiva={
   REPORTERES:[['Kátia Moreira','Rádio Arquibancada'],['Bruno Tavares','TV Várzea'],['Lia Fontes','Portal Chuteira'],
-    ['Otávio Reis','Jornal do Interior'],['Marta Lopes','Podcast Prancheta'],['Caio Nunes','Rádio Geral AM']],
+    ['Otávio Reis','Jornal do Interior'],['Marta Lopes','Podcast Catimba'],['Caio Nunes','Rádio Geral AM']],
   pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; },
 
   // contexto da partida → 3 perguntas com respostas. ctx vem do App (ver App.contextoColetiva)
@@ -1830,7 +1830,7 @@ const Estadual={
    Sempre pulável; "Rever tutorial" fica nas Configurações.
    ==================================================================== */
 const Tutorial={
-  CHAVE:'prancheta_tutorial_v1',
+  CHAVE:'catimba_tutorial_v1',
   _passos:null, _i:0, _alvo:null, _onFim:null,
 
   estado(){ try{ return localStorage.getItem(this.CHAVE); }catch(e){ return null; } },
@@ -4134,7 +4134,7 @@ const App={
      Direita: formações + adversário/ação + semana + campo vertical de camisas.
      Troca: toque num jogador e depois em outro (celular) ou arrastar (desktop).
      ==================================================================== */
-  PLACAS:['FLK! STUDIOS','PRANCHETA.FC!','CAFÉ DA VÁRZEA','CHUTEIRA TORTA','RÁDIO ARQUIBANCADA','PASTEL DO ESTÁDIO'],
+  PLACAS:['FLK! STUDIOS','CATIMBA.FC!','CAFÉ DA VÁRZEA','CHUTEIRA TORTA','RÁDIO ARQUIBANCADA','PASTEL DO ESTÁDIO'],
 
   // fala do presidente estável durante a rodada (memoizada por temporada/rodada/adversário)
   falaPresidenteAtual(){
@@ -7341,7 +7341,7 @@ const App={
      `_saveAssinado` que o ranking (C3) usa pra decidir plausibilidade.
      Assinatura = HMAC-SHA256(estado) via Web Crypto, sobre o JSON canônico do
      snapshot. Guardada no ENVELOPE do save (fora do estado), não dentro dele. */
-  SAVE_SECRET:'pfc_v1_a7Q2-nEon-Lemon-D2FF00-!prancheta',   // segredo embutido (ofuscação, não cofre)
+  SAVE_SECRET:'cfc_v1_a7Q2-nEon-Lemon-D2FF00-!catimba',   // segredo embutido (ofuscação, não cofre)
   _cryptoOk(){ return typeof crypto!=='undefined' && crypto.subtle && typeof TextEncoder!=='undefined'; },
   // JSON canônico: chaves ordenadas, ignorando o checksum interno, pra a assinatura
   // ser estável independentemente da ordem de serialização.
@@ -7649,7 +7649,7 @@ const App={
   const g=document.getElementById('btnConfig'); if(g) g.onclick=()=>App.abrirConfig();
   const m=document.getElementById('btnMenuPrincipal'); if(m) m.onclick=()=>App.irMenuPrincipal();
   const grid=document.getElementById('appGrid'), r=document.getElementById('btnRecolher');
-  const K='prancheta_menu_recolhido';
+  const K='catimba_menu_recolhido';
   try{ if(localStorage.getItem(K)==='1') grid.classList.add('side-min'); }catch(e){}
   if(r) r.onclick=()=>{ const on=grid.classList.toggle('side-min'); try{ localStorage.setItem(K,on?'1':'0'); }catch(e){} };
 })();

@@ -12,7 +12,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   const browser=await chromium.launch();
   const {page,erros}=await abrir(browser,{seguro:true});
   page.on('dialog',d=>d.accept());
-  await page.evaluate(()=>localStorage.setItem('prancheta_tutorial_v1','feito'));
+  await page.evaluate(()=>localStorage.setItem('catimba_tutorial_v1','feito'));
   await page.click('#btnJogarAgora'); await page.waitForSelector('.clube-lin',{timeout:15000});
   await page.click('.clube-lin'); await page.waitForSelector('.fm-campo');
   await page.evaluate(()=>{ const o=App.garantirOpcoes(); o.coletiva=false; o.autoSaveRodadas=99; App.salvarSupabase=async()=>{}; if(App.estadual) App.estadual.status='pulado'; });

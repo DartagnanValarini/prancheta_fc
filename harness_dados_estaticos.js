@@ -36,7 +36,7 @@ FAKE.teams.splice(0, FAKE.teams.length, ...ordemBanco);
 
   // --- app.js num sandbox, com fetch controlável ---
   let respostaFetch=null;   // função (url) => Response-like
-  const location={protocol:'https:', href:'https://x/prancheta_fc.html', search:'', hash:'', origin:'https://x', pathname:'/prancheta_fc.html'};
+  const location={protocol:'https:', href:'https://x/catimba_fc.html', search:'', hash:'', origin:'https://x', pathname:'/catimba_fc.html'};
   const src=fs.readFileSync(path.join(__dirname,'app.js'),'utf8');
   const el=new Proxy({}, { get:(t,k)=>{ if(k==='style'||k==='dataset'||k==='classList') return {}; return (typeof k==='string'&&/^(add|remove|set|append|query|get|focus|click|dispatch|insert|replace|scroll|toggle)/.test(k))?(()=>el):(el[k]??''); }, set:()=>true });
   const doc=new Proxy({}, { get:(t,k)=>{ if(k==='body'||k==='documentElement'||k==='head') return el; if(k==='querySelectorAll') return ()=>[]; if(k==='addEventListener'||k==='removeEventListener') return ()=>{}; return ()=>el; } });

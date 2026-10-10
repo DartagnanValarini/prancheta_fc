@@ -12,7 +12,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
 async function carreira(browser,vp){
   const r=await abrir(browser,vp);
   r.dialogos=0; r.page.on('dialog',d=>{ r.dialogos++; d.dismiss(); });
-  await r.page.evaluate(()=>localStorage.setItem('prancheta_tutorial_v1','feito'));
+  await r.page.evaluate(()=>localStorage.setItem('catimba_tutorial_v1','feito'));
   await r.page.click('#btnJogarAgora'); await r.page.waitForSelector('.clube-lin',{timeout:15000});
   await r.page.click('.clube-lin'); await r.page.waitForSelector('.fm-campo');
   return r;

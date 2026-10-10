@@ -1,5 +1,5 @@
 // smoke C1: reimplementa só os helpers de crypto do App e testa o ciclo
-const SAVE_SECRET='pfc_v1_a7Q2-nEon-Lemon-D2FF00-!prancheta';
+const SAVE_SECRET='cfc_v1_a7Q2-nEon-Lemon-D2FF00-!catimba';
 function _canonical(obj){
   const seen=new WeakSet();
   const ord=(v)=>{

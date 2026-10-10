@@ -1,4 +1,4 @@
-// Abre o prancheta_fc.html num Chromium headless com o supabase-js falso (offline).
+// Abre o catimba_fc.html num Chromium headless com o supabase-js falso (offline).
 // Rodar direto (node ui_test/abrir.js) tira prints do fluxo de entrada em ui_test/shots.
 // Playwright local ou global (npm i -g playwright && npx playwright install chromium)
 let chromium; try{ ({chromium}=require('playwright')); }catch(e){ ({chromium}=require(require('child_process').execSync('npm root -g').toString().trim()+'/playwright')); }
@@ -24,11 +24,11 @@ async function abrir(browser,{w=1280,h=860,seguro=false}={}){
       // (responde um arquivo de versão desconhecida: o jogo cai no banco sem erro no console)
       if(rel.startsWith('dados/') && !process.env.DADOS) return route.fulfill({contentType:'application/json', body:'{"v":0}'});
       const arq=rel&&!rel.includes('..')?path.join(REPO,rel):null;
-      if(arq && rel!=='prancheta_fc.html' && fs.existsSync(arq) && fs.statSync(arq).isFile()){
+      if(arq && rel!=='catimba_fc.html' && fs.existsSync(arq) && fs.statSync(arq).isFile()){
         const tipo={'.webmanifest':'application/manifest+json','.png':'image/png','.json':'application/json','.js':'application/javascript','.html':'text/html'}[path.extname(arq)]||'application/octet-stream';
         return route.fulfill({contentType:tipo, body:fs.readFileSync(arq)});
       }
-      return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'prancheta_fc.html'),'utf8')});
+      return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(REPO,'catimba_fc.html'),'utf8')});
     }
     if(u.includes('supabase-js')) return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.join(__dirname,'fake_supabase.js'),'utf8')});
     return route.abort();

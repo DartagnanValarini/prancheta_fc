@@ -1,4 +1,4 @@
-# 🗺️ Prancheta FC! — Rota de Evolução + Subir Online
+# 🗺️ Catimba FC! — Rota de Evolução + Subir Online
 
 > **Documento de rota.** Junta as duas análises externas (roadmap por sprints + auditoria de código), a visão-alvo do `regras_jogo_cartas.md`, a especificação do modo online (§3 abaixo), e os gaps de segurança/performance do salto para online.
 > **Dois modos de jogo (decidido):** (1) **single-player** offline/local, como hoje; (2) **multiplayer online** — PvP **assíncrono estilo Cartola** (monta o time e a postura; o resultado sai quando a rodada processa no servidor). Não é tempo real. Regras completas na §3.
@@ -11,7 +11,7 @@
 
 ## 0. O reenquadramento que muda tudo
 
-Hoje o Prancheta FC é **single-player com nuvem opcional**: o browser calcula o motor, a evolução, o mercado e o saldo, e o Supabase é só um "disco na nuvem" que guarda o que o cliente mandou. Isso é **perfeitamente seguro em single-player** (o jogador só engana a si mesmo) e **completamente inseguro em multiplayer**.
+Hoje o Catimba FC é **single-player com nuvem opcional**: o browser calcula o motor, a evolução, o mercado e o saldo, e o Supabase é só um "disco na nuvem" que guarda o que o cliente mandou. Isso é **perfeitamente seguro em single-player** (o jogador só engana a si mesmo) e **completamente inseguro em multiplayer**.
 
 O **modo online** (detalhado na §3) é um **mundo compartilhado**: cada grupo mistura managers humanos e bots, todos começam na Div 10, o processamento diário é o relógio do servidor, e o adversário de cada rodada é o *snapshot tático* de outro jogador. No momento em que dois humanos dividem o mesmo mercado, ranking ou tabela, vale a regra de ouro dos jogos online:
 
@@ -36,7 +36,7 @@ O **single-player** roda hoje com **4 séries (A/B/C/D)** e assim pode continuar
 
 ### Onde eu discordo do "P0 = modularizar em ES6"
 Ambas as análises põem "quebrar `app.js` em módulos ES6" como pré-requisito. **Eu adiaria**, por três razões concretas:
-1. **Contradiz o pipeline atual** — hoje entregamos `prancheta_fc.html` com o JS embutido, validado por `diff app.js == JS embutido`, e os harnesses de Node rodam contra o `app.js` inteiro. Migrar para `<script type="module" src="main.js">` quebra isso: `import/export` não roda via `file://` (CORS), complica abrir o HTML direto, e obriga a reformar entrega + testes.
+1. **Contradiz o pipeline atual** — hoje entregamos `catimba_fc.html` com o JS embutido, validado por `diff app.js == JS embutido`, e os harnesses de Node rodam contra o `app.js` inteiro. Migrar para `<script type="module" src="main.js">` quebra isso: `import/export` não roda via `file://` (CORS), complica abrir o HTML direto, e obriga a reformar entrega + testes.
 2. **Benefício indireto, custo alto** — não é feature que o usuário vê; é dias de trabalho com risco de regressão.
 3. **O ganho real vem de camadas conceituais, não de arquivos** — criar um objeto `Rating`, um `Regulamentos`, um `CompetitionEngine` **dentro do monolito** entrega 80% do benefício (código coerente, sistemas que não se contradizem) com 20% do risco.
 
@@ -324,7 +324,7 @@ Coisas que o online vai exigir e que **vale implementar já no single-player** q
 
 ## Fase 1 — Save único + SaveSchema + config data-driven + medição (09/2026)
 
-**Entregue:** `prancheta_fc.html` reinjetado (`app.js` == JS embutido, conferido por diff).
+**Entregue:** `catimba_fc.html` reinjetado (`app.js` == JS embutido, conferido por diff).
 **Testes:** harness_fase1 26/26; regressão de divisões 10/10; features 27/27.
 
 ### O que foi feito
@@ -352,7 +352,7 @@ Coisas que o online vai exigir e que **vale implementar já no single-player** q
 - **Baseline medido (código anterior, `*0.03` + mando `+40` absoluto):** **2,706 gols/jogo**; spread A/B/C/D 0,020; mandante 37,8% / empate 26,2% / visitante 36,0%; razão mando 1,031x.
 - **Calibração aplicada (`*0.027` + mando `+7%` percentual, `MANDO_PCT:0.07`):** **2,436 gols/jogo** (no alvo ~2,5 do roadmap); spread A/B/C/D 0,011 (mando percentual escala mais uniforme entre séries); mandante 37,2% / empate 27,6% / visitante 35,2%; razão mando 1,031x (vantagem de casa preservada).
 - **Prova do que o roadmap pedia:** o multiplicador puxou o gols/jogo de 2,71 para 2,44 (estabiliza ~2,5) e o mando virou percentual sem perder a vantagem de casa, com spread entre séries menor — exatamente os dois efeitos previstos na Fase 0.
-- Alteração espelhada no `app.js` **e** no `prancheta_fc.html` embutido (invariante `diff app.js == JS embutido` mantido).
+- Alteração espelhada no `app.js` **e** no `catimba_fc.html` embutido (invariante `diff app.js == JS embutido` mantido).
 
 ### Armadilhas conhecidas (não repetir)
 - `MANDO_PCT` é propriedade do objeto `Motor`; `chanceGol` lê `this.MANDO_PCT`. Se o método for chamado desatrelado do objeto (`const f = Motor.chanceGol; f(...)`), `this` se perde — sempre chamar como `Motor.chanceGol(...)`.
@@ -369,7 +369,7 @@ Coisas que o online vai exigir e que **vale implementar já no single-player** q
 - **Evolução por tipo de posição.** `Evolucao.fatorPosicaoTreino(p, posAlvo)`: natural 100% / treinada (mesmo setor DEF/MEI/ATQ) 70% / improvisada (setor diferente) 30%, multiplicando o ganho por rodada.
 - **Energia.** Desgaste de partida de −0,1/min (−9 na cheia) para −0,078/min (~−7), removendo o saldo negativo por ciclo. Ajuste de motor, UI intocada (decisão do Dart).
 - **Harness de comportamento (`harness_fase0.js`).** Carrega o `app.js` real num sandbox (stubs de DOM) e afirma: Rating diferencia posição, substituição preserva o slot, evolução escala por tipo de posição. **9/9 checks.**
-- Tudo espelhado no `prancheta_fc.html` embutido (invariante `diff app.js == JS embutido` verificado: 211.627 bytes idênticos).
+- Tudo espelhado no `catimba_fc.html` embutido (invariante `diff app.js == JS embutido` verificado: 211.627 bytes idênticos).
 
 ### Verificação
 - `harness_fase0.js`: 9/9 (Rating, substituição, evolução).

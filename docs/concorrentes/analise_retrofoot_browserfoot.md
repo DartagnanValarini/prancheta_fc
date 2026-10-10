@@ -2,13 +2,13 @@
 
 > Jogado de verdade no navegador em 26–27/09/2026: **uma temporada completa do Browserfoot** e **uma temporada do RetroFoot** (conta de teste, plano grátis "Peladeiro").
 > Prints em `docs/concorrentes/prints/`. Fontes públicas no fim.
-> Objetivo: saber onde o Prancheta FC! ganha, onde perde e o que copiar/evitar — ligado aos buracos do `roadmap_singleplayer.md` §0.
+> Objetivo: saber onde o Catimba FC! ganha, onde perde e o que copiar/evitar — ligado aos buracos do `roadmap_singleplayer.md` §0.
 
 ---
 
 ## TL;DR
 
-| | **RetroFoot** | **Browserfoot** | **Prancheta FC!** |
+| | **RetroFoot** | **Browserfoot** | **Catimba FC!** |
 |---|---|---|---|
 | Entrada | Conta obrigatória + onboarding de **8 passos** | **Zero** (sem login, save local) | Zero (convidado/localStorage) |
 | Modelo | 1ª temporada grátis → **Pro R$ 19,90/mês** (R$ 14,90 anual) | Grátis + ads programáticos (Clever Advertising) | Grátis + ads, compra única remove-ads |
@@ -21,7 +21,7 @@
 | Minha temporada | Distrito Central (sorteado): **20º/20, 3V 6E 29D, −94** — rebaixado; ~45 min | Uberlândia (escolhido): **campeão da Série D** fácil; ~10 min | — |
 | Base ativa | Ranking global com **78 treinadores** | ~3 mil partidas nas primeiras 36 h (06/2026) | — |
 
-**Leitura em uma frase:** o Browserfoot ganha na *entrada* (10 segundos até o primeiro jogo), o RetroFoot ganha em *tudo depois da entrada* (partida, economia, narrativa). O Prancheta pode ter as duas coisas: entrada sem atrito **e** profundidade — e ainda sair na loja de apps, onde nenhum dos dois está.
+**Leitura em uma frase:** o Browserfoot ganha na *entrada* (10 segundos até o primeiro jogo), o RetroFoot ganha em *tudo depois da entrada* (partida, economia, narrativa). O Catimba pode ter as duas coisas: entrada sem atrito **e** profundidade — e ainda sair na loja de apps, onde nenhum dos dois está.
 
 ---
 
@@ -159,7 +159,7 @@ Lançado em 06/2026 por Eric Arraché (Critical Hits); ~3 mil partidas nas prime
 
 ---
 
-## 3. O que isso significa pro Prancheta FC!
+## 3. O que isso significa pro Catimba FC!
 
 ### Onde já estamos à frente
 - **Entrada sem cadastro** (como o Browserfoot) — manter conta opcional, pedida só no ranking e na compra.

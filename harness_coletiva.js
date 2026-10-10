@@ -14,7 +14,7 @@ const ateColetiva=async page=>{ for(let i=0;i<4;i++){ const tt=await titulo(page
   const browser=await chromium.launch();
   const {page,erros}=await abrir(browser);
   page.on('dialog',d=>d.accept());
-  await page.evaluate(()=>localStorage.setItem('prancheta_tutorial_v1','feito'));
+  await page.evaluate(()=>localStorage.setItem('catimba_tutorial_v1','feito'));
   await page.click('#btnJogarAgora'); await page.waitForSelector('.clube-lin',{timeout:15000});
   await page.click('.clube-lin'); await page.waitForSelector('.fm-campo');
   const jogar=async()=>{ await page.evaluate(()=>{ App.escalarMelhor(); App.jogarRodada(); }); await page.evaluate(()=>App.pularRodada()); await page.click('#btnFechar'); };

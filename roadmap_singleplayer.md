@@ -1,4 +1,6 @@
-# 🎯 Prancheta FC! — Roadmap SINGLE-PLAYER (rota de lançamento)
+# 🎯 Catimba FC! — Roadmap SINGLE-PLAYER (rota de lançamento)
+
+> **Renomeado (10/10/2026): Prancheta FC! → Catimba FC!** — `pranchetafc.com.br`/`.com`/`.app.br` já tinham dono. Domínio novo: **catimbafc.com.br**. Arquivo do jogo: `catimba_fc.html`; chaves do navegador `catimba_*` e segredo da assinatura do save trocados junto (só o Dart tinha jogado — saves antigos ficam "não assinados"). O repositório continua `prancheta_fc` no GitHub.
 
 > **📌 Fonte da verdade = este repositório GitHub** (`github.com/DartagnanValarini/prancheta_fc`, branch `main`). Decisão 09/2026: o roadmap e o contexto são mantidos AQUI, não mais no `dev_docs` do Supabase (aqueles ficam como arquivo histórico, congelados). Para retomar o projeto: ler este arquivo.
 
@@ -17,7 +19,7 @@
 
 ## 0. Onde estamos hoje (inventário real do código — auditado)
 
-> **Varredura de 05/10/2026** (código + HTML + docs do repo e do Project, cruzados com este roadmap). `app.js` tem **~7.200 linhas** (monolito injetado no `prancheta_fc.html` — conferido: o script do HTML é **idêntico** ao `app.js`), `SCHEMA_VERSION` **13** (desde 05/10/2026), `GAME_VERSION` **0.9.0**.
+> **Varredura de 05/10/2026** (código + HTML + docs do repo e do Project, cruzados com este roadmap). `app.js` tem **~7.200 linhas** (monolito injetado no `catimba_fc.html` — conferido: o script do HTML é **idêntico** ao `app.js`), `SCHEMA_VERSION` **13** (desde 05/10/2026), `GAME_VERSION` **0.9.0**.
 > **Regressão completa verde:** 37 harnesses (2 novos em 05/10), nenhuma falha consistente (ver "Estado dos testes" no fim desta seção), **incluindo o gate de carreira longa** (12 temporadas, 13/13).
 
 **Pronto e testado:**
@@ -173,7 +175,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
   - **Entrada sem muro de login** (`Menu.telaEntrada`): "▶ Jogar agora" é a ação principal (entra como convidado); "Entrar" e "Criar conta" ficam como secundárias. Na **primeira vez** no aparelho (sem nenhum save), pula a tela de slots e vai direto pra escolha do clube (`Menu.jogarAgora`).
   - **Boas-vindas do presidente** (`Tutorial.boasVindas`) ao assumir o clube: divisão, **meta da diretoria** (objetivo principal do A3), caixa e confiança. Botões "Me mostra como funciona" / "Já sei jogar".
   - **Tour guiado** (coach-marks com spotlight, módulo `Tutorial`): 5 passos na Escalação (campo → elenco/coluna Posição → formação/⚡Escalar → diretoria/confiança → Jogar). Na 1ª partida, um aviso explica o "Pular ⏩". Depois do 1º resultado, 2 passos levam a Competições → 📊 Estatísticas → objetivos.
-  - **Sempre pulável** ("Pular tutorial"). Estado por **aparelho** em `localStorage['prancheta_tutorial_v1']` (`null` → `jogo1` → `feito`) — é onboarding do jogador, não da carreira, então **não mexe no `SaveSchema`**. Segunda carreira não repete. **"Rever tutorial"** nas ⚙️ Configurações.
+  - **Sempre pulável** ("Pular tutorial"). Estado por **aparelho** em `localStorage['catimba_tutorial_v1']` (`null` → `jogo1` → `feito`) — é onboarding do jogador, não da carreira, então **não mexe no `SaveSchema`**. Segunda carreira não repete. **"Rever tutorial"** nas ⚙️ Configurações.
   - **Estados vazios**: as 6 telas "Conecte o Supabase" viraram `App.vazioHTML()` ("Nenhuma carreira aberta" + botão pro menu).
   - Token `--muted` (#8a8d84) definido no `:root` — era usado em vários lugares sem existir.
 - **Gate:** `harness_d1_onboarding.js` (Playwright + Chromium, com `ui_test/fake_supabase.js` gerando ligas sintéticas offline): 31/31 — fluxo completo no desktop, saídas "Já sei jogar"/"Pular", 2ª carreira, "Rever tutorial", bolhas dentro da tela no celular (390×844) e nenhuma tela "Conecte o Supabase".
@@ -248,7 +250,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 
 ## 5. Estratégia de distribuição e anúncios (DECIDIDO)
 
-> **Um código-fonte (`prancheta_fc.html`), duas distribuições.** A rede de anúncios é escolhida automaticamente pela superfície onde o jogo roda. AdSense e AdMob **nunca** coexistem na mesma tela (proibido pelas políticas do Google).
+> **Um código-fonte (`catimba_fc.html`), duas distribuições.** A rede de anúncios é escolhida automaticamente pela superfície onde o jogo roda. AdSense e AdMob **nunca** coexistem na mesma tela (proibido pelas políticas do Google).
 
 **Versão WEB** — HTML hospedado (Netlify/Vercel/GitHub Pages), aberto no navegador.
 - Rede: **Google AdSense** (banner/display). Exige aprovação do site + política de privacidade.
@@ -265,7 +267,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 **Decidido (09/2026):** na versão web, o bônus "dobrar prêmio" **continua existindo e é concedido sem anúncio** (opção b — web como vitrine generosa), já que o AdSense não tem formato recompensado. A alternativa descartada era deixar o bônus exclusivo do app, pra criar funil web→app.
 
 **Hospedagem da versão web (05/10/2026 — arquivos prontos, falta ligar):**
-- Repo público → **GitHub Pages** na branch `main`, pasta raiz. Link: `https://dartagnanvalarini.github.io/prancheta_fc/` (o `index.html` abre o `prancheta_fc.html`, mantendo `?query`/`#hash`).
+- Repo público → **GitHub Pages** na branch `main`, pasta raiz. Link: `https://dartagnanvalarini.github.io/prancheta_fc/` (o `index.html` abre o `catimba_fc.html`, mantendo `?query`/`#hash`).
 - **PWA instalável:** `manifest.webmanifest` + `icons/` (192, 512, maskable, apple-touch), tags no `<head>`. Conferido no Chromium: zero erros de instalação/manifest. **Sem service worker de propósito** — o jogo precisa do Supabase pra carregar os clubes, e cache de HTML atrasaria correções pros testers.
 - **Ligar (1 clique, a API de Pages não é acessível daqui):** GitHub → repo → Settings → Pages → *Deploy from a branch* → `main` / `/ (root)` → Save.
 - **Supabase Auth:** quem criar conta recebe link de confirmação; o cadastro agora pede `emailRedirectTo` = endereço onde o jogo está. Adicionar o link do Pages em **Authentication → URL Configuration** (Site URL e/ou Redirect URLs), senão o link de confirmação cai no endereço padrão. Jogar como convidado não depende disso.
@@ -370,7 +372,7 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - **Futebol feminino** — fora do escopo por enquanto.
 - Obrigar o jogador a assistir rodadas de competições que ele não disputa.
 - Sorteio obrigatório de clube (manter escolha livre).
-- Recalcular a força por divisão ao estilo RetroFoot — **mantemos a escala atual do Prancheta** (jogadores fictícios, sobreposição entre divisões já acontece).
+- Recalcular a força por divisão ao estilo RetroFoot — **mantemos a escala atual do Catimba** (jogadores fictícios, sobreposição entre divisões já acontece).
 
 ### Reservado pra depois
 - **Escudos e imagens dos cards gerados por API** (LLM/gerador de imagem, nada que exista de fato), gerados **uma vez** por time/jogador e gravados no Supabase Storage; gerar sob demanda ao incluir times/jogadores novos. Estilo fixo + semente derivada do ID pra manter consistência.

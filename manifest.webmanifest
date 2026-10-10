@@ -1,9 +1,9 @@
 {
-  "name": "Prancheta FC!",
-  "short_name": "Prancheta FC",
+  "name": "Catimba FC!",
+  "short_name": "Catimba FC",
   "description": "Manager de futebol arcade: monte o time, suba de série e aguente a diretoria.",
   "lang": "pt-BR",
-  "start_url": "./prancheta_fc.html",
+  "start_url": "./catimba_fc.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",

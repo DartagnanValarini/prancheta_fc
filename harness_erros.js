@@ -12,7 +12,7 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
 (async()=>{
   const browser=await chromium.launch();
   const {page,erros}=await abrir(browser);
-  await page.evaluate(()=>localStorage.setItem('prancheta_tutorial_v1','feito'));
+  await page.evaluate(()=>localStorage.setItem('catimba_tutorial_v1','feito'));
 
   console.log('\n[1] falha ao carregar do servidor');
   await page.evaluate(()=>{ App._nt=App.novaTemporada; App.novaTemporada=async()=>{ throw new TypeError('Failed to fetch'); }; });

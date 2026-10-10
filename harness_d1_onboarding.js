@@ -1,5 +1,5 @@
 // harness_d1_onboarding — gate do D1: um jogador novo chega (e termina) a
-// primeira partida sem instrução externa. Roda o prancheta_fc.html num Chromium
+// primeira partida sem instrução externa. Roda o catimba_fc.html num Chromium
 // headless com um supabase-js falso (ligas sintéticas, offline).
 // Uso: node harness_d1_onboarding.js [--shots DIR]   (requer Playwright + Chromium)
 const path=require('path'),fs=require('fs');
@@ -38,7 +38,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
       await page.click('[data-tut-next]');
     }
     t(titulos.length===5,'tour da Escalação tem 5 passos ('+titulos.join(' | ')+')');
-    t(await page.evaluate(()=>localStorage.getItem('prancheta_tutorial_v1'))==='jogo1','estado vira "jogo1" ao fim do tour');
+    t(await page.evaluate(()=>localStorage.getItem('catimba_tutorial_v1'))==='jogo1','estado vira "jogo1" ao fim do tour');
     t(await vis(page,'#btnJogarEsc'),'botão Jogar visível na Escalação');
     await page.click('#btnJogarEsc');
     await page.waitForSelector('#tutToast.on'); await shot(page,'toast_partida');
@@ -55,7 +55,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     t(await vis(page,'#tab-competicoes') && /objetivos/i.test(await page.textContent('#tutOverlay .tut-h')),'abre Competições e destaca os objetivos');
     await page.click('[data-tut-next]');
     t(!(await page.$('#tutOverlay')),'overlay some no fim');
-    t(await page.evaluate(()=>localStorage.getItem('prancheta_tutorial_v1'))==='feito','estado final "feito"');
+    t(await page.evaluate(()=>localStorage.getItem('catimba_tutorial_v1'))==='feito','estado final "feito"');
     t(await page.evaluate(()=>App.rodada)===1,'rodada 1 jogada');
     t(erros.filter(e=>!/ERR_FAILED/.test(e)).length===0,'sem erros de JS ('+erros.filter(e=>!/ERR_FAILED/.test(e)).join('; ')+')');
 
@@ -80,7 +80,7 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
     await page.click('.clube-lin'); await page.waitForSelector('.tut-bv');
     if(modo==='ja_sei') await page.click('text=Já sei jogar');
     else { await page.click('text=Me mostra como funciona'); await page.waitForSelector('[data-tut-skip]'); await page.click('[data-tut-skip]'); }
-    t(await page.evaluate(()=>localStorage.getItem('prancheta_tutorial_v1'))==='feito',`"${modo}" encerra o tutorial`);
+    t(await page.evaluate(()=>localStorage.getItem('catimba_tutorial_v1'))==='feito',`"${modo}" encerra o tutorial`);
     await page.click('#btnJogarEsc'); await page.waitForTimeout(300);
     t(!(await page.$('#tutToast.on')),`"${modo}": 1ª partida sem toast`);
     await ctx.close();
