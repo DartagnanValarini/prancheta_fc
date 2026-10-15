@@ -1,6 +1,6 @@
 # 🎯 Catimba FC! — Roadmap SINGLE-PLAYER (rota de lançamento)
 
-> **Renomeado (10/10/2026): Prancheta FC! → Catimba FC!** — `pranchetafc.com.br`/`.com`/`.app.br` já tinham dono. Domínio novo: **catimbafc.com.br**. Arquivo do jogo: `catimba_fc.html`; chaves do navegador `catimba_*` e segredo da assinatura do save trocados junto (só o Dart tinha jogado — saves antigos ficam "não assinados"). O repositório continua `prancheta_fc` no GitHub.
+> **Renomeado (10/10/2026): Prancheta FC! → Catimba FC!** — `pranchetafc.com.br`/`.com`/`.app.br` já tinham dono. Domínio novo: **catimbafc.com.br** (no ar com HTTPS desde 15/10/2026; Supabase Auth: Site URL `https://catimbafc.com.br` + Redirect `https://catimbafc.com.br/**`). ⚠️ Plano gratuito do Supabase pausa o projeto após 7 dias sem uso — já pausou uma vez (retomado em 15/10). Arquivo do jogo: `catimba_fc.html`; chaves do navegador `catimba_*` e segredo da assinatura do save trocados junto (só o Dart tinha jogado — saves antigos ficam "não assinados"). O repositório continua `prancheta_fc` no GitHub.
 
 > **📌 Fonte da verdade = este repositório GitHub** (`github.com/DartagnanValarini/prancheta_fc`, branch `main`). Decisão 09/2026: o roadmap e o contexto são mantidos AQUI, não mais no `dev_docs` do Supabase (aqueles ficam como arquivo histórico, congelados). Para retomar o projeto: ler este arquivo.
 
@@ -267,7 +267,7 @@ Ordem pensada pra que **cada bloco já deixe o jogo melhor**.
 **Decidido (09/2026):** na versão web, o bônus "dobrar prêmio" **continua existindo e é concedido sem anúncio** (opção b — web como vitrine generosa), já que o AdSense não tem formato recompensado. A alternativa descartada era deixar o bônus exclusivo do app, pra criar funil web→app.
 
 **Hospedagem da versão web (05/10/2026 — arquivos prontos, falta ligar):**
-- Repo público → **GitHub Pages** na branch `main`, pasta raiz. Link: `https://dartagnanvalarini.github.io/prancheta_fc/` (o `index.html` abre o `catimba_fc.html`, mantendo `?query`/`#hash`).
+- Repo público → **GitHub Pages** na branch `main`, pasta raiz. Link: **`https://catimbafc.com.br`** (domínio no registro.br, DNS do próprio registro.br apontando pro GitHub Pages: 4 registros A 185.199.108–111.153 + CNAME `www`; arquivo `CNAME` no repo; HTTPS forçado desde 15/10/2026). O endereço antigo `dartagnanvalarini.github.io/prancheta_fc/` redireciona (o `index.html` abre o `catimba_fc.html`, mantendo `?query`/`#hash`).
 - **PWA instalável:** `manifest.webmanifest` + `icons/` (192, 512, maskable, apple-touch), tags no `<head>`. Conferido no Chromium: zero erros de instalação/manifest. **Sem service worker de propósito** — o jogo precisa do Supabase pra carregar os clubes, e cache de HTML atrasaria correções pros testers.
 - **Ligar (1 clique, a API de Pages não é acessível daqui):** GitHub → repo → Settings → Pages → *Deploy from a branch* → `main` / `/ (root)` → Save.
 - **Supabase Auth:** quem criar conta recebe link de confirmação; o cadastro agora pede `emailRedirectTo` = endereço onde o jogo está. Adicionar o link do Pages em **Authentication → URL Configuration** (Site URL e/ou Redirect URLs), senão o link de confirmação cai no endereço padrão. Jogar como convidado não depende disso.
