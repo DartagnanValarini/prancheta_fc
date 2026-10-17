@@ -1,0 +1,35 @@
+# Mantém o projeto do Supabase acordado.
+# O plano gratuito PAUSA o projeto depois de 7 dias sem nenhuma requisição (já aconteceu
+# em 10/2026: login, saves na nuvem e ranking pararam). Este agendamento faz uma leitura
+# leve no banco a cada 3 dias, de graça, pelo GitHub Actions.
+# Usa a mesma chave pública do jogo (só lê; nada é gravado).
+# Pra rodar na mão: Actions → "Manter Supabase acordado" → Run workflow.
+name: Manter Supabase acordado
+
+on:
+  schedule:
+    - cron: '17 12 */3 * *'   # a cada 3 dias, 09:17 de Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Leitura leve no banco
+        env:
+          SUP_URL: https://leysofvftpgocigqqgzi.supabase.co
+          SUP_KEY: sb_publishable_i5CqcTOw2U9amGelpwcuxg_d-nYXdxu
+        run: |
+          for tentativa in 1 2 3; do
+            codigo=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "apikey: $SUP_KEY" -H "Authorization: Bearer $SUP_KEY" \
+              "$SUP_URL/rest/v1/team?select=id&limit=1")
+            echo "tentativa $tentativa: HTTP $codigo"
+            [ "$codigo" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "::error::Supabase não respondeu 200 — o projeto pode estar pausado. Retome em supabase.com/dashboard."
+          exit 1
