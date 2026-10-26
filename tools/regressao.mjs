@@ -86,6 +86,11 @@ if (falhas.length) {
     const linhas = f.saida.split('\n').filter(l => /❌|Error|FALHA|TIMEOUT/.test(l)).slice(0, 8);
     console.log(`\n— ${f.nome}  (log: .regressao/${f.nome}.log)`);
     for (const l of linhas) console.log('   ' + l.trim());
+    // na CI do GitHub, cada falha vira uma anotação visível na página do PR
+    if (process.env.GITHUB_ACTIONS) {
+      const msg = (linhas.join(' | ') || 'falhou sem ❌ na saída').replace(/%/g, '%25').replace(/\r?\n/g, ' ');
+      console.log(`::error file=${f.nome}.js,title=${f.nome}::${msg.slice(0, 900)}`);
+    }
   }
   process.exit(1);
 }
