@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node tools/injetar.mjs*)",
+      "Bash(node tools/regressao.mjs*)",
+      "Bash(node harness_*)",
+      "Bash(node ui_test/abrir.js*)",
+      "Bash(node --check *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git switch*)",
+      "Bash(git checkout -b *)"
+    ],
+    "deny": [
+      "Bash(git push origin main*)",
+      "Bash(git push -f*)",
+      "Bash(git push --force*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/pos-edicao.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/antes-commit.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
