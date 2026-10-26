@@ -1,0 +1,66 @@
+# Regressão dos harnesses do Catimba FC!
+# - Em todo PR e push na main: confere app.js == script do catimba_fc.html e roda a regressão rápida.
+# - Toda segunda de manhã (e na mão): regressão COMPLETA, com a carreira longa de 12 temporadas.
+# Os logs de cada harness ficam no artefato "logs-regressao" quando algo falha.
+name: Regressão
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'dados/**'
+      - 'docs/**'
+  schedule:
+    - cron: '23 10 * * 1'   # segunda, 07:23 de Brasília
+  workflow_dispatch:
+    inputs:
+      completa:
+        description: 'Incluir a carreira longa'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regressao-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regressao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # imagem oficial do Playwright: já vem com Chromium e as dependências do sistema
+    # (instalar na mão levava ~12 min). A versão do pacote abaixo tem que bater com a da imagem.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: app.js igual ao script do HTML
+        run: node tools/injetar.mjs --check
+
+      - name: Sintaxe do app.js
+        run: node --check app.js
+
+      - name: Playwright (mesma versão da imagem)
+        run: npm i -g playwright@1.64.1
+
+      - name: Regressão
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.completa }}" = "true" ]; then
+            node tools/regressao.mjs --completa
+          else
+            node tools/regressao.mjs
+          fi
+
+      - name: Logs dos harnesses
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-regressao
+          path: .regressao/
+          include-hidden-files: true
+          retention-days: 14

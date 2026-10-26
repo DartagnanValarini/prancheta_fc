@@ -34,8 +34,18 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
 
   console.log('\n[2] aviso de eliminação e recado do presidente');
   await page.evaluate(()=>{ App.garantirOpcoes().recado=true; App.fecharRodada(); });
-  const tit1=await page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()=>'');
-  const corpo1=await page.$eval('#flkModal',e=>e.textContent).catch(()=>'');
+  // outros avisos do fim da rodada (desfalques, propostas…) podem vir antes na fila:
+  // percorre a fila até o modal de eliminação (mesmo padrão do harness_estadual [6])
+  let tit1='',corpo1=''; const vistos=[];
+  for(let k=0;k<8;k++){
+    tit1=await page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()=>'');
+    if(!tit1 || /Eliminado da Série D/.test(tit1)) break;
+    vistos.push(tit1.trim());
+    await page.click('#flkModal .flkm-foot .btn.primary, #flkModal .flkm-foot .btn').catch(()=>{});
+    await page.waitForTimeout(150);
+  }
+  corpo1=await page.$eval('#flkModal',e=>e.textContent).catch(()=>'');
+  if(vistos.length) console.log('  (antes na fila: '+vistos.join(' · ')+')');
   t(/Eliminado da Série D/.test(tit1),`modal de eliminação aparece ("${tit1.trim()}")`);
   t(/no grupo/.test(corpo1) && /Simular até o fim/.test(corpo1),'mostra a posição no grupo e o botão de simular');
   await page.click('#flkModal .flkm-foot .btn:has-text("Acompanhar")');
@@ -50,6 +60,8 @@ let ok=0,falhas=0; const t=(c,m)=>{ if(c){ok++;console.log('  ✅',m);} else {fa
   console.log('\n[3] tabela do grupo não muda com os jogos ao vivo do mata-mata');
   const r3=await page.evaluate(()=>{
     const antes=App.classificacao().map(s=>s.i+':'+s.pts+':'+(s.gp-s.gc)).join(',');
+    // com desfalques o onze fica com menos de 11 e o jogo não começa: reescala antes
+    App.escalarMelhor();
     App.jogarRodada(); const L=App.liveState; clearInterval(L.timer);
     // força gols em todos os jogos ao vivo
     L.sims.forEach(s=>{ s.gc+=2; s.gf+=1; });
