@@ -11,7 +11,7 @@ const doc={body:mk(),documentElement:mk(),head:mk(),createElement(){return mk()}
 const store={};const win={document:doc,localStorage:{getItem:k=>store[k]||null,setItem:(k,v)=>{store[k]=v},removeItem(){}},addEventListener(){},location:{href:'',search:'',hash:''}};
 const sb={console,Math,Object,Array,JSON,Set,Map,Date,Promise,RegExp,parseInt,parseFloat,isNaN,Number,String,Boolean,window:win,document:doc,localStorage:win.localStorage,setTimeout:()=>0,setInterval:()=>0,clearInterval(){},clearTimeout(){},fetch:()=>Promise.reject(new Error()),navigator:{},location:{href:'',search:'',hash:''},alert:()=>{},confirm:()=>true};
 sb.globalThis=sb;vm.createContext(sb);
-vm.runInContext(fs.readFileSync('/home/claude/prancheta_fc/app.js','utf8')+'\n;globalThis.__App=App;',sb);
+vm.runInContext(fs.readFileSync(require('path').join(__dirname,'app.js'),'utf8')+'\n;globalThis.__App=App;',sb);
 const App=sb.__App;
 const ATTRS=['finishing','marking','tackling','passing','pace','strength','stamina','positioning','vision','dribbling','crossing','heading','long_shots','technique','aggression','composure','reflexes','handling','concentration','decisions'];
 function mkTeam(id){const players=[];for(let n=1;n<=14;n++){const attrs={};ATTRS.forEach(a=>attrs[a]=50);players.push({numero:n,pid:id+'-'+n,nome:'J'+n,attrs,energia:100,forca:50,setorNat:'MEI',idade:24,contratoMeses:24,moral:65});}return{id:'T'+id,abrev:'T'+id,nome:'Time'+id,divisao:'D',saldo:1e6,players};}
