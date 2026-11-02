@@ -55,8 +55,10 @@ Se não houve commit relevante na semana, sexta vira mais um "Rodada" ou "Dica".
 ### Como montar
 
 1. `social/tpl/base.css` tem as classes: `.slide .kicker .h1 .h2 .txt .pill .box .foot .dots .grid .lemon`.
-2. Copie a pasta de referência `social/posts/2026-11-02-chegamos/` como modelo.
-   Crie `social/posts/AAAA-MM-DD-slug/` com `01.html`, `02.html`…
+2. Clone a branch de posts: `git clone --depth 1 -b instagram-posts <repo> ig-posts`.
+   Use a pasta `ig-posts/2026-11-02-chegamos/` como modelo e crie localmente
+   `social/posts/AAAA-MM-DD-slug/` (pasta ignorada pelo git na main) com `01.html`, `02.html`…
+   O HTML usa `../../tpl/base.css`, por isso o post é montado dentro de `social/posts/` da main.
 3. Prints: `node social/prints.js social/posts/<id>/prints 1` gera `entrada, clubes, boas_vindas,
    formacao, elenco, mercado, competicoes, financas, ao_vivo_1, fim_1, tabela_pos` (PNG 2560×1720,
    clube sorteado a cada execução). Recorte com Pillow o pedaço que interessa e salve na pasta do post.
@@ -81,23 +83,25 @@ Se não houve commit relevante na semana, sexta vira mais um "Rodada" ou "Dica".
 ## 5. Publicação (Composio · Instagram)
 
 - Conta: `@catimbafcbr`, **ig_user_id `29474892022116705`** (conexão Composio alias `catimbafcbr`).
-- As imagens precisam de URL pública. Faça commit e push dos JPG na **main** e use
-  `https://raw.githubusercontent.com/DartagnanValarini/prancheta_fc/main/social/posts/<id>/NN.jpg`.
+- As imagens precisam de URL pública. **Nada de post vai pra main.** Copie a pasta do post
+  (`social/posts/<id>/` inteira) pra raiz do clone da branch órfã **`instagram-posts`**, faça commit e push
+  nela e use `https://raw.githubusercontent.com/DartagnanValarini/prancheta_fc/instagram-posts/<id>/NN.jpg`.
 - Carrossel: `INSTAGRAM_CREATE_CAROUSEL_CONTAINER` com `child_image_urls` (2–10) e `caption`
   → `INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH` com o `creation_id` → `INSTAGRAM_GET_IG_MEDIA` pra pegar o permalink.
 - Slide único: `INSTAGRAM_POST_IG_USER_MEDIA` com `image_url` + `caption` → publish → get.
 - Se o publish falhar por processamento, espere e tente 1 vez; se falhar de novo, recrie o container.
-- Commits de post: mensagem `Instagram: <slug>`, direto na main (sem PR), como o resto do projeto.
+- Commits de post: mensagem `Instagram: <slug>`, direto na branch `instagram-posts` (sem PR).
+  Na main só entram mudanças de ferramenta (templates, scripts, esta skill).
 
 ## 6. Checklist antes de publicar (obrigatório)
 
-1. Leia `social/historico.md`: não repita tema, frase de capa ou print das últimas 6 postagens.
+1. Leia `historico.md` (na raiz da branch `instagram-posts`): não repita tema, frase de capa ou print das últimas 6 postagens.
 2. Confira o calendário: o pilar bate com o dia da semana?
 3. Abra cada JPG gerado e olhe: texto cortado, sobreposição, print errado, fonte faltando
    (se aparecer fonte serifada/padrão, a Bungee não carregou — não publique).
 4. Releia a legenda contra a seção "Nunca" (clube real, data prometida, número inventado).
 5. Confira que as URLs raw abrem (HTTP 200) depois do push.
-6. Publique, pegue o permalink e **adicione uma linha no topo de `social/historico.md`**:
+6. Publique, pegue o permalink e **adicione uma linha no topo da tabela de `historico.md` da branch `instagram-posts`**:
    `| AAAA-MM-DD | pilar | formato | tema em 5 palavras | permalink |` e faça commit.
 7. Se algo deu errado e o post não saiu, não insista mais de 2 vezes: registre o erro no histórico
    e avise o Dart na mensagem final da execução.
