@@ -32,14 +32,41 @@ Perfil do jogo Catimba FC!, manager de futebol estilo Brasfoot/Elifoot que roda 
 
 Postagem **seg, qua e sex** (tarefa agendada, fim da tarde). Proporção alvo no mês:
 40% jogo em ação · 30% catimba/humor · 20% bastidores do dev · 10% chamada direta pro teste.
+**Pelo menos 1 Reels por semana** (segunda): é o formato que leva a conta pra quem não segue.
+Carrossel e foto quase só chegam em quem já segue.
+
+**No máximo 1 post automático por dia.** Se `historico.md` já tem post com a data de hoje, a execução
+não publica nada e só avisa no relatório final.
 
 | Dia | Pilar | Formato | Conteúdo |
 |---|---|---|---|
-| Seg | **Rodada da semana** (jogo em ação) | Carrossel 3–4 | Print da partida ao vivo e do fim, narrado como crônica: o time pequeno, o lance, o resultado. Termina com pergunta. |
+| Seg | **Rodada da semana** (jogo em ação) | **Reels 15–25s** | Gameplay gravado com `social/reel.js` (partida inteira no turbo), com textos curtos por cena contando uma história: POV, cobrança do presidente, virada, gol no fim, sobe ou cai. Termina com pergunta. |
 | Qua | **Catimba do dia** (humor) | 1 slide ou carrossel 2–3 | Frase de presidente/cartola/torcedor fictício, "tipos de técnico no manager", "a cera perfeita", enquete em texto. Alterne com **Dica do professor** (formação, mercado, finanças) usando print da tela certa. |
 | Sex | **Bastidores** (dev) ou **Chamada pro teste** | Carrossel 3–4 | O que mudou no jogo na semana (veja `git log --since="7 days ago"`), traduzido pra linguagem de jogador. Uma sexta por mês vira chamada direta pro teste fechado. |
 
 Se não houve commit relevante na semana, sexta vira mais um "Rodada" ou "Dica".
+Quarta e sexta também podem sair como Reels quando o tema render vídeo (uma dica mostrando a tela, uma
+novidade do jogo em ação); carrossel continua bom pra lista, comparação e chamada pro teste.
+
+## 2.1 Reels
+
+- Formato **1080×1920 (9:16)**, MP4 H.264 + faixa de áudio AAC (silenciosa serve), 15–25 s.
+- Gravação: `node social/reel.js <pasta> <roteiro.json>` abre o jogo no layout de celular, sorteia um
+  clube, mostra a escolha de clube, o modal do presidente, a partida inteira em velocidade Turbo
+  (opção real do jogo, intervalo pulado sozinho) e o resultado, e fecha com um card da marca.
+  Gera `frames/` + `frames.txt`. Roteiro de exemplo em `ig-posts/2026-11-02-reel-pov-serie-d/roteiro.json`:
+  `cenas.clubes`, `cenas.presidente`, `cenas.partida`, `cenas.fim` (texto da faixa; `<b>` deixa em lemon),
+  `final.titulo/sub/cta` e `durPartida` (segundos que a partida ocupa no vídeo, padrão 10).
+- Montagem (copie igual):
+  `ffmpeg -y -f concat -safe 0 -i frames.txt -f lavfi -i anullsrc=r=44100:cl=stereo -vf "fps=30,format=yuv420p" -c:v libx264 -preset veryfast -crf 20 -c:a aac -b:a 128k -shortest -movflags +faststart reel.mp4`
+- Capa: `frames/00000.jpg` vira `capa.jpg`.
+- **Gancho nos 2 primeiros segundos** (texto da cena `clubes`): POV, pergunta ou provocação. Nada de
+  logo parado no início. Texto da faixa com no máximo ~8 palavras por cena.
+- Confira o vídeo antes de publicar: extraia uma tira de frames
+  (`ffmpeg -i reel.mp4 -vf "fps=1,scale=180:-1,tile=11x2" -frames:v 1 tira.jpg`) e olhe.
+- **Legenda:** só cite o que aparece legível no vídeo (placar, nome do seu time). Nome de adversário
+  cortado na tela ("Gavião D…") não entra na legenda.
+- Sem música: a API não aplica áudio do Instagram e música de terceiros é proibida.
 
 ## 3. Visual (design system FLK!)
 
@@ -89,6 +116,9 @@ Se não houve commit relevante na semana, sexta vira mais um "Rodada" ou "Dica".
 - Carrossel: `INSTAGRAM_CREATE_CAROUSEL_CONTAINER` com `child_image_urls` (2–10) e `caption`
   → `INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH` com o `creation_id` → `INSTAGRAM_GET_IG_MEDIA` pra pegar o permalink.
 - Slide único: `INSTAGRAM_POST_IG_USER_MEDIA` com `image_url` + `caption` → publish → get.
+- Reels: `INSTAGRAM_POST_IG_USER_MEDIA` com `media_type: "REELS"`, `video_url` (raw do reel.mp4),
+  `cover_url` (raw do capa.jpg), `share_to_feed: true` e `caption` → publish com `max_wait_seconds: 240`
+  (o vídeo leva ~40 s processando) → get.
 - Se o publish falhar por processamento, espere e tente 1 vez; se falhar de novo, recrie o container.
 - Commits de post: mensagem `Instagram: <slug>`, direto na branch `instagram-posts` (sem PR).
   Na main só entram mudanças de ferramenta (templates, scripts, esta skill).
