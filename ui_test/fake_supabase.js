@@ -36,18 +36,34 @@
   });
   window.__FAKE={teams,players};
 
+  // Nuvem simulada (harness_nuvem_fora): só liga se o teste gravar '__fakecfg' no
+  // sessionStorage antes de abrir. Sem isso, tudo segue como antes (convidado, game_save vazio).
+  //   {sessao:{access_token,user:{id,email}}|null, fora:bool, saves:[linhas de game_save]}
+  let cfg=null; try{ cfg=JSON.parse(sessionStorage.getItem('__fakecfg')||'null'); }catch(e){}
+  window.__FAKE_CFG=cfg;
+  window.__fakeSalvar=()=>{ try{ sessionStorage.setItem('__fakecfg',JSON.stringify(window.__FAKE_CFG)); }catch(e){} };
+  const FORA={message:'TypeError: Failed to fetch'};
+
   function query(table){
     let rows=null, filtros=[], range=null;
+    const nuvem = table==='game_save' && window.__FAKE_CFG;
     const q={
       select(){ return q; }, order(){ return q; },
       in(col,vals){ filtros.push(r=>vals.includes(r[col])); return q; },
       eq(col,v){ filtros.push(r=>String(r[col])===String(v)); return q; },
       range(a,b){ range=[a,b]; return q; },
       maybeSingle(){ q._single=true; return q; }, single(){ q._single=true; return q; },
-      upsert(){ return Promise.resolve({error:null}); },
+      upsert(row){
+        if(!nuvem) return Promise.resolve({error:null});
+        const c=window.__FAKE_CFG; if(c.fora) return Promise.resolve({error:FORA});
+        c.saves=c.saves.filter(r=>!(r.user_id===row.user_id && String(r.slot)===String(row.slot)));
+        c.saves.push(JSON.parse(JSON.stringify(row))); window.__fakeSalvar();
+        return Promise.resolve({error:null});
+      },
       delete(){ return q; }, insert(){ return Promise.resolve({error:null}); },
       then(res,rej){
-        let base= table==='team'?teams : table==='player'?players : [];
+        if(nuvem && window.__FAKE_CFG.fora) return Promise.resolve({data:null,error:FORA}).then(res,rej);
+        let base= table==='team'?teams : table==='player'?players : nuvem?window.__FAKE_CFG.saves : [];
         let out=base.filter(r=>filtros.every(f=>f(r)));
         if(range) out=out.slice(range[0],range[1]+1);
         if(q._single) out=out[0]||null;
@@ -59,8 +75,8 @@
   window.supabase={createClient(){ return {
     from:query,
     auth:{
-      getSession:async()=>({data:{session:null}}),
-      signInWithPassword:async()=>({data:null,error:{message:'Invalid login credentials'}}),
+      getSession:async()=>({data:{session:(window.__FAKE_CFG&&window.__FAKE_CFG.sessao)||null}}),
+      signInWithPassword:async()=>({data:null,error:(window.__FAKE_CFG&&window.__FAKE_CFG.fora)?FORA:{message:'Invalid login credentials'}}),
       signUp:async()=>({data:null,error:{message:'offline'}}),
       signOut:async()=>({}),
     },

@@ -1,14 +1,19 @@
 # Mantém o projeto do Supabase acordado.
 # O plano gratuito PAUSA o projeto depois de 7 dias sem nenhuma requisição (já aconteceu
-# em 10/2026: login, saves na nuvem e ranking pararam). Este agendamento faz uma leitura
-# leve no banco a cada 3 dias, de graça, pelo GitHub Actions.
+# em 10/2026 e de novo em 11/2026: login, saves na nuvem e ranking pararam).
+# Este agendamento faz uma leitura leve no banco TODO DIA, de graça, pelo GitHub Actions.
+# Era a cada 3 dias, mas o agendamento do GitHub não é garantido (execuções atrasam ou
+# são puladas sem aviso) — duas puladas seguidas já passavam dos 7 dias. Diário, em dois
+# horários, dá margem de sobra. Há também um 2º agendador fora do GitHub (cron-job.org)
+# batendo no mesmo endereço — ver docs/manter_supabase.md.
 # Usa a mesma chave pública do jogo (só lê; nada é gravado).
 # Pra rodar na mão: Actions → "Manter Supabase acordado" → Run workflow.
 name: Manter Supabase acordado
 
 on:
   schedule:
-    - cron: '17 12 */3 * *'   # a cada 3 dias, 09:17 de Brasília
+    - cron: '17 12 * * *'   # todo dia, 09:17 de Brasília
+    - cron: '47 0 * * *'    # todo dia, 21:47 de Brasília (2ª chance se a 1ª for pulada)
   workflow_dispatch:
 
 permissions:

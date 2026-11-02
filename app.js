@@ -1139,6 +1139,9 @@ const Menu={
     if(/already registered|already exists/i.test(m)) return 'Esse e-mail já tem conta. Tente entrar.';
     if(/Password should be/i.test(m)) return 'A senha precisa de pelo menos 6 caracteres.';
     if(/Unable to validate email|invalid format/i.test(m)) return 'E-mail inválido.';
+    // servidor fora (projeto pausado, sem internet, 5xx): mensagem humana, não "Failed to fetch"
+    if(Erros.ehRede(m) || /\b5\d\d\b|unavailable|upstream|paused|gateway|\{\}/i.test(m) || !m)
+      return 'Não conseguimos falar com o servidor agora. Tente de novo em alguns minutos — ou jogue sem conta enquanto isso.';
     return m;
   },
   async sair(){
@@ -1152,10 +1155,14 @@ const Menu={
     this.sub('menu principal');
     this.el().innerHTML=`<div class="pre-card"><div class="pre-title">Carregando saves...</div></div>`;
     const saves=await this.listarSaves();
+    const fora=!this.convidado && saves._nuvemFora;
+    // nuvem fora e nada guardado no aparelho: não mostra slots (vazios enganariam e
+    // começar carreira ali sobrescreveria a da nuvem quando ela voltar)
+    if(fora && !saves._soPendentes) return this.telaNuvemFora();
     this.el().innerHTML=`
       <div class="pre-card wide">
         <div class="pre-title">Suas carreiras</div>
-        <div class="pre-hint">Escolha um slot para continuar ou começar uma nova carreira.</div>
+        <div class="pre-hint">${fora?'Continue de onde parou neste aparelho.':'Escolha um slot para continuar ou começar uma nova carreira.'}</div>
         ${[1,2,3].map(n=>{
           const s=saves[n];
           return s
@@ -1165,7 +1172,12 @@ const Menu={
                    <div class="save-slot-clube">${s.clube||'Carreira'}</div>
                    <div class="save-slot-meta">Temporada ${s.temporada} · Rodada ${s.rodada} · ${s.quando}</div>
                  </div>
-                 <button class="save-slot-del" data-del="${n}">apagar</button>
+                 ${fora?'':`<button class="save-slot-del" data-del="${n}">apagar</button>`}
+               </div>`
+            : fora
+            ? `<div class="save-slot vazio">
+                 <div class="save-slot-n">${n}</div>
+                 <div class="save-slot-info"><div class="save-slot-clube">— indisponível até a nuvem voltar —</div></div>
                </div>`
             : `<div class="save-slot vazio" data-novo="${n}">
                  <div class="save-slot-n">${n}</div>
@@ -1173,6 +1185,7 @@ const Menu={
                </div>`;
         }).join('')}
         ${this.convidado?this.msg('Modo convidado: o save fica só neste dispositivo. Crie uma conta para salvar na nuvem.','info'):''}
+        ${fora?this.msg('☁️ A nuvem está fora do ar agora. Você continua jogando: o jogo guarda neste aparelho e manda pra nuvem sozinho quando ela voltar.','info'):''}
         <div class="pre-sep"><span>${this.convidado?'quer salvar na nuvem?':'conectado como '+(this.user?.email||'')}</span></div>
         <button class="pre-btn ghost" id="btnSairMenu">${this.convidado?'Criar conta / entrar':'Sair da conta'}</button>
       </div>`;
@@ -1192,6 +1205,25 @@ const Menu={
         botoes:[{txt:'Cancelar', tipo:'sm'},
                 {txt:'Apagar carreira', tipo:'danger', onClick:()=>{ this.apagarSave(slot).then(()=>this.telaMenu()); }}]});
     });
+  },
+
+  // ---------- NUVEM FORA DO AR (Supabase pausado / sem resposta) ----------
+  // Logado, mas não dá pra ler os saves. Nada de slots vazios: a carreira está segura
+  // na nuvem. Oferece tentar de novo ou jogar como convidado (save neste aparelho).
+  telaNuvemFora(){
+    this.sub('nuvem fora do ar');
+    this.el().innerHTML=`
+      <div class="pre-card">
+        <div class="pre-title">Nuvem fora do ar</div>
+        <div class="pre-hint">Não conseguimos falar com o servidor agora. <b>Sua carreira continua salva na nuvem</b> — nada foi perdido. Costuma voltar em alguns minutos.</div>
+        <button class="pre-btn" id="btnNuvemRetry">Tentar de novo</button>
+        <button class="pre-btn ghost" id="btnNuvemConvidado">Jogar sem conta enquanto isso</button>
+        <button class="pre-btn ghost" id="btnNuvemSair">Sair da conta</button>
+      </div>`;
+    this.foot('Sem conta, a carreira é outra e fica só neste aparelho.');
+    document.getElementById('btnNuvemRetry').onclick=()=>this.telaMenu();
+    document.getElementById('btnNuvemConvidado').onclick=()=>this.jogarAgora();
+    document.getElementById('btnNuvemSair').onclick=()=>this.sair();
   },
 
   // ---------- NOVO JOGO: escolha entre 7 clubes da Série D ----------
@@ -1337,13 +1369,27 @@ const Menu={
       return out;
     }
     try{
-      const {data}=await App.sb.from('game_save')
+      // o supabase-js não lança em falha de rede/servidor: devolve {error}. Antes isso
+      // virava "nenhum save" e o jogador via os slots VAZIOS (e podia começar outra
+      // carreira por cima da que está na nuvem). Agora vira aviso de nuvem fora do ar.
+      const {data,error}=await App.sb.from('game_save')
         .select('slot,temporada,rodada,my_team,updated_at').eq('user_id',this.user.id);
+      if(error) throw error;
       (data||[]).forEach(r=>{
         out[r.slot]={clube:(App.teams&&App.teams[r.my_team]?.nome)||'Carreira',
           temporada:r.temporada, rodada:r.rodada, quando:this.quando(r.updated_at)};
       });
-    }catch(e){}
+    }catch(e){
+      Erros.registrar(e,'listar saves');
+      // sem a nuvem, mostra o que está guardado neste aparelho esperando subir
+      const pend=App.lerPendentes(this.user.id);
+      if(!Object.keys(pend).length) return {_nuvemFora:true};
+      Object.entries(pend).forEach(([n,p])=>{
+        out[n]={clube:p.clube||'Carreira', temporada:p.temporada, rodada:p.rodada,
+          quando:this.quando(p.updated_at)+' · no aparelho'};
+      });
+      out._nuvemFora=true; out._soPendentes=true;
+    }
     return out;
   },
   quando(iso){
@@ -1356,6 +1402,7 @@ const Menu={
   async apagarSave(slot){
     if(this.convidado){ localStorage.removeItem('flk_save_'+slot); return; }
     try{ await App.sb.from('game_save').delete().eq('user_id',this.user.id).eq('slot',String(slot)); }catch(e){}
+    App.apagarPendente(this.user.id, slot);
   },
   async carregarSlot(slot){
     this.slot=slot;
@@ -1364,17 +1411,26 @@ const Menu={
       if(!App.provider) App.provider=new SupabaseProvider(App.SUP_URL,App.SUP_KEY);
       await App.novaTemporada(['A','B','C','D']);
       App.slotAtual=slot; App.userId=this.user?.id||null; App.convidado=this.convidado;
-      let estado=null, sig=null;
+      let estado=null, sig=null, subir=false;
       if(this.convidado){
         const raw=localStorage.getItem('flk_save_'+slot);
         if(raw){ const env=JSON.parse(raw); sig=env.sig||null;
           estado = env.estadoZ ? JSON.parse(await App.descomprimir(env.estadoZ)) : env.estado; }
       } else {
-        const {data}=await App.sb.from('game_save').select('estado')
+        const {data,error}=await App.sb.from('game_save').select('estado,updated_at')
           .eq('user_id',this.user.id).eq('slot',String(slot)).maybeSingle();
-        estado=data?.estado||null;
-        // C1: a assinatura vem embutida no envelope como _sig; separa antes de aplicar
-        if(estado && estado._sig!==undefined){ sig=estado._sig; estado={...estado}; delete estado._sig; }
+        // cópia guardada no aparelho quando a nuvem caiu (ver App.salvarSupabase)
+        const pend=App.lerPendentes(this.user.id)[slot]||null;
+        if(error && !pend) throw error;   // sem nuvem e sem cópia: tela de "tentar de novo" (NÃO começa do zero)
+        const pendMaisNovo = pend && (error || !data || new Date(pend.updated_at) > new Date(data.updated_at||0));
+        if(pendMaisNovo){
+          subir=!error;   // nuvem de volta: manda a cópia do aparelho já
+          estado=JSON.parse(await App.descomprimir(pend.estadoZ)); sig=pend.sig||null;
+        } else {
+          estado=data?.estado||null;
+          // C1: a assinatura vem embutida no envelope como _sig; separa antes de aplicar
+          if(estado && estado._sig!==undefined){ sig=estado._sig; estado={...estado}; delete estado._sig; }
+        }
       }
       // C1: confere a assinatura HMAC. O veredito alimenta o ranking (C3) — save
       // não-assinado/adulterado entra no placar CARIMBADO como suspeito, não é barrado.
@@ -1390,6 +1446,7 @@ const Menu={
       }
       this.esconder();
       App.renderShell(); App.showTab('escala');
+      if(subir) App.salvarSupabase(true);
     }catch(e){
       Erros.registrar(e,'carregar carreira');
       this.el().innerHTML=`<div class="pre-card">${this.msg(Erros.amigavel(e,'carregar sua carreira'),'err')}
@@ -7612,10 +7669,48 @@ const App={
         estado:envelope, updated_at:new Date().toISOString() };
       const {error}=await this.sb.from('game_save').upsert(row,{onConflict:'user_id,slot'});
       if(error) throw error;
+      // subiu: a cópia do aparelho (se havia) ficou velha
+      this.apagarPendente(this.userId, this.slotAtual||1);
+      if(this._nuvemCaiu){ this._nuvemCaiu=false;
+        this.avisoFLK('☁️ Nuvem de volta', 'A carreira que estava guardada neste aparelho já foi enviada pra nuvem.', 'var(--lemon)', {fila:true}); }
       if(!silencioso) this.setStatus('saveStatus','ok',`Salvo (rodada ${this.rodada}).`);
       okHud();
-    }catch(e){ if(!silencioso) this.setStatus('saveStatus','err','Falha ao salvar: '+e.message); }
+    }catch(e){
+      Erros.registrar(e,'salvar na nuvem');
+      // nuvem fora (pausada, sem internet): guarda NESTE aparelho pra não perder nada;
+      // o próximo save que der certo manda pra nuvem e apaga a cópia.
+      const local=await this.guardarPendente(this.userId, this.slotAtual||1, meta).catch(()=>false);
+      if(!silencioso) this.setStatus('saveStatus', local?'info':'err',
+        local?'Nuvem fora do ar — salvo neste aparelho. Envia sozinho quando ela voltar.':'Falha ao salvar: '+e.message);
+      if(local) okHud();
+      if(!this._nuvemCaiu){ this._nuvemCaiu=true;
+        this.avisoFLK('☁️ Nuvem fora do ar',
+          local ? 'Não conseguimos falar com o servidor agora. Pode seguir jogando: o jogo está salvando <b>neste aparelho</b> e manda pra nuvem sozinho quando ela voltar.'
+                : 'Não conseguimos salvar nem na nuvem nem neste aparelho ('+this.esc(e.message||'erro')+'). Use ⚙️ → Baixar backup pra não perder o progresso.',
+          local?'var(--lemon)':'var(--loss)', {fila:true}); }
+    }
   },
+
+  // ---------- cópia do save logado no aparelho (nuvem fora do ar) ----------
+  // Chave por conta + slot. Mesmo formato do save do convidado (gzip + base64, assinado).
+  _chavePendente(uid, slot){ return `catimba_pendente_${uid}_${slot}`; },
+  async guardarPendente(uid, slot, meta){
+    if(!uid || !this.podeComprimir()) return false;
+    const estado=this.snapshot();
+    const sig=await this.assinarSnapshot(estado);
+    const env={clube:this.teams[this.myTeam]?.nome||'Carreira', ...meta, sig,
+      updated_at:new Date().toISOString(), estadoZ:await this.comprimir(JSON.stringify(estado))};
+    localStorage.setItem(this._chavePendente(uid,slot), JSON.stringify(env));
+    return true;
+  },
+  lerPendentes(uid){
+    const out={}; if(!uid) return out;
+    [1,2,3].forEach(n=>{
+      try{ const raw=localStorage.getItem(this._chavePendente(uid,n)); if(raw) out[n]=JSON.parse(raw); }catch(e){}
+    });
+    return out;
+  },
+  apagarPendente(uid, slot){ try{ if(uid) localStorage.removeItem(this._chavePendente(uid,slot)); }catch(e){} },
 
   async carregarSupabase(){
     // O load oficial é por slot (game_save por user_id+slot), feito no menu inicial.
