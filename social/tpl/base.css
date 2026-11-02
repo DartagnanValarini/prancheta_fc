@@ -1,0 +1,22 @@
+/* Design system FLK! para posts do Instagram (1080x1350, feed 4:5) */
+@font-face{font-family:Bungee;src:url(../fonts/bungee.woff2)}
+@font-face{font-family:'Space Mono';font-weight:400;src:url(../fonts/spacemono-400.woff2)}
+@font-face{font-family:'Space Mono';font-weight:700;src:url(../fonts/spacemono-700.woff2)}
+:root{--bg:#111112;--card:#1b1b1d;--line:#2c2c30;--white:#f4f4ee;--mute:#8a8a90;--lemon:#D2FF00}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1350px;background:var(--bg);color:var(--white);font-family:'Space Mono',monospace;overflow:hidden}
+.slide{position:relative;width:1080px;height:1350px;padding:96px 84px;display:flex;flex-direction:column}
+.logo{font-family:Bungee;font-size:44px;line-height:1;text-transform:uppercase}
+.logo b,.lemon{color:var(--lemon)}
+.kicker{font-family:'Space Mono';font-weight:700;font-size:26px;letter-spacing:8px;text-transform:uppercase;color:var(--mute)}
+.h1{font-family:Bungee;font-size:150px;line-height:.92;text-transform:uppercase}
+.h2{font-family:Bungee;font-size:88px;line-height:.95;text-transform:uppercase}
+.txt{font-size:34px;line-height:1.45;color:#c9c9c4}
+.txt strong{color:var(--white)}
+.pill{display:inline-block;font-family:Bungee;font-size:34px;background:var(--lemon);color:#111;padding:22px 34px;border-radius:18px}
+.box{border:5px solid var(--lemon);border-radius:28px;overflow:hidden;background:var(--card)}
+.box img{display:block;width:100%}
+.foot{position:absolute;left:84px;right:84px;bottom:64px;display:flex;justify-content:space-between;align-items:center;font-size:24px;color:var(--mute);letter-spacing:2px}
+.foot .logo{font-size:30px}
+.dots{display:flex;gap:10px}.dots i{width:14px;height:14px;border-radius:50%;background:var(--line)}.dots i.on{background:var(--lemon)}
+.grid{position:absolute;inset:0;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:90px 90px;opacity:.35;pointer-events:none}
