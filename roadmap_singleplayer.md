@@ -497,6 +497,29 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 
 ---
 
+## 6.5 Ideias do UltFoot + identificação (03/11/2026 — 🟡 PROPOSTO, pós-teste)
+
+> Origem: análise do **UltFoot: Football Manager** (Scarlett GameStudio) — ver `claude/analise_concorrente_ultfoot.md` no projeto. Ele aposta no online (PvP, ranqueado, moeda Ultcoins, login diário); nós seguimos no single-player profundo do Brasil. Os itens abaixo **complementam** o que já existe, sem copiar a economia de app dele.
+
+### O que a análise confirmou (nada a fazer, só registro)
+- **Grátis + anúncio é o caminho:** a versão paga dele no Steam (US$ 9,99, dez/2025) não teve tração; no Android (grátis com anúncio) tem 10 mil+ downloads e nota 4,0. Reforça o §5.
+- **Online fica reservado (§4):** é onde ele compete; nossa diferença é Brasil inteiro (4 séries, estaduais, Copa) no navegador, sem instalar.
+- **Ponto fraco dele = falta de tutorial** (o próprio dev admitiu). O nosso D1 já existe; vale cuidar pra continuar sendo vantagem (item 35).
+- **Identificação:** clubes com nomes reais desde 02/11/2026 (lista oficial CBF 2026 das Séries A–D, cores revistas). Jogadores continuam fictícios — ver item 40.
+
+### Ideias
+35. **Tutorial contextual (evolução do D1)** — além do tour inicial, dicas que aparecem **na primeira vez** que o jogador encontra cada sistema (primeira proposta recebida, primeiro leilão, primeira renovação, primeiro estadual, zona de alerta do cargo). Junta com o item 23 (banner de dica por aba). *Baixo/médio.*
+36. **📰 Jornal da rodada** — manchete + 3–5 notas no fim da rodada: resultado do seu jogo, zebra da rodada, artilheiro, quem caiu/subiu na tabela, venda/contratação importante, clássico. Reaproveita os veículos da coletiva (Jornal do Interior, Podcast Catimba, Rádio Geral AM). Entra como aba/card no hub, **não** como mais um modal na fila. *Médio (só texto sobre dados que já temos).*
+37. **🧑‍💼 Assistente técnico** — um auxiliar que dá 1–3 sugestões antes do jogo, com motivo: "Fulano está com 52% de energia", "o adversário é forte pelo alto — escale o zagueiro X", "seu lateral está improvisado". Botão "aplicar" quando der. Usa a escalação ótima, energia e forma que já existem. *Médio.*
+38. **🎵 Cânticos da torcida / personalização do clube** — cântico curto no gol e na entrada em campo (liga com o humor da torcida e o som do D4); depois, escolha de uniforme/escudo como **cosmético** (§4, reservado pós-lançamento). *Médio.*
+39. **🎁 Recompensa de retorno (versão leve, sem economia)** — em vez de login diário com moeda: "voltou depois de X dias" dá um bônus pequeno no caixa do clube ou um olheiro grátis. Só se os testers indicarem que falta motivo pra voltar. *Baixo.* ⚠️ Nada de pay-to-win.
+40. **📥 Importar/editar base de jogadores** — função pra carregar uma base externa (nome, posição, idade, pé, força → os 45 atributos gerados pelo nosso gerador por semente, item 25). O jogo continua distribuindo jogadores fictícios; a comunidade pode montar bases reais (modelo "option file" do PES). Motivo: direito de imagem no Brasil exige autorização individual de cada atleta (é por isso que o EA FC não tem times brasileiros). *Código 1–2 dias; consultar advogado antes de lançar com nomes reais.*
+
+### Divulgação (fora do código)
+41. **Parceria com criadores de conteúdo de manager de futebol** — o UltFoot fez parceria com um YouTuber (jan/2026). Alvo: canais de Brasfoot/Elifoot/Football Manager em PT-BR que já fazem vídeo de "conheça o novo jogo parecido com o Brasfoot". Oferta: acesso antecipado, clube/kit especial com o nome do canal, liga/desafio com os inscritos. Casa com o Instagram @catimbafcbr e com o item 18 (compartilhar resultado).
+
+---
+
 ## 7. Resumo em uma frase
 
 > Um single-player **lançável** precisa do **loop de recompensa** (Match Rating → estatísticas → objetivos → moral) e do **acabamento de produto** (onboarding, imersão, empacotamento); rentabiliza com **ads recompensados opt-in + compra única que remove ads** (nunca pay-to-win, e como se vende *ausência de ads* o cheat não rouba receita); protege-se com **Via 1** — só a compra e o score de ranking passam pelo servidor (Supabase, zero GCP novo) — e mantém o ranking honesto **sinalizando** o cheater com um selo público em vez de expulsá-lo, deixando o vexame fazer o trabalho; com o **online reservado**, não descartado, pra quando o single provar que é bom.
