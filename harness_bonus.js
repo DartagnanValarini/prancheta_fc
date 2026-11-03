@@ -2,7 +2,7 @@
 //  ⚡ Fisioterapia extra: +10 de energia pro elenco, 1x por rodada (botão na Formação)
 //  🔭 Relatório do olheiro: faixa de 5 pontos do potencial oculto, 3 por rodada,
 //     em qualquer jogador; o revelado fica salvo.
-// Os dois passam pelo mostrarAnuncio() (placeholder até o SDK entrar).
+// Os dois passam pelo mostrarAnuncio() (sem anúncio disponível no teste → "Receber bônus").
 // Uso: node harness_bonus.js [--shots DIR]
 const path=require('path'),fs=require('fs');
 const {abrir,chromium}=require('./ui_test/abrir.js');
@@ -25,7 +25,7 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   t(!!(await page.$('#btnBonusEnergia')),'botão "⚡ Fisioterapia extra" na Formação');
   await page.click('#btnBonusEnergia');
   t(/Fisioterapia extra/.test(await titulo(page)),'abre o modal opt-in (mostrarAnuncio)');
-  await page.click('#flkModal .flkm-foot .btn:has-text("Assistir e receber")');
+  await page.click('#flkModal .flkm-foot .btn:has-text("Receber bônus")');
   const e1=await page.evaluate(()=>{ const ps=App.teams[App.myTeam].players; return {a:ps[0].energia, b:ps[1].energia, pode:App.podeBonusEnergia(), btn:!!document.getElementById('btnBonusEnergia')}; });
   t(e1.a===100 && e1.b===70,`+10 de energia, sem passar de 100 (95→${e1.a}, 60→${e1.b})`);
   t(!e1.pode && !e1.btn,'uma vez por rodada: o botão some depois de usar');
@@ -45,7 +45,7 @@ const titulo=page=>page.$eval('#flkModal .flkm-title',e=>e.textContent).catch(()
   t(!!(await page.$('#fichaModal #fmOlheiro')),'ficha de jogador de OUTRO clube tem "🔭 Relatório do olheiro"');
   await page.click('#fmOlheiro');
   t(/Relatório do olheiro/.test(await titulo(page)),'abre o modal opt-in');
-  await page.click('#flkModal .flkm-foot .btn:has-text("Assistir e receber")');
+  await page.click('#flkModal .flkm-foot .btn:has-text("Receber bônus")');
   const txt=await page.$eval('#fichaModal .ficha-olheiro',e=>e.textContent.replace(/\s+/g,' '));
   const m=txt.match(/(\d+)–(\d+)/); const lo=m&&+m[1], hi=m&&+m[2];
   t(m && hi-lo===4 && lo<=alvo.pot && alvo.pot<=hi,`ficha mostra a faixa ${lo}–${hi} (potencial real ${alvo.pot} dentro)`);

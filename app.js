@@ -818,6 +818,51 @@ function gerarFixtures(n){
    aparelho (localStorage), não no save. O contexto só nasce depois do
    primeiro toque/tecla (regra de autoplay dos navegadores).
    ==================================================================== */
+/* ---------- ANÚNCIOS (Bloco B, versão WEB) ----------
+   Google AdSense — H5 Games Ads (Ad Placement API: adBreak/adConfig). O script do
+   AdSense (ca-pub-9315684481298702) está no <head> do HTML.
+   ⚠️ H5_APROVADO fica false até o Google aprovar a conta no programa H5 Games Ads:
+   chamar adBreak sem aprovação pode dar problema de política na conta. Com false,
+   o jogo segue a regra da versão web (§5): bônus concedido sem anúncio.
+   Pra testar antes da aprovação: ?adtest=1 na URL (usa o modo de teste do Google,
+   que mostra anúncios de mentira; exige o script com data-adbreak-test="on"). */
+const Ads={
+  H5_APROVADO:false,
+  teste(){ try{ return /[?&]adtest=1\b/.test(location.search); }catch(e){ return false; } },
+  ativo(){ return (this.H5_APROVADO||this.teste()) && typeof window!=='undefined' && typeof window.adBreak==='function'; },
+  _iniciado:false,
+  iniciar(){
+    if(this._iniciado || typeof window==='undefined') return; this._iniciado=true;
+    if(!(this.H5_APROVADO||this.teste())) return;
+    if(this.teste()){   // modo de teste do Google: o atributo precisa estar no script do AdSense
+      const s=document.querySelector('script[src*="adsbygoogle.js"]'); if(s) s.setAttribute('data-adbreak-test','on'); }
+    window.adsbygoogle=window.adsbygoogle||[];
+    if(typeof window.adBreak!=='function') window.adBreak=window.adConfig=function(o){ window.adsbygoogle.push(o); };
+    try{ window.adConfig({preloadAdBreaks:'on', sound:'on'}); }catch(e){}
+  },
+  /* Pede um anúncio recompensado. Resolve com {mostrar(handlers)} quando há anúncio
+     pronto, ou null (sem anúncio / API fora / demorou). handlers: viewed (viu até o
+     fim → dá a recompensa), dismissed (fechou antes), antes/depois (pausar som). */
+  prepararRecompensa(nome, esperaMs=2500){
+    this.iniciar();
+    return new Promise(res=>{
+      if(!this.ativo()) return res(null);
+      let decidido=false; const fim=v=>{ if(!decidido){ decidido=true; res(v); } };
+      const h={};
+      try{
+        window.adBreak({ type:'reward', name:nome||'bonus',
+          beforeAd:()=>{ h.antes&&h.antes(); },
+          afterAd:()=>{ h.depois&&h.depois(); },
+          beforeReward:(showAdFn)=>fim({ mostrar:(x)=>{ Object.assign(h,x||{}); showAdFn(); } }),
+          adDismissed:()=>{ h.dismissed&&h.dismissed(); },
+          adViewed:()=>{ h.viewed&&h.viewed(); },
+          adBreakDone:(info)=>{ fim(null); h.done&&h.done(info); } });
+      }catch(e){ fim(null); }
+      setTimeout(()=>fim(null), esperaMs);
+    });
+  },
+};
+
 const Som={
   CHAVE:'catimba_audio_v1',
   PADRAO:{efeitos:0.7, musica:0.4},
@@ -6222,23 +6267,37 @@ const App={
   },
   // gancho de AD (Bloco B): dobra o prêmio de um objetivo já concluído, uma vez
   /* ---------- ANÚNCIOS RECOMPENSADOS (Bloco B) ----------
-     mostrarAnuncio é o ÚNICO ponto de integração de ad do jogo. Hoje é um
-     placeholder (modal de confirmação). Quando o SDK entrar (AdMob/rewarded),
-     só este método muda: dispara o ad real e chama onRecompensa apenas no
-     callback de "recompensa concedida"; onCancelar se o usuário fecha antes.
-     Quem removeu anúncios (adFree) NUNCA vê ad — recebe a recompensa direto. */
+     mostrarAnuncio é o ÚNICO ponto de integração de ad do jogo.
+     - Quem removeu anúncios (adFree) NUNCA vê ad — recebe a recompensa direto.
+     - WEB (AdSense H5 Games Ads, módulo Ads): se há anúncio recompensado pronto,
+       o modal oferece "Assistir e receber"; onRecompensa só roda se o anúncio for
+       visto até o fim (adViewed); fechou antes (adDismissed) → onCancelar.
+     - Sem anúncio disponível (programa H5 ainda não aprovado, bloqueador, sem
+       estoque): regra da versão web (§5) — o bônus sai sem anúncio ("Receber bônus").
+     - APP (AdMob, Bloco E): entra aqui também, escolhido pela superfície. */
   mostrarAnuncio({titulo, descricao, onRecompensa, onCancelar}){
     if(this.semAnuncios()){ onRecompensa&&onRecompensa(); return; }  // comprou: sem ad, recompensa direta
-    if(this.modalFLK){
-      this.modalFLK({ titulo:titulo||'▶ Assistir anúncio',
-        corpoHTML:`<p style="line-height:1.6">${descricao||'Assista a um anúncio curto para receber a recompensa.'}</p>
-          <p style="color:var(--muted);font-size:.85em">Recompensa opcional — nunca obrigatória.</p>
-          <p style="color:var(--muted);font-size:.75em;margin-top:8px">⚠️ Placeholder: o anúncio real entra com o empacotamento (loja).</p>`,
-        botoes:[
-          {txt:'Assistir e receber', tipo:'primary', onClick:()=>{ onRecompensa&&onRecompensa(); return false; }},
-          {txt:'Agora não', tipo:'sm', onClick:()=>{ onCancelar&&onCancelar(); return false; }}
-        ] });
-    } else { onRecompensa&&onRecompensa(); }
+    if(!this.modalFLK){ onRecompensa&&onRecompensa(); return; }
+    const abrir=(ad)=>this.modalFLK({ titulo:titulo||'🎁 Bônus',
+      corpoHTML:`<p style="line-height:1.6">${descricao||'Receba uma recompensa extra.'}</p>
+        <p style="color:var(--muted);font-size:.85em">${ad?'Assista a um anúncio curto até o fim para receber. É opcional — nunca obrigatório.':'Bônus por conta da casa.'}</p>`,
+      botoes:[
+        ad ? {txt:'▶ Assistir e receber', tipo:'primary', onClick:()=>{ this._verAnuncio(ad,{onRecompensa,onCancelar}); return false; }}
+           : {txt:'🎁 Receber bônus', tipo:'primary', onClick:()=>{ onRecompensa&&onRecompensa(); return false; }},
+        {txt:'Agora não', tipo:'sm', onClick:()=>{ onCancelar&&onCancelar(); return false; }}
+      ] });
+    if(!Ads.ativo()) return abrir(null);          // síncrono: sem SDK, sem espera
+    Ads.prepararRecompensa('bonus').then(ad=>abrir(ad)).catch(()=>abrir(null));
+  },
+  _verAnuncio(ad,{onRecompensa,onCancelar}){
+    let pago=false;
+    ad.mostrar({   // pausa o áudio do jogo durante o anúncio (sem mexer nas configurações salvas)
+      antes:()=>{ try{ Som.ctx&&Som.ctx.suspend(); }catch(e){} },
+      depois:()=>{ try{ Som.ctx&&Som.ctx.resume(); }catch(e){} },
+      viewed:()=>{ if(pago) return; pago=true; onRecompensa&&onRecompensa(); },
+      dismissed:()=>{ if(pago) return; onCancelar&&onCancelar();
+        this.avisoFLK&&this.avisoFLK('Anúncio fechado antes do fim','Sem bônus desta vez — dá pra tentar de novo quando quiser.','var(--muted)'); }
+    });
   },
   resgatarBonusAd(secId){
     const o=this.garantirObjetivos(); const s=o.sec.find(x=>x.id===secId);
