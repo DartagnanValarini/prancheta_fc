@@ -729,6 +729,21 @@
     font-weight:700; font-size:10px; color:var(--gray2); text-transform:uppercase; letter-spacing:1px}
   .pre-foot{margin-top:22px; font-family:'Space Mono'; font-size:10px; color:var(--gray2); text-align:center}
   .pre-link{color:var(--lemon); cursor:pointer; text-decoration:underline}
+  /* Sobre / Como jogar (tela inicial) */
+  .pre-info{width:100%; max-width:420px; margin-top:18px; display:flex; flex-direction:column; gap:10px}
+  .pre-info-card{background:var(--panel); border:2px solid var(--line); border-radius:14px; padding:0 18px}
+  .pre-info-card[open]{border-color:var(--lemon)}
+  .pre-info-card summary{font-family:'Bungee'; font-size:13px; color:var(--white); padding:14px 0;
+    cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center}
+  .pre-info-card summary::-webkit-details-marker{display:none}
+  .pre-info-card summary::after{content:'+'; color:var(--lemon); font-size:16px}
+  .pre-info-card[open] summary::after{content:'–'}
+  .pre-info-card p, .pre-info-card li{font-family:'Space Mono'; font-size:11px; color:var(--gray); line-height:1.7}
+  .pre-info-card p{margin:0 0 12px}
+  .pre-info-card ol{margin:0 0 14px; padding-left:18px}
+  .pre-info-card li{margin-bottom:8px}
+  .pre-info-card b{color:var(--white)}
+  .pre-info-nota{font-size:10px!important; color:var(--gray2)!important}
   .pre-msg{font-family:'Space Mono'; font-weight:700; font-size:11px; padding:10px; border-radius:8px;
     margin-top:14px; border:2px solid; line-height:1.5}
   .pre-msg.err{background:rgba(255,84,112,.1); color:var(--loss); border-color:var(--loss)}
@@ -1090,6 +1105,28 @@
   <div class="pre-sub" id="preSub">manager de futebol</div>
   <div id="preBody"></div>
   <div class="pre-foot" id="preFoot"></div>
+  <!-- Sobre / Como jogar: texto fixo no HTML (aparece embaixo do menu e é lido por buscadores) -->
+  <section class="pre-info" id="preInfo">
+    <details class="pre-info-card">
+      <summary>Sobre o jogo</summary>
+      <p><b>Catimba FC!</b> é um manager de futebol brasileiro que roda direto no navegador, sem instalar nada. Você é o técnico: assume um clube da Série D e tenta levá-lo até o topo, temporada após temporada.</p>
+      <p>São as <b>quatro séries do Brasileiro</b> (A, B, C e D) com acesso e rebaixamento, estadual de pré-temporada, mais de 150 clubes e milhares de jogadores, cada um com 45 atributos, idade, potencial e contrato. Os jogadores envelhecem, evoluem e se aposentam, e a base revela garotos novos.</p>
+      <p>Fora de campo, você cuida do caixa, negocia compras e vendas, disputa leilões, renova contratos, dá coletiva e encara a diretoria e a torcida. Termine bem as temporadas e suba no ranking de treinadores.</p>
+      <p>É de graça. Sem conta, a carreira fica salva no seu aparelho; com conta, fica salva na nuvem.</p>
+      <p class="pre-info-nota">Os clubes e jogadores do jogo são fictícios. Nomes parecidos com os de clubes reais são paródia e não têm ligação com eles.</p>
+    </details>
+    <details class="pre-info-card">
+      <summary>Como jogar</summary>
+      <ol>
+        <li><b>Comece:</b> toque em <b>▶ Jogar agora</b> e escolha um clube. O presidente explica a meta da temporada e um tour rápido mostra o básico.</li>
+        <li><b>Escale:</b> na <b>Formação</b>, monte os 11 titulares, o esquema e o estilo (ofensivo, normal ou defensivo). Jogador fora da posição rende menos; o <b>⚡ Escalar</b> monta o melhor time sozinho.</li>
+        <li><b>Jogue a rodada:</b> na <b>Rodada</b>, assista ao seu jogo lance a lance ou pule pro resultado. Fique de olho na energia: titular cansado rende menos.</li>
+        <li><b>Gerencie o elenco:</b> no <b>Mercado</b>, compre, venda e responda às propostas. No <b>Elenco</b>, veja moral, forma, notas e contratos.</li>
+        <li><b>Cuide do dinheiro:</b> em <b>Finanças</b>, acompanhe bilheteria, salários e patrocínio. Caixa no vermelho aperta o clube.</li>
+        <li><b>Cumpra as metas:</b> os objetivos da temporada pagam prêmios e subir de série muda tudo. Vitórias aumentam a confiança da diretoria; se ela cair até a linha vermelha, você é demitido.</li>
+      </ol>
+    </details>
+  </section>
 </div>
 
 <div class="wrap hidden" id="gameWrap">

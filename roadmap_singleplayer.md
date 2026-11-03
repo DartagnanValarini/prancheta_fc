@@ -505,7 +505,8 @@ Itens levantados testando o jogo. Não bloqueiam o loop principal, mas entram no
 - **Grátis + anúncio é o caminho:** a versão paga dele no Steam (US$ 9,99, dez/2025) não teve tração; no Android (grátis com anúncio) tem 10 mil+ downloads e nota 4,0. Reforça o §5.
 - **Online fica reservado (§4):** é onde ele compete; nossa diferença é Brasil inteiro (4 séries, estaduais, Copa) no navegador, sem instalar.
 - **Ponto fraco dele = falta de tutorial** (o próprio dev admitiu). O nosso D1 já existe; vale cuidar pra continuar sendo vantagem (item 35).
-- **Identificação:** clubes com nomes reais desde 02/11/2026 (lista oficial CBF 2026 das Séries A–D, cores revistas). Jogadores continuam fictícios — ver item 40.
+- **Identificação:** clubes com nomes reais em 02/11/2026 (lista oficial CBF 2026 das Séries A–D, cores revistas) e, **desde 03/11/2026, nomes paródia reconhecíveis** (Pormeiras, Corintios, São Paule, Framengo, Vasco da Grama…) — mesmos ids, ordem, cores e cidades, em `dados/br.json` e na tabela `team`. Motivo: aprovação do AdSense (política de direitos autorais/marcas) e risco com os clubes. Jogadores continuam fictícios — ver item 40. ⚠️ **Não rodar o workflow "Exportar dados dos jogadores"** sem antes resolver a ordem: a tabela `team` hoje devolve os times em ordem de id, diferente da ordem congelada no `br.json` — reexportar embaralharia os saves dos testers (§6.4 item 28).
+- **Tela inicial:** "Sobre o jogo" e "Como jogar" (cards recolhíveis, texto fixo no HTML, embaixo do menu) — conteúdo de texto pra aprovação do AdSense e pra quem chega no site.
 
 ### Ideias
 35. **Tutorial contextual (evolução do D1)** — além do tour inicial, dicas que aparecem **na primeira vez** que o jogador encontra cada sistema (primeira proposta recebida, primeiro leilão, primeira renovação, primeiro estadual, zona de alerta do cargo). Junta com o item 23 (banner de dica por aba). *Baixo/médio.*
