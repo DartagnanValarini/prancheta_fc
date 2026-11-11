@@ -4,6 +4,7 @@ Mais recente no topo. A tarefa agendada lê isto antes de criar um post (não re
 
 | Data | Pilar | Formato | Tema | Link |
 |---|---|---|---|---|
+| 2026-11-11 | Dica do professor | Carrossel 4 | Mercado com caixa curto: filtro, recusa, venda | https://www.instagram.com/p/DfnW4v7nSbW/ |
 | 2026-11-09 | Rodada da semana | Reels 22s | Roleta: time sorteado, estreia no turbo | https://www.instagram.com/reel/DfiNQfHAnV9/ |
 | 2026-11-04 | Catimba do dia | Carrossel 3 | Tipos de professor: retranqueiro e contador | https://www.instagram.com/p/DfVVUn-iW8B/ |
 | 2026-11-02 | Rodada da semana | Reels 21s | POV time da Série D, jogo inteiro em turbo | https://www.instagram.com/reel/DfPZcfHEall/ |
