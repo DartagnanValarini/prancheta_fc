@@ -4,6 +4,7 @@ Mais recente no topo. A tarefa agendada lê isto antes de criar um post (não re
 
 | Data | Pilar | Formato | Tema | Link |
 |---|---|---|---|---|
+| 2026-11-18 | Catimba do dia | Carrossel 3 | Manual da coletiva pós-jogo | https://www.instagram.com/p/Df5YinXHfeu/ |
 | 2026-11-16 | Rodada da semana | Reels 22s | 1 jogo pra salvar o emprego | https://www.instagram.com/reel/Df0OxYroNG7/ |
 | 2026-11-13 | Dica do professor | Carrossel 4 | Torcida: fator casa, humor, bilheteria | https://www.instagram.com/p/DfsgexDHUJk/ |
 | 2026-11-11 | Dica do professor | Carrossel 4 | Mercado com caixa curto: filtro, recusa, venda | https://www.instagram.com/p/DfnW4v7nSbW/ |
