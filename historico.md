@@ -4,6 +4,7 @@ Mais recente no topo. A tarefa agendada lê isto antes de criar um post (não re
 
 | Data | Pilar | Formato | Tema | Link |
 |---|---|---|---|---|
+| 2026-11-23 | Rodada da semana | Reels 21s | Chuta o placar: 0x0 no turbo | https://www.instagram.com/reel/DgGQeFNE_G-/ |
 | 2026-11-20 | Dica do professor | Carrossel 4 | Energia: descanso, fisio, rodízio | https://www.instagram.com/p/Df-iFyuGVfd/ |
 | 2026-11-18 | Catimba do dia | Carrossel 3 | Manual da coletiva pós-jogo | https://www.instagram.com/p/Df5YinXHfeu/ |
 | 2026-11-16 | Rodada da semana | Reels 22s | 1 jogo pra salvar o emprego | https://www.instagram.com/reel/Df0OxYroNG7/ |
